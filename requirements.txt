@@ -1,0 +1,23 @@
+# ── Core ──────────────────────────────────────────────────────────────────
+pandas>=2.2.0
+pydantic>=2.6.0
+pyyaml>=6.0.1
+requests>=2.31.0
+
+# ── Geração de dados fictícios ──────────────────────────────────────────────
+faker>=24.0.0
+numpy>=1.26.0
+
+# ── Profiler ─────────────────────────────────────────────────────────────────
+duckdb>=0.10.0
+
+# ── Orquestrador (alternativa ao Control-M) ──────────────────────────────────
+# Prefect é OPCIONAL para a PoC — o run_pipeline.py roda sem ele.
+# Para usar a UI em http://localhost:4200: prefect server start
+prefect>=2.19.0
+
+# ── Leitura de CSV polars (opcional — mais rápido que pandas para arquivos grandes) ──
+# polars>=0.20.0
+
+# ── MinIO client (opcional — apenas se usar docker-compose) ──────────────────
+# minio>=7.2.0

@@ -1,0 +1,33 @@
+table: tb_transacoes
+description: Movimentações financeiras de todos os canais de atendimento.
+owner: squad-transacoes
+version: 2.3.1
+tolerance:
+  max_null_pct: 10
+  allow_duplicates: false
+schema:
+- name: id_transacao
+  type: string
+  nullable: false
+  primary_key: true
+- name: cd_cliente
+  type: string
+  nullable: false
+- name: dt_transacao
+  type: date
+  nullable: false
+- name: vl_transacao
+  type: float
+  nullable: false
+- name: tp_transacao
+  type: string
+  nullable: false
+- name: cd_estabelecimento
+  type: string
+  nullable: true
+- name: fl_suspeita
+  type: boolean
+  nullable: false
+- name: cd_canal
+  type: string
+  nullable: false

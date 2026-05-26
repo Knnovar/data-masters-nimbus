@@ -1,0 +1,48 @@
+version: "3.9"
+
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: data-masters-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"   # API S3
+      - "9001:9001"   # Console Web → http://localhost:9001
+    environment:
+      MINIO_ROOT_USER:     minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Cria o bucket automaticamente na primeira vez
+  minio-init:
+    image: minio/mc:latest
+    container_name: data-masters-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 minioadmin minioadmin &&
+        mc mb --ignore-existing local/data-masters-landing &&
+        mc mb --ignore-existing local/data-masters-quarantine &&
+        mc mb --ignore-existing local/data-masters-processed &&
+        echo '✅ Buckets criados.'
+      "
+
+volumes:
+  minio_data:
+
+# ────────────────────────────────────────────────────────────────
+# Uso:
+#   docker compose up -d          → sobe MinIO em background
+#   http://localhost:9001          → console web (user: minioadmin)
+#
+# Para a PoC, o MinIO é OPCIONAL. A pipeline roda com arquivos
+# locais mesmo sem o docker-compose no ar.
+# ────────────────────────────────────────────────────────────────

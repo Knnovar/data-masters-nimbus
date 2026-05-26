@@ -1,0 +1,36 @@
+table: tb_clientes
+description: Cadastro mestre de clientes pessoa física e jurídica.
+owner: squad-dados-cadastrais
+version: 1.0.0
+tolerance:
+  max_null_pct: 25
+  allow_duplicates: false
+schema:
+- name: cd_cliente
+  type: string
+  nullable: false
+  primary_key: true
+- name: nr_cpf_cnpj
+  type: string
+  nullable: false
+- name: nm_cliente
+  type: string
+  nullable: false
+- name: dt_nascimento
+  type: date
+  nullable: true
+- name: cd_segmento
+  type: string
+  nullable: false
+- name: cd_agencia
+  type: string
+  nullable: false
+- name: vl_renda_mensal
+  type: float
+  nullable: true
+- name: fl_ativo
+  type: boolean
+  nullable: false
+- name: dt_cadastro
+  type: date
+  nullable: false

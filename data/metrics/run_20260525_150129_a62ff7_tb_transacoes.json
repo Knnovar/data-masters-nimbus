@@ -1,0 +1,21 @@
+{
+  "run_id": "run_20260525_150129_a62ff7",
+  "timestamp": "2026-05-25T15:01:30.092902",
+  "table": "tb_transacoes",
+  "scenario": "non_breaking",
+  "validation_status": "WARNING",
+  "evolution_type": null,
+  "rows_total": 2030,
+  "rows_valid": 2000,
+  "duplicate_count": 30,
+  "null_violations": {},
+  "avg_null_pct": 0.67,
+  "profiling_ms": 17.2,
+  "slm_status": "SKIPPED",
+  "slm_inference_ms": 0,
+  "quality_score": 69.6,
+  "issues": [],
+  "warnings": [
+    "30 duplicatas detectadas (1.5%)"
+  ]
+}

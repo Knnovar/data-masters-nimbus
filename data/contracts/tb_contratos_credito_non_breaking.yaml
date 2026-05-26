@@ -1,0 +1,39 @@
+table: tb_contratos_credito
+description: Contratos de produtos de crédito ativos e encerrados.
+owner: squad-credito
+version: 3.0.0
+tolerance:
+  max_null_pct: 5
+  allow_duplicates: false
+schema:
+- name: id_contrato
+  type: string
+  nullable: false
+  primary_key: true
+- name: cd_cliente
+  type: string
+  nullable: false
+- name: dt_contrato
+  type: date
+  nullable: false
+- name: vl_limite
+  type: float
+  nullable: false
+- name: vl_utilizado
+  type: float
+  nullable: false
+- name: tp_produto
+  type: string
+  nullable: false
+- name: cd_status
+  type: string
+  nullable: false
+- name: dt_vencimento
+  type: date
+  nullable: false
+- name: nr_parcelas
+  type: integer
+  nullable: false
+- name: tx_juros_am
+  type: float
+  nullable: false
