@@ -1,0 +1,56 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+pip-wheel-metadata/
+
+# ── Ambientes virtuais ────────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+.env
+
+# ── Pipeline — dados gerados (nunca subir dados fictícios ou reais) ───────────
+data/landing/
+data/quarantine/
+data/processed/
+
+# ── Pipeline — artefatos de execução (gerados a cada run) ────────────────────
+data/metrics/
+data/reports/
+data/contracts/
+
+# ── Prefect ───────────────────────────────────────────────────────────────────
+.prefect/
+
+# ── IDEs e editores ───────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Windows ───────────────────────────────────────────────────────────────────
+desktop.ini
+ehthumbs.db
+
+# ── Logs e temporários ────────────────────────────────────────────────────────
+*.log
+*.tmp
+*.bak
+*.orig
+
+# ── Segurança — nunca subir credenciais ──────────────────────────────────────
+.env.local
+.env.production
+secrets.yaml
+secrets.yml
+*.key
+*.pem

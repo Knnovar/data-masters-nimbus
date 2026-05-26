@@ -17,7 +17,7 @@ for d in [LANDING_DIR, QUARANTINE_DIR, PROCESSED_DIR, CONTRACTS_DIR, METRICS_DIR
 # Troque por "phi4" ou "llama3.1:8b" para documentação semântica mais rica.
 # Qwen2.5-Coder funciona, mas é otimizado para código — não para linguagem de negócio.
 OLLAMA_HOST  = "http://localhost:11434"
-OLLAMA_MODEL = "qwen2.5-coder:7b"
+OLLAMA_MODEL = "phi4"
 
 # ── MinIO (opcional — usado quando docker-compose estiver no ar) ──────────────
 MINIO_ENDPOINT   = "localhost:9000"

@@ -108,13 +108,13 @@ def enrich(
             json={
                 "model"   : OLLAMA_MODEL,
                 "stream"  : False,
-                "options" : {"temperature": 0.2, "num_predict": 1500},
+                "options" : {"temperature": 0.2, "num_predict": 800},
                 "messages": [
                     {"role": "system", "content": _SYSTEM_PROMPT},
                     {"role": "user",   "content": user_prompt},
                 ],
             },
-            timeout=120,
+            timeout=600
         )
         response.raise_for_status()
         doc = response.json()["message"]["content"]
