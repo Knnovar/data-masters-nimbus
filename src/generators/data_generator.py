@@ -251,7 +251,7 @@ def generate_all(
     Retorna lista de dicts com os caminhos produzidos:
         [{"table": ..., "csv_path": ..., "contract_path": ...}, ...]
     """
-    print(f"\n🏭  Gerando dados fictícios — cenário: [{scenario.upper()}]")
+    print(f"\n[GENERATE] Gerando dados ficticios - cenario: [{scenario.upper()}]")
 
     clientes_df = _gerar_clientes(500, scenario)
     transacoes_df = _gerar_transacoes(clientes_df)
@@ -273,7 +273,7 @@ def generate_all(
         with open(contract_path, "w", encoding="utf-8") as f:
             yaml.dump(contract, f, allow_unicode=True, sort_keys=False)
 
-        print(f"   ✅  {table_name}: {len(df)} linhas → {csv_path.name}")
+        print(f"   [OK] {table_name}: {len(df)} linhas -> {csv_path.name}")
         produced.append(
             {"table": table_name, "csv_path": csv_path, "contract_path": contract_path, "scenario": scenario}
         )

@@ -69,9 +69,12 @@ def run_scenario(scenario: str, run_id: str) -> list[dict]:
             # Enriquecimento SLM
             slm_result = enrich(contract_path, profiler_payload, REPORTS_DIR)
 
-            # Move para processed
+            # Move para processed (shutil.move sobrescreve no Windows)
+            import shutil
             processed_path = PROCESSED_DIR / csv_path.name
-            csv_path.rename(processed_path)
+            if processed_path.exists():
+                processed_path.unlink()
+            shutil.move(str(csv_path), str(processed_path))
 
         # Métricas
         m = collect(run_id, val_result, profiler_payload, slm_result, METRICS_DIR)
