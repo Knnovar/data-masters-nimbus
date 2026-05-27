@@ -1,4 +1,39 @@
-# Plano de Migração: PoC Local → Databricks + Control-M
+# Plano de Migração: PoC Local → Azure + Databricks + Control-M
+
+---
+
+## Visão geral da stack de destino
+
+O banco usa Azure como provedor de cloud. O Databricks roda sobre a Azure
+nativamente via **Azure Databricks**, o que elimina fricção de integração —
+identidade, rede, storage e governança já compartilham o mesmo plano de controle.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        AZURE TENANT                         │
+│                                                             │
+│  ┌─────────────────┐     ┌──────────────────────────────┐  │
+│  │   ADLS Gen2     │────▶│     Azure Databricks         │  │
+│  │  (Bronze/Silver │     │  ┌─────────┐ ┌────────────┐  │  │
+│  │   /Gold/DLQ)    │     │  │   DLT   │ │  Workflows │  │  │
+│  └─────────────────┘     │  └─────────┘ └────────────┘  │  │
+│                           │  ┌──────────────────────┐    │  │
+│  ┌─────────────────┐     │  │   Unity Catalog       │    │  │
+│  │  Azure OpenAI   │────▶│  │   + Vector Search     │    │  │
+│  │  (Private EP)   │     │  └──────────────────────┘    │  │
+│  └─────────────────┘     │  ┌──────────────────────┐    │  │
+│                           │  │  Model Serving        │    │  │
+│  ┌─────────────────┐     │  │  (MLflow)             │    │  │
+│  │  Azure Key Vault│     │  └──────────────────────┘    │  │
+│  │  (credenciais)  │     └──────────────────────────────┘  │
+│  └─────────────────┘                                        │
+│                                                             │
+│  ┌─────────────────┐     ┌──────────────────────────────┐  │
+│  │   Control-M     │────▶│  Databricks Jobs API         │  │
+│  │  (BMC Helix)    │     │  REST /api/2.1/jobs/run-now  │  │
+│  └─────────────────┘     └──────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -21,13 +56,13 @@ condições `ON_DO`:
 
 ```
 JOB-DM-001-GENERATE
-  ON ENDED_OK  → lança JOB-DM-002-VALIDATE (para cada tabela, em paralelo)
+  ON ENDED_OK    → lança JOB-DM-002-VALIDATE (para cada tabela, em paralelo)
   ON ENDED_NOTOK → alerta + encerra o grupo
 
 JOB-DM-002-VALIDATE (3 instâncias, uma por tabela)
-  ON ENDED_OK  → lança JOB-DM-003-PROFILE
+  ON ENDED_OK          → lança JOB-DM-003-PROFILE
   ON exitcode=1 (WARNING) → lança JOB-DM-003-PROFILE mesmo assim
-  ON exitcode=2 (DLQ)     → alerta + encaminha para fila de revisão
+  ON exitcode=2 (DLQ)  → alerta + encaminha para fila de revisão
 
 JOB-DM-003-PROFILE
 JOB-DM-004-ENRICH (timeout: 300s — SLM pode ser lento)
@@ -40,7 +75,6 @@ JOB-DM-006-REPORT (wait condition: aguarda TODOS os JOB-DM-005)
 **2. O comando de cada job no Control-M**
 
 ```bash
-# Exatamente o mesmo executável da PoC, sem alteração
 cd /caminho/do/projeto
 python prefect_flow.py --no-prefect --scenario %%SCENARIO%% --run-id %%JOBRUNID%%
 ```
@@ -60,182 +94,298 @@ como condição de falha — nenhuma mudança no código Python.
 
 ---
 
-## Parte 2 — Migração para Databricks
+## Parte 2 — Migração para Azure + Databricks
 
 ### Visão geral da estratégia
 
-A migração é incremental em 3 fases. Cada fase é independente e pode ser
+A migração é incremental em 4 fases. Cada fase é independente e pode ser
 validada antes de avançar para a próxima. O código local continua funcionando
 durante toda a transição.
 
 ```
-Fase 1: Storage          → MinIO local → ADLS Gen2 / S3
-Fase 2: Processamento    → Pandas/DuckDB → PySpark nativo no Databricks
-Fase 3: Orquestração     → Prefect local → Databricks Workflows (ou Control-M via REST)
+Fase 1: Storage       → MinIO local     → ADLS Gen2 (Azure)
+Fase 2: Processamento → Pandas/DuckDB   → PySpark + Delta Live Tables
+Fase 3: SLM           → Ollama local    → Azure OpenAI / Databricks Model Serving
+Fase 4: Orquestração  → Prefect local   → Databricks Workflows + Control-M
 ```
 
 ---
 
-### Fase 1 — Migração de Storage
+### Fase 1 — Storage: MinIO → ADLS Gen2
 
-**O que muda:** os arquivos CSV deixam de ser gravados em `data/landing/` e
-passam a ser gravados diretamente no bucket S3 ou ADLS Gen2 configurado no
-Databricks.
+O MinIO local foi construído como espelho do ADLS Gen2 — mesma semântica de
+buckets, mesma API S3-compatível. A camada de abstração `Storage` (a ser
+implementada) é o que torna essa troca transparente para o restante do código.
 
-**O que NÃO muda:** toda a lógica de validação, profiling e SLM — eles só
-precisam receber um `Path` ou URI. A única alteração é no `data_generator.py`
-e no início do `validator.py`, onde o `pd.read_csv(path)` passa a aceitar
-`pd.read_csv("s3://bucket/path/file.csv")` sem mudança de interface.
+**Mapeamento de camadas no ADLS Gen2:**
 
-**Critério de conclusão:** o pipeline roda localmente lendo e escrevendo
-no bucket de staging do Databricks. Métricas produzidas são idênticas às da PoC.
+```
+PoC Local (MinIO)           →   Azure (ADLS Gen2)
+────────────────────────────────────────────────────────
+data-masters-landing        →   abfss://bronze@<storage>.dfs.core.windows.net
+data-masters-processed      →   abfss://silver@<storage>.dfs.core.windows.net
+data-masters-gold           →   abfss://gold@<storage>.dfs.core.windows.net
+data-masters-quarantine     →   abfss://quarantine@<storage>.dfs.core.windows.net
+```
+
+**Autenticação no Azure:**
+O Databricks autentica no ADLS Gen2 via **Service Principal** ou **Managed Identity**
+— sem credenciais hardcodadas. As chaves ficam no **Azure Key Vault** e são
+injetadas como secrets no Databricks Secrets API.
+
+```python
+# Em produção, a classe Storage lê assim:
+storage_account = dbutils.secrets.get("kv-data-masters", "storage-account-name")
+```
+
+**Critério de conclusão:** o pipeline roda localmente apontando para o ADLS Gen2
+de staging. Métricas produzidas são idênticas às da PoC.
 
 ---
 
-### Fase 2 — Migração do Processamento
+### Fase 2 — Processamento: Pandas/DuckDB → PySpark + DLT
 
-Esta é a fase de maior esforço técnico. Os três módulos são migrados em ordem
-de complexidade crescente.
+#### 2a. Validação de Contratos → Delta Live Tables
 
-#### 2a. Validação de Contratos (baixo esforço)
+O `validator.py` atual roda sem alteração como Databricks Notebook Python.
+A evolução natural é transformar cada regra do contrato YAML em uma
+**DLT Expectation**:
 
-O `validator.py` atual usa pandas e YAML puro. Ele pode rodar **sem alteração**
-como um Databricks Notebook Python ou como um job de cluster single-node.
+```python
+# Contrato YAML vira:
+@dlt.expect_or_drop("cd_cliente não nulo", "cd_cliente IS NOT NULL")
+@dlt.expect("taxa de nulos vl_renda_mensal", "null_pct < 0.25")
+def tb_clientes_silver():
+    return dlt.read("tb_clientes_bronze")
+```
 
-A evolução natural é transformá-lo em uma **Delta Live Tables Expectation**:
-cada regra do contrato YAML vira uma `@dlt.expect` ou `@dlt.expect_or_drop`,
-e a quarentena vira uma tabela `_quarantine` gerenciada pelo DLT.
+A quarentena vira a tabela `_quarantine` gerenciada automaticamente pelo DLT.
 
-#### 2b. Profiler estatístico (médio esforço)
+#### 2b. Profiler → PySpark
 
-O `duckdb_profiler.py` tem sua lógica migrada para `pyspark.sql.functions`.
-O mapeamento é direto:
+Mapeamento direto das funções do `duckdb_profiler.py`:
 
 ```
 DuckDB/Pandas                   →   PySpark
-────────────────────────────────────────────────────────────
+──────────────────────────────────────────────────────────
 COUNT(*) WHERE col IS NULL      →   count(when(col.isNull()))
-COUNT(DISTINCT col)             →   approxCountDistinct(col) ou countDistinct
+COUNT(DISTINCT col)             →   approxCountDistinct(col)
 MIN / MAX / AVG                 →   min() / max() / avg()
 value_counts().head(5)          →   groupBy(col).count().orderBy(desc).limit(5)
 ```
 
-O payload de saída do profiler permanece idêntico — o módulo SLM não sabe
-se o profiling veio do DuckDB ou do Spark.
+O payload de saída permanece idêntico — o módulo SLM não sabe se o profiling
+veio do DuckDB ou do Spark.
 
-#### 2c. SLM / Ollama (alto esforço — decisão arquitetural)
+#### 2c. Camada Gold no Delta Lake
 
-Este é o ponto mais sensível da migração. Existem três caminhos:
+A tabela Gold de métricas de qualidade, hoje um CSV local, vira uma tabela
+Delta com Change Data Feed habilitado — o que permite ao Devin e ao Unity
+Catalog receberem notificações de mudança sem polling:
 
-**Opção A — Manter Ollama em VM dedicada (recomendado para primeiro go-live)**
-Sobe uma VM com GPU (ex: Azure NC-series ou EC2 g4dn) dentro do perímetro
-do banco. O `ollama_enrichment.py` aponta para essa VM via `OLLAMA_HOST`.
+```sql
+CREATE TABLE main.data_masters.quality_metrics
+USING DELTA
+TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')
+AS SELECT * FROM silver.pipeline_metrics;
+```
+
+---
+
+### Fase 3 — SLM: Ollama → Azure OpenAI / Databricks Model Serving
+
+Este é o ponto mais sensível da migração por envolver decisão de compliance.
+Sendo Azure o provedor, as opções se ordenam da mais simples à mais robusta:
+
+**Opção A — Azure OpenAI com Private Endpoint (recomendado para primeiro go-live)**
+
+É a opção com menor esforço de infraestrutura. O Azure OpenAI é provisionado
+dentro do tenant do banco com um Private Endpoint — nenhum dado trafega pela
+internet pública, tudo fica dentro da VNet corporativa.
+
+```python
+# ollama_enrichment.py: troca de 4 linhas
+OLLAMA_HOST  = "https://<resource>.openai.azure.com"
+OLLAMA_MODEL = "gpt-4o-mini"   # ou gpt-4o, dependendo do budget
+# Header adicional: api-key via Azure Key Vault
+```
+
+Vantagem decisiva para o banco: a Microsoft assina DPA específico para
+serviços financeiros regulados no Brasil (BACEN/LGPD), e o Azure OpenAI
+tem certificações SOC 2, ISO 27001 e PCI-DSS — argumento pronto para
+o comitê de segurança.
+
+**Opção B — Databricks Model Serving (MLflow)**
+
+Registra o Phi-3.5 ou Llama 3.1 como modelo MLflow e publica como endpoint
+REST interno no Databricks. Inferência 100% dentro do perímetro, sem
+dependência de serviço externo.
+
+```python
+# Endpoint interno — mesma interface do ollama_enrichment.py
+OLLAMA_HOST  = "https://<workspace>.azuredatabricks.net/serving-endpoints"
+OLLAMA_MODEL = "llama-3-1-8b-instruct"
+```
+
+Requer trabalho de MLOps para empacotar o modelo GGUF no formato MLflow,
+mas elimina qualquer custo por token — você paga só pelo compute do cluster.
+
+**Opção C — Azure NC-series VM com Ollama (mínima mudança de código)**
+
+Sobe uma VM com GPU (NC4as T4 v3 ou NC6s v3) dentro da VNet do banco.
+O `ollama_enrichment.py` aponta para o IP privado da VM via `OLLAMA_HOST`.
 Zero mudança de código. Custo previsível e controlado.
 
-**Opção B — Databricks Model Serving**
-O modelo é empacotado via MLflow e servido como endpoint REST interno no
-Databricks. O `ollama_enrichment.py` tem a URL substituída pelo endpoint
-do Model Serving. Requer trabalho de MLOps para empacotar o modelo GGUF
-no formato MLflow, mas mantém toda a inferência dentro do ambiente do banco.
+Melhor para: primeiro go-live rápido quando compliance ainda está avaliando
+as opções A e B.
 
-**Opção C — Azure OpenAI com VNet privada (se compliance aprovar)**
-Substitui o Ollama por chamadas ao Azure OpenAI via Private Endpoint.
-Nenhum dado sai do tenant Azure do banco. Requer aprovação do comitê de
-segurança e análise do DPA — mas elimina o custo de GPU dedicada.
-
-Para a apresentação à diretoria, apresente a Opção A como caminho inicial
-e a Opção B como evolução natural após o primeiro ciclo de produção.
+**Para a apresentação:** apresente a Opção C como caminho inicial (menor risco,
+menor prazo), a Opção A como destino natural (menor custo operacional, maior
+suporte regulatório), e a Opção B como evolução futura (soberania total sobre
+o modelo após acúmulo de dados de fine-tuning).
 
 ---
 
-### Fase 3 — Migração da Orquestração
+### Fase 4 — Orquestração: Prefect → Control-M + Databricks Workflows
 
-#### Se o Control-M for o destino final
+#### Integração Control-M + Azure Databricks
 
-O Control-M possui integração nativa com Databricks via plugin oficial
-(BMC Helix for Databricks). O job Python que hoje roda localmente passa a
-ser um **Databricks Job** acionado pelo Control-M via REST API:
+O Control-M possui integração nativa com Azure Databricks via **BMC Helix
+for Databricks**. O job Python que hoje roda localmente passa a ser um
+Databricks Job acionado via REST API:
 
 ```
-Control-M Job → POST /api/2.1/jobs/run-now (Databricks Jobs API)
-             ← pooling de status via GET /api/2.1/runs/get
-             → captura exit code e loga resultado
+Control-M Job
+  → POST https://<workspace>.azuredatabricks.net/api/2.1/jobs/run-now
+  ← polling via GET /api/2.1/runs/get
+  → captura exit code → condições ON_DO
 ```
 
-O `--run-id` já injetado pelo Control-M garante rastreabilidade fim a fim
-entre o log do Control-M e os metadados gravados no Unity Catalog.
+O `--run-id` injetado pelo Control-M garante rastreabilidade fim a fim
+entre o log do Control-M, os jobs do Databricks e os metadados no Unity Catalog.
 
-#### Se Databricks Workflows for o destino
+#### Identidade e segurança na integração
 
-Cada `@task` do `prefect_flow.py` vira uma **task** dentro de um Databricks
-Workflow multi-task. O DAG de dependências já está documentado no docstring
-do `pipeline_flow()` e é reproduzido 1:1 no Workflow. O Control-M passa a
-orquestrar apenas o gatilho do Workflow (um único job externo), e o
-paralelismo por tabela é gerenciado internamente pelo Databricks.
+O Control-M autentica no Databricks via **Service Principal** registrado no
+Azure Active Directory (Entra ID). As permissões são gerenciadas pelo Unity
+Catalog RBAC — o Service Principal do Control-M tem acesso apenas aos
+recursos do `data_masters` schema, sem permissão de escrita em outros catálogos.
 
 ---
 
-### Unity Catalog — Substituição do ChromaDB
-
-Na PoC, o ChromaDB armazena os embeddings de documentação localmente.
-Em produção, o Unity Catalog assume esse papel com duas estruturas:
+### Unity Catalog — Documentação e Governança
 
 **Tabela de metadados validados:**
+
 ```sql
 CREATE TABLE main.data_masters.table_documentation (
-  table_name        STRING NOT NULL,
-  run_id            STRING NOT NULL,
-  scenario          STRING,
-  documentation     STRING,   -- markdown gerado pelo SLM
-  ai_metadata_status STRING DEFAULT 'DRAFT',
-  validated_by      STRING,   -- Data Steward que promoveu para VALIDATED
-  validated_at      TIMESTAMP,
-  quality_score     DOUBLE,
-  created_at        TIMESTAMP DEFAULT current_timestamp()
+  table_name         STRING    NOT NULL,
+  run_id             STRING    NOT NULL,
+  scenario           STRING,
+  documentation      STRING,   -- markdown gerado pelo SLM
+  ai_metadata_status STRING    DEFAULT 'DRAFT',
+  validated_by       STRING,   -- Data Steward que promoveu para VALIDATED
+  validated_at       TIMESTAMP,
+  quality_score      DOUBLE,
+  created_at         TIMESTAMP DEFAULT current_timestamp()
 )
 USING DELTA
 TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true');
 ```
 
-O Change Data Feed do Delta permite que qualquer consumidor (incluindo o
-Devin via RAG) receba notificações quando um registro muda de `DRAFT` para
-`VALIDATED` — sem polling.
+**Databricks Vector Search** substitui o ChromaDB — embeddings ficam
+versionados junto com os dados, com controle de acesso pelo mesmo RBAC
+das tabelas Delta. O Devin consulta o Vector Search via API REST interna,
+sem sair do perímetro Azure.
 
-**Política HITL no Unity Catalog:**
-- Registros com `ai_metadata_status = 'DRAFT'` há mais de 5 dias úteis
-  disparam alerta automático para o Data Steward owner da tabela.
-- O Devin/agente consumidor consulta apenas registros `VALIDATED`.
-  Registros `DRAFT` são retornados com aviso explícito na resposta.
+**Política HITL:**
+- Registros `DRAFT` há mais de 5 dias úteis disparam alerta via
+  Azure Logic Apps → email/Teams para o Data Steward owner da tabela.
+- O Devin consulta apenas registros `VALIDATED`. Registros `DRAFT`
+  são retornados com aviso explícito no contexto RAG.
+
+---
+
+### MLflow Tracing — Auditoria de Outputs SLM
+
+Toda chamada ao modelo em produção é rastreada automaticamente via
+**MLflow Tracing**, nativo no Azure Databricks:
+
+```python
+import mlflow
+with mlflow.start_run():
+    mlflow.log_param("model", OLLAMA_MODEL)
+    mlflow.log_param("table", table_name)
+    mlflow.log_text(prompt, "prompt.txt")
+    mlflow.log_text(documentation, "output.txt")
+    mlflow.log_metric("inference_ms", elapsed_ms)
+```
+
+Isso resolve o requisito de auditoria do comitê de segurança e é um argumento
+direto para o BACEN: cada documentação gerada tem rastreabilidade completa
+de input, output, modelo usado, versão e timestamp.
 
 ---
 
 ### Checklist de Pré-requisitos para Iniciar a Migração
 
-Antes de começar qualquer fase, estes itens precisam estar resolvidos:
+**Azure / Infraestrutura:**
+- [ ] Subscription Azure com cota para Azure Databricks aprovada
+- [ ] ADLS Gen2 provisionado com containers Bronze/Silver/Gold/Quarantine
+- [ ] Azure Key Vault configurado para secrets do projeto
+- [ ] Service Principal criado para o projeto (Databricks + Storage + Key Vault)
+- [ ] VNet e Private Endpoints configurados (ADLS, Azure OpenAI se Opção A)
 
-- [ ] Definir o workspace Databricks de destino (dev/homolog/prod)
-- [ ] Confirmar o storage backend (ADLS Gen2 ou S3 — depende do cloud do banco)
-- [ ] Obter aprovação do comitê de segurança para o modelo SLM (Opção A, B ou C)
-- [ ] Mapear o cluster de Unity Catalog e definir o catálogo/schema de destino
-- [ ] Alinhar com o time de Control-M o formato de integração (plugin nativo vs REST)
-- [ ] Definir o SLA de validação HITL (ex: 5 dias úteis) e o escalation path
-- [ ] Registrar o projeto no catálogo de iniciativas de dados do banco
+**Databricks:**
+- [ ] Workspace Azure Databricks (dev/homolog/prod) provisionado
+- [ ] Unity Catalog habilitado no workspace
+- [ ] Catálogo `data_masters` e schema criados
+- [ ] Cluster policy definida (tamanho, autoscaling, Spark version)
+
+**Compliance e Segurança:**
+- [ ] Aprovação do comitê de segurança para a opção SLM escolhida (A, B ou C)
+- [ ] DPA (Data Processing Agreement) assinado se Opção A (Azure OpenAI)
+- [ ] LGPD: confirmar que dados fictícios não incluem CPF/CNPJ reais em produção
+- [ ] Análise de impacto BACEN Res. 4.658 para inferência de IA em produção
+
+**Operações:**
+- [ ] Alinhamento com time Control-M para integração via BMC Helix
+- [ ] SLA de validação HITL definido (ex: 5 dias úteis) e escalation path
+- [ ] Definir Data Stewards owners por tabela no Unity Catalog
+- [ ] Registrar projeto no catálogo de iniciativas de dados do banco
 
 ---
 
 ### Estimativa de Esforço por Fase
 
-| Fase | Componente | Esforço estimado | Pré-requisito |
+| Fase | Componente | Esforço | Pré-requisito |
 |---|---|---|---|
-| 1 | Storage (ADLS/S3) | 1 sprint | Workspace Databricks disponível |
+| 1 | Storage → ADLS Gen2 | 1 sprint | Workspace + ADLS provisionados |
 | 2a | Validação → DLT | 1 sprint | Fase 1 concluída |
 | 2b | Profiler → PySpark | 1 sprint | Fase 1 concluída |
-| 2c | SLM → VM/Model Serving | 2–3 sprints | Aprovação compliance |
-| 3 | Orquestração → Control-M | 1 sprint | Fases 2a e 2b concluídas |
-| — | Unity Catalog (HITL) | 1 sprint | Fase 3 concluída |
+| 2c | Gold layer (Delta) | 1 sprint | Fases 2a e 2b concluídas |
+| 3 | SLM → Azure OpenAI / Model Serving | 2–3 sprints | Aprovação compliance |
+| 4 | Orquestração → Control-M + Workflows | 1 sprint | Fases 2 e 3 concluídas |
+| — | Unity Catalog + Vector Search (HITL) | 1 sprint | Fase 4 concluída |
+| — | MLflow Tracing (auditoria) | 0.5 sprint | Fase 3 concluída |
 
-**Total estimado:** 7–9 sprints (assumindo sprints de 2 semanas e time de 2 engenheiros).
+**Total estimado:** 8–10 sprints (sprints de 2 semanas, time de 2 engenheiros).
 
-O critério de aceite de cada fase é a execução do `python prefect_flow.py --scenario all`
-produzindo resultados idênticos aos da PoC local, com os dados lidos e escritos
-no ambiente de destino.
+O critério de aceite de cada fase é a execução do pipeline produzindo
+resultados idênticos aos da PoC local, com dados lidos e escritos
+no ambiente Azure de destino.
+
+---
+
+### Compatibilidade da estrutura atual com Azure
+
+| Componente PoC | Equivalente Azure | Compatível sem reescrita? |
+|---|---|---|
+| MinIO (S3 API) | ADLS Gen2 (S3-compatible) | ✅ Sim — mesma API via camada Storage |
+| DuckDB / Pandas | PySpark no Databricks | ⚠️ Migração de lógica, interface idêntica |
+| Ollama (REST API) | Azure OpenAI / Model Serving | ✅ Sim — só troca URL e header auth |
+| ChromaDB | Databricks Vector Search | ⚠️ Migração de embeddings necessária |
+| Prefect (decoradores) | Databricks Workflows | ✅ Sim — `--no-prefect` já é o modo produção |
+| YAML contracts | Delta Live Tables Expectations | ⚠️ Requer reescrita das regras em Python DLT |
+| JSON metrics local | Delta table Gold | ✅ Sim — mesmo schema, destino diferente |
+| pipeline_report.md | Unity Catalog lineage | ✅ Complementar — MD continua existindo |

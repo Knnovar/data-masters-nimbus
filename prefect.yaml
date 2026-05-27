@@ -1,0 +1,113 @@
+# prefect.yaml — Configuração de deploy da Pipeline Data Masters
+#
+# Uso:
+#   prefect deploy                          → deploy interativo
+#   prefect deploy --name baseline-manual   → deploy direto por nome
+#
+# Após o deploy, disparar uma run:
+#   prefect deployment run 'data-masters-pipeline/baseline-manual'
+#   prefect deployment run 'data-masters-pipeline/baseline-manual' \
+#       --param scenario=non_breaking
+#
+# UI local: http://localhost:4200  (requer: prefect server start)
+
+# ── Metadados do projeto ───────────────────────────────────────────────────
+name: data-masters
+prefect-version: "2.19.0"       # versão mínima — atualize se usar versão maior
+
+# ── Localização do código ─────────────────────────────────────────────────
+# Para PoC local, pull é do sistema de arquivos.
+# Em produção, troque por pull do tipo "git_clone" apontando para o repositório.
+pull:
+  - prefect.deployments.steps.set_working_directory:
+      directory: "C:\\Users\\Renan\\OneDrive\\Documents\\Programacao\\data-masters\\data-masters-nimbus"            # diretório onde o prefect.yaml está
+
+# ── Deployments ───────────────────────────────────────────────────────────
+# Cada deployment representa um modo de execução do mesmo flow.
+# Para a PoC foram criados 5:
+#   1. baseline-manual     → disparo manual, cenário baseline
+#   2. all-manual          → disparo manual, todos os cenários
+#   3. scheduled-daily     → execução diária automática (baseline)
+#   4. non-breaking-watch  → para testar schema evolution
+#   5. breaking-watch      → para testar DLQ / quarentena
+
+deployments:
+
+  # ── 1. Baseline manual ──────────────────────────────────────────────────
+  - name: baseline-manual
+    description: "Disparo manual do pipeline no cenário baseline (fluxo feliz)."
+    entrypoint: prefect_flow.py:pipeline_flow
+    parameters:
+      scenario: baseline
+    work_pool:
+      name: data-masters-local
+      work_queue_name: default
+    tags:
+      - data-masters
+      - baseline
+      - manual
+
+  # ── 2. All scenarios — manual ────────────────────────────────────────────
+  # Nota: pipeline_flow aceita um cenário por vez.
+  # Para rodar os 3 cenários em sequência, use o run_pipeline.py diretamente
+  # ou dispare 3 runs separadas via CLI/UI.
+  - name: all-manual
+    description: "Disparo manual — todos os cenários em sequência via loop externo."
+    entrypoint: prefect_flow.py:pipeline_flow
+    parameters:
+      scenario: baseline        # ponto de partida; altere via UI antes de rodar
+    work_pool:
+      name: data-masters-local
+      work_queue_name: default
+    tags:
+      - data-masters
+      - all-scenarios
+      - manual
+
+  # ── 3. Agendamento diário ────────────────────────────────────────────────
+  # Simula o batch noturno que rodaria no Control-M em produção.
+  # Ajuste o cron conforme a janela de batch do banco.
+  - name: scheduled-daily
+    description: "Execução diária automática — equivalente ao agendamento Control-M."
+    entrypoint: prefect_flow.py:pipeline_flow
+    parameters:
+      scenario: baseline
+    schedules:
+      - cron: "0 6 * * 1-5"    # seg–sex às 06:00 (horário local)
+        timezone: "America/Sao_Paulo"
+        active: false           # deixe false durante a PoC; ative quando pronto
+    work_pool:
+      name: data-masters-local
+      work_queue_name: default
+    tags:
+      - data-masters
+      - scheduled
+      - batch
+
+  # ── 4. Non-breaking watch ────────────────────────────────────────────────
+  - name: non-breaking-watch
+    description: "Testa detecção de schema evolution não-crítica (nova coluna)."
+    entrypoint: prefect_flow.py:pipeline_flow
+    parameters:
+      scenario: non_breaking
+    work_pool:
+      name: data-masters-local
+      work_queue_name: default
+    tags:
+      - data-masters
+      - schema-evolution
+      - manual
+
+  # ── 5. Breaking change watch ─────────────────────────────────────────────
+  - name: breaking-watch
+    description: "Testa roteamento para quarentena (DLQ) em breaking change."
+    entrypoint: prefect_flow.py:pipeline_flow
+    parameters:
+      scenario: breaking
+    work_pool:
+      name: data-masters-local
+      work_queue_name: default
+    tags:
+      - data-masters
+      - dlq
+      - manual

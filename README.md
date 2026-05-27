@@ -42,9 +42,9 @@ docker compose up -d
 
 # 4. (Opcional) Suba o Ollama com o modelo configurado
 ollama serve
-ollama pull qwen2.5-coder:7b
+ollama pull phi4
 # Recomendado para documentação de negócio:
-# ollama pull phi4   OU   ollama pull llama3.1:8b
+# ollama pull phi4  OU   ollama pull llama3.1:8b
 ```
 
 > **Sem Ollama:** a pipeline roda normalmente. O enriquecimento SLM é ignorado
@@ -106,13 +106,24 @@ data/
 
 O Prefect é a alternativa recomendada para orquestração Python-nativa:
 
-```bash
-# Inicia a UI local em http://localhost:4200
+# Terminal 1 — servidor (deixar aberto)
 prefect server start
 
-# Em outro terminal, registra e executa o flow
-prefect deploy  # (requer prefect.yaml — veja documentação Prefect)
-```
+# Terminal 2 — setup uma única vez
+python setup_prefect.py
+
+# Terminal 3 — worker (deixar aberto)
+prefect worker start --pool data-masters-local
+
+A partir daqui, rodar os comandos:
+
+prefect deployment run 'data-masters-pipeline/baseline-manual'
+prefect deployment run 'data-masters-pipeline/non-breaking-watch'
+prefect deployment run 'data-masters-pipeline/breaking-watch'
+
+A partir do **terminal 2**
+
+
 
 **Por que Prefect no lugar do Control-M:**
 - Python-nativo — zero nova linguagem para o time
