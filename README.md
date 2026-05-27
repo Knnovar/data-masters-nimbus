@@ -115,18 +115,18 @@ python setup_prefect.py
 # Terminal 3 — worker (deixar aberto)
 prefect worker start --pool data-masters-local
 
-A partir daqui, rodar os comandos:
+- **Obs.: Caso a porta do prefect não esteja em 4200, rodar o comando set PREFECT_API_URL=http://127.0.0.1:4200/api e repetir os passos 2 e 3**
 
-```
+A partir daqui, rodar os comandos no **terminal 2**:
+
 - prefect deployment run 'data-masters-pipeline/baseline-manual'
 
 - prefect deployment run 'data-masters-pipeline/non-breaking-watch'
 
 - prefect deployment run 'data-masters-pipeline/breaking-watch'
 
-```
 
-A partir do **terminal 2**
+A partir do 
 
 
 
