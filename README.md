@@ -127,11 +127,9 @@ A partir daqui, rodar os comandos no **terminal 2**:
 
 
 
-**Por que Prefect no lugar do Control-M:**
-- Python-nativo — zero nova linguagem para o time
+**Por que Prefect no lugar do Control-M (Para testes locais):**
 - Suporte a triggers por evento (não só schedule)
 - UI local gratuita para monitoramento
-- Caminho claro para Prefect Cloud em produção
 - Retry, alertas e observabilidade out-of-the-box
 
 ---
@@ -140,7 +138,7 @@ A partir daqui, rodar os comandos no **terminal 2**:
 
 | Parâmetro | Padrão | Descrição |
 |---|---|---|
-| `OLLAMA_MODEL` | `qwen2.5-coder:7b` | Troque por `phi4` para melhor documentação de negócio |
+| `OLLAMA_MODEL` | `phi4` | Use `phi4` para melhor documentação de negócio ou `phi3.5` para um modelo mais leve|
 | `NULL_TOLERANCE_PCT` | `30.0` | % de nulos acima do qual o SLM relata anomalia |
 | `DUPLICATE_TOLERANCE` | `0.02` | 2% de duplicatas toleradas antes de warning |
 
