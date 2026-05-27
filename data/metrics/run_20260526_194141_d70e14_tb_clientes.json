@@ -1,0 +1,19 @@
+{
+  "run_id": "run_20260526_194141_d70e14",
+  "timestamp": "2026-05-26T19:43:47.913695",
+  "table": "tb_clientes",
+  "scenario": "baseline",
+  "validation_status": "PASS",
+  "evolution_type": null,
+  "rows_total": 500,
+  "rows_valid": 500,
+  "duplicate_count": 0,
+  "null_violations": {},
+  "avg_null_pct": 2.29,
+  "profiling_ms": 1249.3,
+  "slm_status": "ERROR",
+  "slm_inference_ms": 122060.6,
+  "quality_score": 97.7,
+  "issues": [],
+  "warnings": []
+}

@@ -1,0 +1,19 @@
+{
+  "run_id": "run_20260526_194141_d70e14",
+  "timestamp": "2026-05-26T19:48:03.812957",
+  "table": "tb_contratos_credito",
+  "scenario": "baseline",
+  "validation_status": "PASS",
+  "evolution_type": null,
+  "rows_total": 300,
+  "rows_valid": 300,
+  "duplicate_count": 0,
+  "null_violations": {},
+  "avg_null_pct": 0.0,
+  "profiling_ms": 959.6,
+  "slm_status": "ERROR",
+  "slm_inference_ms": 122038.2,
+  "quality_score": 100.0,
+  "issues": [],
+  "warnings": []
+}

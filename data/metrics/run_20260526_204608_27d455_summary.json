@@ -1,0 +1,63 @@
+[
+  {
+    "run_id": "run_20260526_204608_27d455",
+    "timestamp": "2026-05-26T20:46:08.961749",
+    "table": "tb_clientes",
+    "scenario": "breaking",
+    "validation_status": "DLQ",
+    "evolution_type": "BREAKING",
+    "rows_total": 500,
+    "rows_valid": 0,
+    "duplicate_count": 0,
+    "null_violations": {},
+    "avg_null_pct": 0,
+    "profiling_ms": 0,
+    "slm_status": "SKIPPED",
+    "slm_inference_ms": 0,
+    "quality_score": 20.0,
+    "issues": [
+      "Colunas obrigatórias ausentes: ['cd_agencia']"
+    ],
+    "warnings": []
+  },
+  {
+    "run_id": "run_20260526_204608_27d455",
+    "timestamp": "2026-05-26T20:51:44.049780",
+    "table": "tb_transacoes",
+    "scenario": "breaking",
+    "validation_status": "WARNING",
+    "evolution_type": null,
+    "rows_total": 2030,
+    "rows_valid": 2000,
+    "duplicate_count": 30,
+    "null_violations": {},
+    "avg_null_pct": 0.81,
+    "profiling_ms": 4167.7,
+    "slm_status": "SUCCESS",
+    "slm_inference_ms": 328812.9,
+    "quality_score": 69.4,
+    "issues": [],
+    "warnings": [
+      "30 duplicatas detectadas (1.5%)"
+    ]
+  },
+  {
+    "run_id": "run_20260526_204608_27d455",
+    "timestamp": "2026-05-26T20:57:11.760340",
+    "table": "tb_contratos_credito",
+    "scenario": "breaking",
+    "validation_status": "PASS",
+    "evolution_type": null,
+    "rows_total": 300,
+    "rows_valid": 300,
+    "duplicate_count": 0,
+    "null_violations": {},
+    "avg_null_pct": 0.0,
+    "profiling_ms": 924.5,
+    "slm_status": "SUCCESS",
+    "slm_inference_ms": 324681.5,
+    "quality_score": 100.0,
+    "issues": [],
+    "warnings": []
+  }
+]
