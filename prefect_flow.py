@@ -211,10 +211,8 @@ def task_enrich_slm(profiled: dict) -> dict:
 
     _log("JOB-DM-004", f"ENRICH/{table}", "STARTED", "calling Ollama")
     try:
-        storage       = get_storage()
-        contract_path = storage.read_path("contracts", profiled["contract_filename"])
-        reports_path  = storage._layers["reports"] if hasattr(storage, "_layers") else REPORTS_DIR
-        slm = enrich(contract_path, profiled["profiler_payload"], reports_path)
+        storage = get_storage()
+        slm     = enrich(storage, profiled["contract_filename"], profiled["profiler_payload"])
         # Documentação gravada no layer reports via SLM — anota no log
         _log("JOB-DM-004", f"ENRICH/{table}", "ENDED_OK",
              f"slm_status={slm['status']} ms={slm['inference_ms']} ai_status=DRAFT")

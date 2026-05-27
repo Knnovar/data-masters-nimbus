@@ -68,9 +68,7 @@ def run_scenario(scenario: str, run_id: str) -> list[dict]:
             profiler_payload = profile(csv_path)
 
             # Enriquecimento SLM
-            contract_path = storage.read_path("contracts", contract_filename)
-            reports_path  = storage._layers["reports"] if hasattr(storage, '_layers') else REPORTS_DIR
-            slm_result    = enrich(contract_path, profiler_payload, reports_path)
+            slm_result = enrich(storage, contract_filename, profiler_payload)
 
             # Promoção Bronze → Silver
             storage.move(filename, "bronze", "silver")

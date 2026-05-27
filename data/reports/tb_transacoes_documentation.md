@@ -6,65 +6,66 @@ A tabela `tb_transacoes` armazena informações sobre movimentações financeira
 
 ## Colunas da Tabela
 
-### id_transacao
+### `id_transacao`
 - **Propósito de Negócio**: Identificador único para cada transação.
-- **Tipo**: String (VARCHAR).
-- **Comportamento Esperado**: Não deve conter valores nulos, pois é a chave primária.
-- **Observações**:
-  - Anomalia detectada: Existem duplicatas nos identificadores de transação. Isso viola o contrato que não permite chaves duplicadas.
-
-### cd_cliente
-- **Propósito de Negócio**: Código único para identificar o cliente associado à transação.
-- **Tipo**: String (VARCHAR).
+- **Tipo**: String (VARCHAR)
+- **Comportamento Esperado**: Não deve conter valores nulos e é a chave primária da tabela.
+- **Anomalias Observadas**:
+  - Existem duplicatas: 2 registros com o mesmo `id_transacao`.
+  
+### `cd_cliente`
+- **Propósito de Negócio**: Código identificador do cliente que realizou a transação.
+- **Tipo**: String (VARCHAR)
 - **Comportamento Esperado**: Não deve conter valores nulos.
-- **Observações**:
-  - Alta concentração de alguns códigos de clientes, indicando possíveis duplicatas ou erros na atribuição.
+- **Anomalias Observadas**:
+  - Alta concentração de clientes: alguns códigos aparecem repetidamente, indicando múltiplas transações por cliente.
 
-### dt_transacao
+### `dt_transacao`
 - **Propósito de Negócio**: Data em que a transação foi realizada.
-- **Tipo**: String (VARCHAR) — esperado como tipo Date.
+- **Tipo**: String (VARCHAR) — esperado como tipo Date
 - **Comportamento Esperado**: Não deve conter valores nulos.
-- **Observações**:
-  - A coluna está armazenando datas como strings, o que pode causar problemas em operações de data.
+- **Anomalias Observadas**:
+  - Datas futuras presentes, como "2024-02-28", que podem ser erros de entrada.
 
-### vl_transacao
+### `vl_transacao`
 - **Propósito de Negócio**: Valor monetário da transação.
-- **Tipo**: String (VARCHAR) — esperado como tipo Float.
+- **Tipo**: String (VARCHAR) — esperado como tipo Float
 - **Comportamento Esperado**: Não deve conter valores nulos.
-- **Observações**:
-  - A coluna está armazenando valores como strings, o que pode causar problemas em operações aritméticas.
+- **Anomalias Observadas**:
+  - Tipo de dado incorreto: armazenado como VARCHAR ao invés de FLOAT.
 
-### tp_transacao
-- **Propósito de Negócio**: Tipo da transação (ex: saque, pagamento).
-- **Tipo**: String (VARCHAR).
+### `tp_transacao`
+- **Propósito de Negócio**: Tipo da transação (ex.: saque, pagamento).
+- **Tipo**: String (VARCHAR)
 - **Comportamento Esperado**: Não deve conter valores nulos.
-- **Observações**:
-  - Existem apenas seis tipos únicos de transações registrados.
+- **Anomalias Observadas**:
+  - Limitada variedade de tipos de transações.
 
-### cd_estabelecimento
-- **Propósito de Negócio**: Código do estabelecimento onde a transação ocorreu.
-- **Tipo**: String (VARCHAR).
-- **Comportamento Esperado**: Pode conter valores nulos.
-- **Observações**:
-  - 6.5% dos registros estão sem um código de estabelecimento.
+### `cd_estabelecimento`
+- **Propósito de Negócio**: Código identificador do estabelecimento onde a transação ocorreu.
+- **Tipo**: String (VARCHAR)
+- **Comportamento Esperado**: Pode conter valores nulos, com tolerância de 6.5% de nulidade.
+- **Anomalias Observadas**:
+  - Tipo de dado incorreto: armazenado como VARCHAR ao invés de um tipo numérico.
 
-### fl_suspeita
+### `fl_suspeita`
 - **Propósito de Negócio**: Indica se a transação é suspeita (True/False).
-- **Tipo**: String (VARCHAR) — esperado como tipo Boolean.
+- **Tipo**: String (VARCHAR) — esperado como tipo Boolean
 - **Comportamento Esperado**: Não deve conter valores nulos.
-- **Observações**:
-  - A coluna está armazenando valores booleanos como strings.
+- **Anomalias Observadas**:
+  - Tipo de dado incorreto: armazenado como VARCHAR ao invés de BOOLEAN.
 
-### cd_canal
-- **Propósito de Negócio**: Canal através do qual a transação foi realizada (ex: ATM, APP).
-- **Tipo**: String (VARCHAR).
+### `cd_canal`
+- **Propósito de Negócio**: Canal através do qual a transação foi realizada (ex.: ATM, APP).
+- **Tipo**: String (VARCHAR)
 - **Comportamento Esperado**: Não deve conter valores nulos.
-- **Observações**:
-  - Existem apenas cinco canais únicos registrados.
+- **Anomalias Observadas**:
+  - Limitada variedade de canais.
 
-## ⚠️ Pontos de Atenção
+## Chaves de Negócio
 
-1. **Duplicatas na Chave Primária (`id_transacao`)**: Existe uma violação do contrato que não permite chaves duplicadas, o que pode causar problemas em operações que dependem da unicidade
+### `id_transacao`
+- **Implicações**: Como chave primária, deve
 
 ---
 > **[AI_METADATA_STATUS: DRAFT]**

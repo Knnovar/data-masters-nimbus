@@ -2,78 +2,71 @@
 
 ## Descrição Geral
 
-A tabela `tb_clientes` é o cadastro mestre de clientes pessoa física e jurídica, gerenciada pela squad-dados-cadastrais. Ela contém informações essenciais para a identificação e segmentação dos clientes do banco.
+A tabela `tb_clientes` é um cadastro mestre que contém informações sobre clientes, tanto pessoas físicas quanto jurídicas. Esta tabela é gerida pela equipe de dados cadastrais do banco.
 
-### Versão
-- **Versão:** 1.0.0
+### Versão e Propriedade
+- **Versão**: 1.0.0
+- **Proprietário**: squad-dados-cadastrais
 
 ## Colunas da Tabela
 
 ### `cd_cliente`
-- **Tipo:** String
-- **Nullable:** Não
-- **Propósito de Negócio:** Identificador único do cliente.
-- **Comportamento Esperado:** Deve ser exclusivo e não nulo para cada registro.
-- **Estatísticas Observadas:**
-  - Percentual de Nulos: 0.0%
+- **Tipo**: String (VARCHAR)
+- **Negócio**: Identificador único do cliente.
+- **Comportamento Esperado**: Não deve conter valores nulos e deve ser exclusivo para cada registro. Serve como chave primária.
+- **Estatísticas Observadas**:
+  - Percentual de Nulos: 0%
   - Contagem Única: 500
-- **Anomalias:** Nenhuma.
+- **Anomalias**: Nenhuma observada.
 
 ### `nr_cpf_cnpj`
-- **Tipo:** String
-- **Nullable:** Não
-- **Propósito de Negócio:** Número do CPF (pessoa física) ou CNPJ (pessoa jurídica).
-- **Comportamento Esperado:** Deve ser único e não nulo.
-- **Estatísticas Observadas:**
-  - Percentual de Nulos: 0.0%
+- **Tipo**: String (VARCHAR)
+- **Negócio**: CPF para pessoas físicas ou CNPJ para empresas.
+- **Comportamento Esperado**: Não deve conter valores nulos e deve ser exclusivo para cada registro.
+- **Estatísticas Observadas**:
+  - Percentual de Nulos: 0%
   - Contagem Única: 500
-- **Anomalias:** Nenhuma.
+  - Valores Mínimo, Máximo e Médio: Verificados como numéricos (1283495651.0 a 98425103606.0).
+- **Anomalias**: Os valores estão sendo tratados como strings, mas representam números.
 
 ### `nm_cliente`
-- **Tipo:** String
-- **Nullable:** Não
-- **Propósito de Negócio:** Nome completo do cliente.
-- **Comportamento Esperado:** Deve ser único, exceto em casos de nomes iguais.
-- **Estatísticas Observadas:**
-  - Percentual de Nulos: 0.0%
-  - Contagem Única: 498
-- **Anomalias:** Existem valores duplicados para alguns nomes.
+- **Tipo**: String (VARCHAR)
+- **Negócio**: Nome do cliente.
+- **Comportamento Esperado**: Não deve conter valores nulos.
+- **Estatísticas Observadas**:
+  - Percentual de Nulos: 0%
+  - Contagem Única: 495
+  - Valores duplicados observados (ex.: "Gabriel Vargas" aparece duas vezes).
+- **Anomalias**: Existem nomes repetidos, o que pode indicar registros duplicados não identificados pela chave primária.
 
 ### `dt_nascimento`
-- **Tipo:** String (esperado Date)
-- **Nullable:** Sim
-- **Propósito de Negócio:** Data de nascimento do cliente.
-- **Comportamento Esperado:** Deve ser uma data válida, permitindo nulos.
-- **Estatísticas Observadas:**
-  - Percentual de Nulos: 0.0%
+- **Tipo**: String (VARCHAR)
+- **Negócio**: Data de nascimento do cliente.
+- **Comportamento Esperado**: Pode conter valores nulos para clientes jurídicos.
+- **Estatísticas Observadas**:
+  - Percentual de Nulos: 0%
   - Contagem Única: 495
-- **Anomalias:** Valores duplicados e formato incorreto (string).
+  - Valores duplicados observados (ex.: "1988-01-01" aparece duas vezes).
+- **Anomalias**: Tratada como string, mas deveria ser do tipo data.
 
 ### `cd_segmento`
-- **Tipo:** String
-- **Nullable:** Não
-- **Propósito de Negócio:** Segmentação do cliente (e.g., PJ_PEQUENO, PRIVATE).
-- **Comportamento Esperado:** Deve ser um valor válido dentro dos segmentos definidos.
-- **Estatísticas Observadas:**
-  - Percentual de Nulos: 0.0%
+- **Tipo**: String (VARCHAR)
+- **Negócio**: Segmentação do cliente (ex.: PJ_PEQUENO, PRIVATE).
+- **Comportamento Esperado**: Não deve conter valores nulos.
+- **Estatísticas Observadas**:
+  - Percentual de Nulos: 0%
   - Contagem Única: 5
-- **Anomalias:** Nenhuma.
+- **Anomalias**: Nenhuma observada.
 
 ### `cd_agencia`
-- **Tipo:** String
-- **Nullable:** Não
-- **Propósito de Negócio:** Código da agência bancária associada ao cliente.
-- **Comportamento Esperado:** Deve ser um código válido e não nulo.
-- **Estatísticas Observadas:**
-  - Percentual de Nulos: 0.0%
+- **Tipo**: String (VARCHAR)
+- **Negócio**: Código da agência associada ao cliente.
+- **Comportamento Esperado**: Não deve conter valores nulos.
+- **Estatísticas Observadas**:
+  - Percentual de Nulos: 0%
   - Contagem Única: 473
-- **Anomalias:** Existem valores incomuns como "AGENC-???".
-
-### `vl_renda_mensal`
-- **Tipo:** String (esperado Float)
-- **Nullable:** Sim
-- **Propósito de Negócio:** Renda mensal do cliente.
-- **Comportamento Esperado:** Deve ser um valor numérico, permit
+  - Valores duplicados observados (ex.: "AGENC-???" aparece 15 vezes).
+- **Anomalias**: Exist
 
 ---
 > **[AI_METADATA_STATUS: DRAFT]**
