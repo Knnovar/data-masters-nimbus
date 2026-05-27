@@ -241,41 +241,45 @@ def _contrato_contratos_credito() -> dict:
 # Entry point público
 # ─────────────────────────────────────────────────────────────────────────────
 def generate_all(
-    landing_dir: Path,
-    contracts_dir: Path,
+    storage,
     scenario: ScenarioType = "baseline",
 ) -> list[dict]:
     """
-    Gera os três conjuntos de dados fictícios e seus manifestos YAML.
+    Gera dados fictícios e persiste via Storage (bronze + contracts).
 
-    Retorna lista de dicts com os caminhos produzidos:
-        [{"table": ..., "csv_path": ..., "contract_path": ...}, ...]
+    Bronze layer  : CSVs com os dados gerados (landing zone)
+    Contracts     : manifestos YAML com os contratos de dados
+
+    Retorna lista de dicts com metadados de cada tabela produzida.
     """
     print(f"\n[GENERATE] Gerando dados ficticios - cenario: [{scenario.upper()}]")
 
-    clientes_df = _gerar_clientes(500, scenario)
+    clientes_df   = _gerar_clientes(500, scenario)
     transacoes_df = _gerar_transacoes(clientes_df)
-    contratos_df = _gerar_contratos_credito(clientes_df)
+    contratos_df  = _gerar_contratos_credito(clientes_df)
 
     datasets = [
-        ("tb_clientes",         clientes_df,    _contrato_clientes(scenario)),
-        ("tb_transacoes",       transacoes_df,  _contrato_transacoes()),
+        ("tb_clientes",          clientes_df,   _contrato_clientes(scenario)),
+        ("tb_transacoes",        transacoes_df, _contrato_transacoes()),
         ("tb_contratos_credito", contratos_df,  _contrato_contratos_credito()),
     ]
 
     produced = []
     for table_name, df, contract in datasets:
-        suffix = f"_{scenario}" if scenario != "baseline" else ""
-        csv_path      = landing_dir   / f"{table_name}{suffix}.csv"
-        contract_path = contracts_dir / f"{table_name}{suffix}.yaml"
+        suffix            = f"_{scenario}" if scenario != "baseline" else ""
+        csv_filename      = f"{table_name}{suffix}.csv"
+        contract_filename = f"{table_name}{suffix}.yaml"
 
-        df.to_csv(csv_path, index=False)
-        with open(contract_path, "w", encoding="utf-8") as f:
-            yaml.dump(contract, f, allow_unicode=True, sort_keys=False)
+        storage.write("bronze", csv_filename, df)
+        storage.write_text("contracts", contract_filename,
+                           yaml.dump(contract, allow_unicode=True, sort_keys=False))
 
-        print(f"   [OK] {table_name}: {len(df)} linhas -> {csv_path.name}")
-        produced.append(
-            {"table": table_name, "csv_path": csv_path, "contract_path": contract_path, "scenario": scenario}
-        )
+        print(f"   [OK] {table_name}: {len(df)} linhas -> bronze/{csv_filename}")
+        produced.append({
+            "table"            : table_name,
+            "filename"         : csv_filename,
+            "contract_filename": contract_filename,
+            "scenario"         : scenario,
+        })
 
     return produced

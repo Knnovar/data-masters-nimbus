@@ -389,3 +389,117 @@ no ambiente Azure de destino.
 | YAML contracts | Delta Live Tables Expectations | ⚠️ Requer reescrita das regras em Python DLT |
 | JSON metrics local | Delta table Gold | ✅ Sim — mesmo schema, destino diferente |
 | pipeline_report.md | Unity Catalog lineage | ✅ Complementar — MD continua existindo |
+
+
+---
+
+## Parte 3 — Arquitetura Medallion e Camada de Abstração Storage
+
+### O que foi implementado na PoC
+
+A PoC agora implementa a arquitetura medallion completa com uma camada de
+abstração `Storage` que torna o backend intercambiável sem alteração de código.
+
+```
+src/storage/storage.py
+├── StorageBase         interface comum (ABC)
+├── LocalStorage        backend disco local  (USE_MINIO=False, padrão)
+└── MinIOStorage        backend MinIO/S3     (USE_MINIO=True, requer Docker)
+```
+
+**Mapeamento de camadas:**
+
+```
+Camada       Local (PoC)           MinIO (PoC c/ Docker)    Azure (Produção)
+──────────────────────────────────────────────────────────────────────────────
+bronze       data/landing/         data-masters-bronze      abfss://bronze@...
+silver       data/processed/       data-masters-silver      abfss://silver@...
+gold         data/gold/            data-masters-gold        abfss://gold@...
+quarantine   data/quarantine/      data-masters-quarantine  abfss://quarantine@...
+contracts    data/contracts/       data-masters-contracts   abfss://contracts@...
+metrics      data/metrics/         data-masters-metrics     abfss://metrics@...
+reports      data/reports/         data-masters-reports     abfss://reports@...
+```
+
+**Fluxo de promoção entre camadas (confirmado em produção da PoC):**
+
+```
+[JOB-DM-001] Geração   → escreve em BRONZE
+[JOB-DM-002] Validação → DLQ  → move para QUARANTINE
+                       → PASS/WARNING → permanece em BRONZE
+[JOB-DM-003] Profiling → promove BRONZE → SILVER
+[JOB-DM-004] SLM       → escreve documentação em REPORTS
+[JOB-DM-005] Métricas  → escreve JSON em METRICS (futuro: tabela GOLD)
+[JOB-DM-006] Relatório → consolida REPORTS + METRICS
+```
+
+### Como ativar o MinIO quando Docker estiver disponível
+
+O Docker é opcional na PoC. Quando seu ambiente suportar virtualização:
+
+```python
+# config.py — única linha a alterar
+USE_MINIO = True
+
+# Subir o MinIO
+docker compose up -d
+
+# Pipeline usa MinIO automaticamente — sem alteração de código
+python prefect_flow.py --no-prefect --scenario baseline
+```
+
+O backend é selecionado pela factory `get_storage()` em tempo de execução.
+A UI do MinIO em `http://localhost:9001` mostrará os buckets sendo populados
+em tempo real — útil para demonstração visual na apresentação.
+
+### Migração MinIO → ADLS Gen2 (Azure)
+
+Quando o ambiente Azure estiver disponível, a migração é uma extensão natural
+da classe `MinIOStorage`. O ADLS Gen2 expõe API S3-compatível — a mudança
+é de configuração, não de código:
+
+**Opção A — Manter o client MinIO apontando para ADLS Gen2:**
+```python
+# config.py
+MINIO_ENDPOINT   = "<storage-account>.blob.core.windows.net"
+MINIO_ACCESS_KEY = "<storage-account>"         # via Azure Key Vault
+MINIO_SECRET_KEY = "<access-key>"              # via Azure Key Vault
+USE_MINIO        = True
+```
+
+**Opção B — Adicionar backend `ADLSStorage` estendendo `StorageBase`:**
+Cria uma terceira implementação usando o SDK `azure-storage-file-datalake`.
+Mais verboso, mas permite usar features exclusivas do ADLS Gen2 como
+hierarquia de diretórios, ACLs por diretório e integração com Entra ID.
+Recomendado para produção, onde o controle de acesso granular é requisito.
+
+Em ambas as opções, o restante do pipeline — generator, validator, profiler,
+SLM, metrics — não tem nenhuma linha alterada.
+
+### Impacto no plano de estimativas
+
+A implementação da camada Storage antecipa parte do trabalho da Fase 1
+(Storage → ADLS Gen2). A estimativa original de 1 sprint para essa fase
+reduz para aproximadamente **0.5 sprint**, já que:
+
+- A interface `StorageBase` está definida e testada
+- O mapeamento Bronze/Silver/Gold/Quarantine está operacional
+- O comportamento de promoção entre camadas está implementado e validado
+- A única tarefa remanescente é adicionar o backend `ADLSStorage` e
+  configurar a autenticação via Service Principal no Azure Key Vault
+
+### Tabela de compatibilidade atualizada
+
+| Componente PoC | Equivalente Azure | Compatível sem reescrita? |
+|---|---|---|
+| LocalStorage (disco) | ADLSStorage (ADLS Gen2) | ✅ Sim — nova impl. de StorageBase |
+| MinIOStorage (S3 API) | ADLS Gen2 (S3-compat.) | ✅ Sim — só troca endpoint/credenciais |
+| Promoção Bronze→Silver | Delta Live Tables | ⚠️ DLT gerencia promoção automaticamente |
+| Quarantine local | ADLS quarantine layer | ✅ Sim — já mapeado na camada Storage |
+| DuckDB / Pandas | PySpark no Databricks | ⚠️ Migração de lógica, interface idêntica |
+| Ollama (REST API) | Azure OpenAI / Model Serving | ✅ Sim — só troca URL e header auth |
+| ChromaDB | Databricks Vector Search | ⚠️ Migração de embeddings necessária |
+| Prefect (decoradores) | Databricks Workflows | ✅ Sim — --no-prefect já é o modo produção |
+| YAML contracts | Delta Live Tables Expectations | ⚠️ Requer reescrita das regras em Python DLT |
+| JSON metrics local | Delta table Gold | ✅ Sim — mesmo schema, destino diferente |
+| pipeline_report.md | Unity Catalog lineage | ✅ Complementar — MD continua existindo |

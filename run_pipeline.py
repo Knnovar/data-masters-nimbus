@@ -19,10 +19,8 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from config import (
-    LANDING_DIR, QUARANTINE_DIR, PROCESSED_DIR,
-    CONTRACTS_DIR, METRICS_DIR, REPORTS_DIR,
-)
+from config import METRICS_DIR, REPORTS_DIR, DATA_DIR
+from src.storage.storage import get_storage
 from src.generators.data_generator import generate_all
 from src.validation.validator import validate
 from src.profiler.duckdb_profiler import profile
@@ -38,45 +36,46 @@ BANNER = """
 
 
 def run_scenario(scenario: str, run_id: str) -> list[dict]:
-    """Executa um único cenário end-to-end. Retorna lista de métricas."""
-    print(f"\n{'═'*66}")
-    print(f"  CENÁRIO: {scenario.upper()}")
-    print(f"{'═'*66}")
+    """Executa um único cenário end-to-end usando a camada Storage."""
+    print(f"\n{chr(9552)*66}")
+    print(f"  CENARIO: {scenario.upper()}")
+    print(f"{chr(9552)*66}")
 
-    # ── 1. Geração de dados ────────────────────────────────────────────────
-    produced = generate_all(LANDING_DIR, CONTRACTS_DIR, scenario=scenario)
+    # Instancia o backend de storage (local ou MinIO conforme config.py)
+    storage = get_storage()
 
-    # ── 2. Loop por tabela ─────────────────────────────────────────────────
+    # ── 1. Bronze: geração de dados ───────────────────────────────────────
+    produced = generate_all(storage, scenario=scenario)
+
+    # ── 2. Loop por tabela ────────────────────────────────────────────────
     scenario_metrics = []
     for item in produced:
-        table         = item["table"]
-        csv_path      = item["csv_path"]
-        contract_path = item["contract_path"]
+        table             = item["table"]
+        filename          = item["filename"]
+        contract_filename = item["contract_filename"]
 
-        print(f"\n  ── {table} ──")
+        print(f"\n  -- {table} --")
 
-        # Validação
-        val_result = validate(csv_path, contract_path, QUARANTINE_DIR, scenario=scenario)
+        # Silver: validação (DLQ → quarantine, OK → permanece no bronze)
+        val_result = validate(storage, filename, contract_filename, scenario=scenario)
 
-        # Se foi para DLQ, não profila nem enriquece
         if val_result.status == "DLQ":
-            slm_result      = {"table": table, "status": "SKIPPED", "inference_ms": 0, "documentation": ""}
+            slm_result       = {"table": table, "status": "SKIPPED", "inference_ms": 0, "documentation": ""}
             profiler_payload = {"table": table, "rows": 0, "profiling_ms": 0, "columns": {}}
         else:
-            # Profiling
+            # Profiling via path local (DuckDB/Pandas)
+            csv_path         = storage.read_path("bronze", filename)
             profiler_payload = profile(csv_path)
 
             # Enriquecimento SLM
-            slm_result = enrich(contract_path, profiler_payload, REPORTS_DIR)
+            contract_path = storage.read_path("contracts", contract_filename)
+            reports_path  = storage._layers["reports"] if hasattr(storage, '_layers') else REPORTS_DIR
+            slm_result    = enrich(contract_path, profiler_payload, reports_path)
 
-            # Move para processed (shutil.move sobrescreve no Windows)
-            import shutil
-            processed_path = PROCESSED_DIR / csv_path.name
-            if processed_path.exists():
-                processed_path.unlink()
-            shutil.move(str(csv_path), str(processed_path))
+            # Promoção Bronze → Silver
+            storage.move(filename, "bronze", "silver")
 
-        # Métricas
+        # Gold: métricas agregadas
         m = collect(run_id, val_result, profiler_payload, slm_result, METRICS_DIR)
         scenario_metrics.append(m)
 

@@ -226,3 +226,37 @@ python prefect_flow.py --no-prefect --scenario all
 - Aceita `--run-id` externo para injeção do ID de job do Control-M
 - Exit code global via `sys.exit()` — 0=OK, 1=WARNING, 2=ERROR
 - DAG de dependências documentado no docstring do `pipeline_flow()`
+
+---
+
+## 10. Atualização — Sessão 2026-05-27
+
+### Adicionado nesta sessão
+
+| Arquivo | Descrição |
+|---|---|
+| `src/storage/storage.py` | Camada de abstração Storage com LocalStorage e MinIOStorage |
+| `src/storage/__init__.py` | Init do módulo |
+| `config.py` | Adicionado USE_MINIO, GOLD_DIR e refatoração de paths |
+| `src/generators/data_generator.py` | generate_all() agora recebe storage ao invés de paths |
+| `src/validation/validator.py` | validate() agora recebe storage + filenames |
+| `run_pipeline.py` | run_scenario() usa get_storage() |
+| `prefect_flow.py` | Todos os 4 tasks atualizados para usar get_storage() |
+| `MIGRATION_PLAN.md` | Parte 3 adicionada — Medallion + Storage |
+
+### Fluxo medallion confirmado em execução
+
+```
+BRONZE  → dado bruto gerado pelo data_generator
+SILVER  → promovido pelo task_profile após validação PASS/WARNING
+QUARANTINE → isolado pelo task_validate em BREAKING CHANGE
+REPORTS → documentação SLM por tabela
+METRICS → JSON de métricas por run
+```
+
+### Próximos passos
+
+- Testar com MinIO quando Docker estiver disponível (USE_MINIO=True)
+- Implementar ADLSStorage (Fase 1 da migração Azure) quando workspace disponível
+- Adicionar tabela Gold consolidada de métricas no metrics_collector.py
+- Refazer o deploy Prefect após as mudanças (python setup_prefect.py)

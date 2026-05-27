@@ -16,8 +16,10 @@ import yaml
 from src.validation.contracts import DataContract
 
 
-def _load_contract(contract_path: Path) -> DataContract:
-    with open(contract_path, encoding="utf-8") as f:
+def _load_contract_from_storage(storage, contract_filename: str) -> DataContract:
+    """Carrega contrato via Storage (local ou MinIO)."""
+    path = storage.read_path("contracts", contract_filename)
+    with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f)
     return DataContract.from_dict(raw)
 
@@ -132,29 +134,35 @@ def _check_nulls(contract: DataContract, df: pd.DataFrame) -> tuple[list[str], d
 # Função principal
 # ─────────────────────────────────────────────────────────────────────────────
 def validate(
-    csv_path      : Path,
-    contract_path : Path,
-    quarantine_dir: Path,
-    scenario      : str = "baseline",
+    storage          ,          # StorageBase — local ou MinIO
+    filename         : str,
+    contract_filename: str,
+    scenario         : str = "baseline",
 ) -> ValidationResult:
+    """
+    Valida um arquivo da camada Bronze contra seu contrato de dados.
 
-    table = contract_path.stem.split("_non_breaking")[0].split("_breaking")[0]
+    Em caso de BREAKING CHANGE, roteia para a camada Quarantine (DLQ).
+    Em caso de PASS/WARNING, o arquivo permanece no Bronze até ser
+    promovido para Silver pelo módulo chamador.
+    """
+    table  = contract_filename.split("_non_breaking")[0].split("_breaking")[0].replace(".yaml","")
     result = ValidationResult(table=table, status="PASS", scenario=scenario)
 
-    # 1. Carregar contrato
+    # 1. Carregar contrato da camada contracts
     try:
-        contract = _load_contract(contract_path)
-    except (ValidationError, Exception) as e:
-        result.status = "DLQ"
-        result.issues.append(f"Manifesto YAML inválido: {e}")
-        return result
-
-    # Carrega como strings puras — zona landing recebe dados brutos do legado
-    try:
-        df = pd.read_csv(csv_path, low_memory=False, dtype=str)
+        contract = _load_contract_from_storage(storage, contract_filename)
     except Exception as e:
         result.status = "DLQ"
-        result.issues.append(f"Arquivo ilegível: {e}")
+        result.issues.append(f"Manifesto YAML invalido: {e}")
+        return result
+
+    # 2. Ler dado da camada Bronze — sempre como string (dado bruto do legado)
+    try:
+        df = storage.read("bronze", filename)
+    except Exception as e:
+        result.status = "DLQ"
+        result.issues.append(f"Arquivo ilegivel: {e}")
         return result
 
     result.rows_total = len(df)
@@ -165,24 +173,23 @@ def validate(
     result.issues.extend(issues)
     result.warnings.extend(warnings)
 
-    if issues:  # BREAKING → DLQ
+    if issues:  # BREAKING → Quarantine
         result.status = "DLQ"
-        quarantine_path = quarantine_dir / csv_path.name
-        df.to_csv(quarantine_path, index=False)
-        print(f"   🔴  [{table}] BREAKING CHANGE → quarentena: {quarantine_path.name}")
+        storage.write("quarantine", filename, df)
+        print(f"   [DLQ] [{table}] BREAKING CHANGE -> quarantine/{filename}")
         return result
 
     if warnings:
         result.status = "WARNING"
-        print(f"   🟡  [{table}] NON-BREAKING CHANGE detectado")
+        print(f"   [WARN] [{table}] NON-BREAKING CHANGE detectado")
         for w in warnings:
-            print(f"         ↳ {w}")
+            print(f"          -> {w}")
 
     # 4. Nulos em colunas obrigatórias
     null_violations = _check_nulls(contract, df)
     if null_violations:
         result.null_violations = null_violations
-        result.warnings.append(f"Nulos em colunas obrigatórias: {null_violations}")
+        result.warnings.append(f"Nulos em colunas obrigatorias: {null_violations}")
         if result.status == "PASS":
             result.status = "WARNING"
 
@@ -199,6 +206,6 @@ def validate(
 
     result.rows_valid = result.rows_total - result.duplicate_count
     if result.status == "PASS":
-        print(f"   🟢  [{table}] Validação OK — {result.rows_total} linhas")
+        print(f"   [OK] [{table}] Validacao OK - {result.rows_total} linhas")
 
     return result

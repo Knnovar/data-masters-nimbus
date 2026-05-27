@@ -38,21 +38,12 @@ import sys
 import uuid
 from datetime import datetime
 from pathlib import Path
-import sys
-import io
-
-
-# Tratativa de erro com caracter especial do Prefect
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 # Torna o projeto importável de qualquer working directory
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config import (
-    LANDING_DIR, QUARANTINE_DIR, PROCESSED_DIR,
-    CONTRACTS_DIR, METRICS_DIR, REPORTS_DIR,
-)
+from config import METRICS_DIR, REPORTS_DIR
+from src.storage.storage import get_storage
 from src.generators.data_generator import generate_all
 from src.validation.validator import validate
 from src.profiler.duckdb_profiler import profile
@@ -113,14 +104,16 @@ def task_generate_data(scenario: str, run_id: str) -> list:
     """
     _log("JOB-DM-001", "GENERATE", "STARTED", f"scenario={scenario}")
     try:
-        produced = generate_all(LANDING_DIR, CONTRACTS_DIR, scenario=scenario)
-        _log("JOB-DM-001", "GENERATE", "ENDED_OK", f"tables={len(produced)}")
+        storage  = get_storage()
+        produced = generate_all(storage, scenario=scenario)
+        _log("JOB-DM-001", "GENERATE", "ENDED_OK", f"tables={len(produced)} backend={type(storage).__name__}")
+        # Serializa apenas metadados — Storage é recriado em cada task
         return [
             {
-                "table"        : p["table"],
-                "csv_path"     : str(p["csv_path"]),
-                "contract_path": str(p["contract_path"]),
-                "scenario"     : scenario,
+                "table"            : p["table"],
+                "filename"         : p["filename"],
+                "contract_filename": p["contract_filename"],
+                "scenario"         : scenario,
             }
             for p in produced
         ]
@@ -140,19 +133,20 @@ def task_validate(item: dict, run_id: str) -> dict:
     mas não bloqueia o processamento das demais.
     """
     table = item["table"]
-    _log("JOB-DM-002", f"VALIDATE/{table}", "STARTED", f"csv={Path(item['csv_path']).name}")
+    _log("JOB-DM-002", f"VALIDATE/{table}", "STARTED", f"file=bronze/{item['filename']}")
     try:
-        result = validate(
-            Path(item["csv_path"]),
-            Path(item["contract_path"]),
-            QUARANTINE_DIR,
+        storage = get_storage()
+        result  = validate(
+            storage,
+            item["filename"],
+            item["contract_filename"],
             scenario=item["scenario"],
         )
         ec = _exit_code(result.status)
         _log(
             "JOB-DM-002", f"VALIDATE/{table}",
             "ENDED_OK" if ec < 2 else "ENDED_NOTOK",
-            f"status={result.status} exit_code={ec} evolution={result.evolution_type}",
+            f"status={result.status} exit_code={ec} layer={'quarantine' if result.status=='DLQ' else 'bronze'} evolution={result.evolution_type}",
         )
         return {
             **item,
@@ -181,13 +175,18 @@ def task_profile(validated: dict) -> dict:
     """
     table = validated["table"]
     if validated["validation_status"] == "DLQ":
-        _log("JOB-DM-003", f"PROFILE/{table}", "SKIPPED", "upstream DLQ — sem profiling")
+        _log("JOB-DM-003", f"PROFILE/{table}", "SKIPPED", "upstream DLQ")
         return {**validated, "profiler_payload": {"table": table, "rows": 0, "profiling_ms": 0, "columns": {}}}
 
-    _log("JOB-DM-003", f"PROFILE/{table}", "STARTED", "")
+    _log("JOB-DM-003", f"PROFILE/{table}", "STARTED", f"reading bronze/{validated['filename']}")
     try:
-        payload = profile(Path(validated["csv_path"]))
-        _log("JOB-DM-003", f"PROFILE/{table}", "ENDED_OK", f"rows={payload['rows']} ms={payload['profiling_ms']}")
+        storage  = get_storage()
+        csv_path = storage.read_path("bronze", validated["filename"])
+        payload  = profile(csv_path)
+        # Promoção Bronze → Silver após profiling bem-sucedido
+        storage.move(validated["filename"], "bronze", "silver")
+        _log("JOB-DM-003", f"PROFILE/{table}", "ENDED_OK",
+             f"rows={payload['rows']} ms={payload['profiling_ms']} promoted=bronze->silver")
         return {**validated, "profiler_payload": payload}
     except Exception as e:
         _log("JOB-DM-003", f"PROFILE/{table}", "ENDED_NOTOK", str(e))
@@ -212,16 +211,16 @@ def task_enrich_slm(profiled: dict) -> dict:
 
     _log("JOB-DM-004", f"ENRICH/{table}", "STARTED", "calling Ollama")
     try:
-        slm = enrich(
-            Path(profiled["contract_path"]),
-            profiled["profiler_payload"],
-            REPORTS_DIR,
-        )
-        _log("JOB-DM-004", f"ENRICH/{table}", "ENDED_OK", f"slm_status={slm['status']} ms={slm['inference_ms']}")
+        storage       = get_storage()
+        contract_path = storage.read_path("contracts", profiled["contract_filename"])
+        reports_path  = storage._layers["reports"] if hasattr(storage, "_layers") else REPORTS_DIR
+        slm = enrich(contract_path, profiled["profiler_payload"], reports_path)
+        # Documentação gravada no layer reports via SLM — anota no log
+        _log("JOB-DM-004", f"ENRICH/{table}", "ENDED_OK",
+             f"slm_status={slm['status']} ms={slm['inference_ms']} ai_status=DRAFT")
         return {**profiled, "slm_result": slm}
     except Exception as e:
         _log("JOB-DM-004", f"ENRICH/{table}", "ENDED_NOTOK", str(e))
-        # SLM failure é não-fatal — retorna SKIPPED para não bloquear métricas
         return {**profiled, "slm_result": {"table": table, "status": "ERROR", "inference_ms": 0}}
 
 
