@@ -117,9 +117,14 @@ prefect worker start --pool data-masters-local
 
 A partir daqui, rodar os comandos:
 
-prefect deployment run 'data-masters-pipeline/baseline-manual'
-prefect deployment run 'data-masters-pipeline/non-breaking-watch'
-prefect deployment run 'data-masters-pipeline/breaking-watch'
+```
+- prefect deployment run 'data-masters-pipeline/baseline-manual'
+
+- prefect deployment run 'data-masters-pipeline/non-breaking-watch'
+
+- prefect deployment run 'data-masters-pipeline/breaking-watch'
+
+```
 
 A partir do **terminal 2**
 
