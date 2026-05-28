@@ -346,12 +346,12 @@ def pipeline_flow(scenario: str = "baseline", run_id: str | None = None) -> dict
 
 
 def _print_summary(all_metrics: list, run_id: str) -> None:
-    icons = {"PASS": "🟢", "WARNING": "🟡", "DLQ": "🔴"}
-    print(f"\n{'═'*66}")
+    icons = {"PASS": "[PASS]", "WARNING": "[WARN]", "DLQ": "[DLQ]"}
+    print(f"\n{'='*66}")
     print(f"  RUN: {run_id}")
-    print(f"{'═'*66}")
+    print(f"{'='*66}")
     print(f"  {'Tabela':<30} {'Cenário':<14} {'Status':<10} {'Score':>6}")
-    print(f"  {'─'*62}")
+    print(f"  {'-'*62}")
     for m in all_metrics:
         icon = icons.get(m["validation_status"], "⚪")
         print(
@@ -359,7 +359,7 @@ def _print_summary(all_metrics: list, run_id: str) -> None:
             f"{icon} {m['validation_status']:<8} {m['quality_score']:>6.1f}/100"
         )
     avg = round(sum(m["quality_score"] for m in all_metrics) / len(all_metrics), 1) if all_metrics else 0
-    print(f"  {'─'*62}")
+    print(f"  {'-'*62}")
     print(f"  {'Score médio':>55} {avg:>6.1f}/100\n")
 
 

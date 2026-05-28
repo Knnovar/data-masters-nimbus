@@ -105,7 +105,7 @@ class LocalStorage(StorageBase):
     def write(self, layer: str, filename: str, df: pd.DataFrame) -> None:
         path = self._path(layer, filename)
         df.to_csv(path, index=False)
-        print(f"   💾  [{layer.upper()}] {filename} gravado ({len(df)} linhas)")
+        print(f"   [WRITE] [{layer.upper()}] {filename} gravado ({len(df)} linhas)")
 
     def read(self, layer: str, filename: str) -> pd.DataFrame:
         path = self._path(layer, filename)
@@ -117,7 +117,7 @@ class LocalStorage(StorageBase):
         if dst.exists():
             dst.unlink()
         shutil.move(str(src), str(dst))
-        print(f"   📦  {filename}: {from_layer.upper()} → {to_layer.upper()}")
+        print(f"   [MOVE] {filename}: {from_layer.upper()} -> {to_layer.upper()}")
 
     def list(self, layer: str) -> list[str]:
         return [f.name for f in self._layers[layer].glob("*.csv")]
@@ -196,7 +196,7 @@ class MinIOStorage(StorageBase):
             self._bucket(layer), filename, buf, length=buf.getbuffer().nbytes,
             content_type="text/csv"
         )
-        print(f"   ☁️   [{layer.upper()}] {filename} → MinIO ({len(df)} linhas)")
+        print(f"   [WRITE] [{layer.upper()}] {filename} -> MinIO ({len(df)} linhas)")
 
     def read(self, layer: str, filename: str) -> pd.DataFrame:
         response = self._client.get_object(self._bucket(layer), filename)
@@ -209,7 +209,7 @@ class MinIOStorage(StorageBase):
         # CopySource obrigatório a partir do minio-py 7.x
         self._client.copy_object(dst_bucket, filename, CopySource(src_bucket, filename))
         self._client.remove_object(src_bucket, filename)
-        print(f"   📦  {filename}: {from_layer.upper()} → {to_layer.upper()} (MinIO)")
+        print(f"   [MOVE] {filename}: {from_layer.upper()} -> {to_layer.upper()} (MinIO)")
 
     def list(self, layer: str) -> list[str]:
         objects = self._client.list_objects(self._bucket(layer))

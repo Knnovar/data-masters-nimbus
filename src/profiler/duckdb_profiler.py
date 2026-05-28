@@ -110,8 +110,5 @@ def profile(csv_path: Path) -> dict:
 
     elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
     result.update({"table": table, "profiling_ms": elapsed_ms})
-    print(
-        f"   📊  [{table}] Profiling via {engine} — "
-        f"{elapsed_ms} ms | {result['rows']} linhas × {len(result['columns'])} colunas"
-    )
+    print(f"   [PROFILE] [{table}] Profiling via {engine} - {elapsed_ms} ms | {result['rows']} linhas x {len(result['columns'])} colunas")
     return result

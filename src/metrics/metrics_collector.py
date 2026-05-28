@@ -96,7 +96,7 @@ def generate_report(all_metrics: list[dict], reports_dir: Path) -> Path:
 
     now   = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     lines = [
-        f"# 📊 Pipeline Data Masters — Relatório de Execução",
+        f"# Pipeline Data Masters - Relatorio de Execucao",
         f"**Data:** {now}  |  **Run ID:** `{all_metrics[0]['run_id'] if all_metrics else 'N/A'}`\n",
         "---\n",
         "## Resumo por Tabela\n",
@@ -105,8 +105,8 @@ def generate_report(all_metrics: list[dict], reports_dir: Path) -> Path:
     ]
 
     for m in all_metrics:
-        status_icon = {"PASS": "🟢", "WARNING": "🟡", "DLQ": "🔴"}.get(m["validation_status"], "⚪")
-        slm_icon    = {"SUCCESS": "✅", "SKIPPED": "⏭️", "ERROR": "❌"}.get(m["slm_status"], "—")
+        status_icon = {"PASS": "[PASS]", "WARNING": "[WARN]", "DLQ": "[DLQ]"}.get(m["validation_status"], "[?]")
+        slm_icon    = {"SUCCESS": "[OK]", "SKIPPED": "[SKIP]", "ERROR": "[ERR]"}.get(m["slm_status"], "[-]")
         lines.append(
             f"| `{m['table']}` | {m['scenario']} | {status_icon} {m['validation_status']} "
             f"| {m['rows_total']:,} | {m['duplicate_count']} | {m['avg_null_pct']}% "
@@ -134,18 +134,18 @@ def generate_report(all_metrics: list[dict], reports_dir: Path) -> Path:
         if m["issues"]:
             lines.append("**Issues críticos:**")
             for i in m["issues"]:
-                lines.append(f"- ❌ {i}")
+                lines.append(f"- [ERR] {i}")
         if m["warnings"]:
             lines.append("**Warnings:**")
             for w in m["warnings"]:
-                lines.append(f"- ⚠️ {w}")
+                lines.append(f"- [WARN] {w}")
         if m["null_violations"]:
             lines.append(f"**Nulos em colunas obrigatórias:** {m['null_violations']}")
         lines.append("")
 
     lines += [
         "---",
-        "> ⚠️ Toda documentação gerada pela SLM possui status **[AI_METADATA_STATUS: DRAFT]**.",
+        "> AVISO: Toda documentacao gerada pela SLM possui status **[AI_METADATA_STATUS: DRAFT]**.",
         "> Requer validação humana pelo Data Steward antes de uso em produção.",
     ]
 
@@ -153,5 +153,5 @@ def generate_report(all_metrics: list[dict], reports_dir: Path) -> Path:
     with open(report_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
 
-    print(f"\n   📄  Relatório salvo em: {report_path}")
+    print(f"\n   [REPORT] Relatorio salvo em: {report_path}")
     return report_path

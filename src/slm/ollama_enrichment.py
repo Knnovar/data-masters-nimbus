@@ -27,13 +27,16 @@ com as estatísticas reais do Data Profiler (realidade observada) e produzir
 um dicionário técnico estruturado em Markdown.
 
 Regras obrigatórias:
-1. Descreva cada coluna: propósito de negócio, tipo, comportamento esperado.
-2. Sinalize anomalias claras (ex: alto % de nulos, valores fora de faixa, duplicatas).
-3. Mapeie o comportamento das chaves de negócio e suas implicações.
-4. Seja objetivo e técnico. Evite jargões desnecessários.
-5. Escreva em português brasileiro.
-6. NAO invente informações não presentes nos dados fornecidos.
-7. Conclua com uma seção Pontos de Atencao listando os principais riscos."""
+1. Se o manifesto contiver um campo business_context, use-o como verdade absoluta
+   e expanda — nunca contradiga o que foi declarado pelo Data Steward.
+2. Se o manifesto contiver description nas colunas, use como base e complemente
+   com as estatísticas — não substitua.
+3. Descreva cada coluna: propósito de negócio, tipo, comportamento esperado.
+4. Sinalize anomalias claras (ex: alto % de nulos, valores fora de faixa, duplicatas).
+5. Se houver regulatory_tags no manifesto, mencione as implicações de compliance.
+6. Seja objetivo e técnico. Escreva em português brasileiro.
+7. NAO invente informações não presentes nos dados ou no manifesto.
+8. Conclua com uma seção Pontos de Atencao listando os principais riscos."""
 
 _USER_TEMPLATE = """## Contrato YAML:
 ```yaml

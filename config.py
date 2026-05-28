@@ -32,7 +32,7 @@ MINIO_SECRET_KEY = "minioadmin"
 #   phi4            → melhor qualidade de documentação (14B, lento em CPU)
 #   qwen2.5-coder:7b → alternativa, mas otimizado para código
 OLLAMA_HOST  = "http://localhost:11434"
-OLLAMA_MODEL = "phi4"
+OLLAMA_MODEL = "phi3.5"
 
 # Desativa o SLM sem alterar código (útil para testar o pipeline sem Ollama)
 SKIP_SLM = False

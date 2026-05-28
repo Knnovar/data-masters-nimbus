@@ -82,15 +82,15 @@ def run_scenario(scenario: str, run_id: str) -> list[dict]:
 
 def print_summary(all_metrics: list[dict]) -> None:
     """Imprime tabela de resultados no terminal."""
-    print(f"\n{'═'*66}")
+    print(f"\n{'='*66}")
     print("  RESUMO DA EXECUÇÃO")
-    print(f"{'═'*66}")
+    print(f"{'='*66}")
 
     header = f"{'Tabela':<30} {'Cenário':<14} {'Status':<10} {'Score':>6}"
     print(header)
-    print("─" * 66)
+    print("-" * 66)
 
-    icons = {"PASS": "🟢", "WARNING": "🟡", "DLQ": "🔴"}
+    icons = {"PASS": "[PASS]", "WARNING": "[WARN]", "DLQ": "[DLQ]"}
     for m in all_metrics:
         icon = icons.get(m["validation_status"], "⚪")
         print(
@@ -99,7 +99,7 @@ def print_summary(all_metrics: list[dict]) -> None:
         )
 
     avg = round(sum(m["quality_score"] for m in all_metrics) / len(all_metrics), 1)
-    print("─" * 66)
+    print("-" * 66)
     print(f"{'Score médio':>55} {avg:>6.1f}/100")
     print()
 
@@ -143,7 +143,7 @@ def main():
 
     print(f"  Métricas JSON : {summary_path}")
     print(f"  Relatório MD  : {report_path}")
-    print("\n  ✅  Pipeline concluída.\n")
+    print("\n  Pipeline concluida.\n")
 
 
 if __name__ == "__main__":

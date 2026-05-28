@@ -107,7 +107,7 @@ def _detect_schema_evolution(
         expected = type_map.get(pk, "string")
         if not _can_coerce(df[pk], expected):
             issues.append(
-                f"PK '{pk}' contém valores não conversíveis para {expected} — possível breaking change"
+                f"PK '{pk}' contém valores não conversíveis para {expected} - possivel breaking change"
             )
             return "BREAKING", issues, warnings
 
@@ -167,7 +167,14 @@ def validate(
 
     result.rows_total = len(df)
 
-    # 3. Schema evolution
+    # 3. Aviso de manifesto DRAFT — não bloqueia, mas registra no resultado
+    if not contract.is_validated():
+        result.warnings.append(
+            "Manifesto em status DRAFT — documentacao gerada sem validacao humana. "
+            "Execute: python -m src.manifest.manifest_validator --file <contrato.yaml> --steward 'Nome'"
+        )
+
+    # 4. Schema evolution
     evolution_type, issues, warnings = _detect_schema_evolution(contract, df)
     result.evolution_type = evolution_type
     result.issues.extend(issues)
@@ -185,7 +192,7 @@ def validate(
         for w in warnings:
             print(f"          -> {w}")
 
-    # 4. Nulos em colunas obrigatórias
+    # 5. Nulos em colunas obrigatórias
     null_violations = _check_nulls(contract, df)
     if null_violations:
         result.null_violations = null_violations
@@ -193,7 +200,7 @@ def validate(
         if result.status == "PASS":
             result.status = "WARNING"
 
-    # 5. Duplicatas
+    # 6. Duplicatas
     pk_cols = contract.get_primary_keys()
     if pk_cols:
         dup_count = df.duplicated(subset=pk_cols).sum()
