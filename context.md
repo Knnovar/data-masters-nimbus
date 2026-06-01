@@ -260,3 +260,103 @@ METRICS → JSON de métricas por run
 - Implementar ADLSStorage (Fase 1 da migração Azure) quando workspace disponível
 - Adicionar tabela Gold consolidada de métricas no metrics_collector.py
 - Refazer o deploy Prefect após as mudanças (python setup_prefect.py)
+
+---
+
+## 11. Atualizacao - Sprint 1 Manifesto Estendido
+
+### Novos arquivos
+
+| Arquivo | Descricao |
+|---|---|
+| `src/manifest/__init__.py` | Init do modulo |
+| `src/manifest/extractor_base.py` | Interface ABC com deteccao regulatoria por heuristica e normalizacao snake_case |
+| `src/manifest/extractor_sas7bdat.py` | Extrator de metadados SAS7BDAT via pyreadstat (metadataonly=True). CLI: `python -m src.manifest.extractor_sas7bdat` |
+| `src/manifest/manifest_writer.py` | Serializa dict para YAML. Nunca sobrescreve VALIDATED - cria `_draft.yaml` paralelo |
+| `src/manifest/manifest_validator.py` | Verifica campos TODO e promove DRAFT -> VALIDATED. CLI: `python -m src.manifest.manifest_validator` |
+| `MANIFEST_ARCHITECTURE.md` | Documento de arquitetura da Sprint 1 (referencia permanente) |
+
+### Arquivos modificados
+
+| Arquivo | O que mudou |
+|---|---|
+| `src/validation/contracts.py` | Reescrito com SourceInfo, RegulatoryInfo, StewardInfo, SampleQuery, LayoutField. Todos opcionais - backward compatible |
+| `src/validation/validator.py` | Adiciona warning quando manifest_status = DRAFT |
+| `src/slm/ollama_enrichment.py` | Prompt atualizado: respeita business_context e description do manifesto |
+| `src/generators/data_generator.py` | Tres contratos agora geram manifestos estendidos com business_context, regulatory_tags, sas_label e sample_queries |
+| `requirements.txt` | pyreadstat>=1.2.0 adicionado |
+| `README.md` | Reescrito com estrutura de pastas, secao completa do manifesto e fluxo HITL |
+
+### Correcao aplicada em todos os arquivos
+
+Varredura completa de unicode fora do range ASCII em chamadas de print/raise/append.
+Emojis, box-drawing characters (=, -, ╔) e em dashes substituidos por
+tags textuais ([PASS], [WARN], [DLQ], [WRITE], [MOVE], [PROFILE], [REPORT]).
+Afetou: storage.py, duckdb_profiler.py, metrics_collector.py,
+manifest_validator.py, run_pipeline.py, prefect_flow.py.
+
+### Estrutura do modulo manifest
+
+```
+src/manifest/
+|-- __init__.py
+|-- extractor_base.py        Interface + deteccao regulatoria heuristica
+|-- extractor_sas7bdat.py    SAS7BDAT -> YAML (CLI + Python API)
+|-- manifest_writer.py       Serializacao segura para YAML
+`-- manifest_validator.py    HITL: DRAFT -> VALIDATED
+```
+
+### Campos novos no DataContract
+
+```
+manifest_status    DRAFT | VALIDATED
+validated_by       quem promoveu
+validated_at       quando promoveu
+source             SourceInfo (system, format, encoding, os, frequency, contact)
+regulatory         RegulatoryInfo (tags, data_classification, retention_years)
+steward            StewardInfo (name, email)
+business_context   texto livre para SLM e Devin
+dependencies       tabelas referenciadas
+sample_queries     exemplos de SQL para o Devin
+```
+
+Colunas ganharam: description, sas_label, regulatory_flags, business_rules
+
+### Metodos novos em DataContract
+
+```python
+contract.is_validated()           # True se manifest_status == VALIDATED
+contract.has_extended_metadata()  # True se source/regulatory/steward preenchidos
+contract.lgpd_sensitive_columns() # lista de colunas com LGPD_SENSITIVE
+```
+
+### Como usar o extrator SAS7BDAT
+
+```bash
+# Extracao basica (metadados do arquivo)
+python -m src.manifest.extractor_sas7bdat \
+    --file data/landing/tb_clientes.sas7bdat \
+    --table tb_clientes \
+    --output data/contracts/tb_clientes.yaml
+
+# Com enriquecimento SLM
+python -m src.manifest.extractor_sas7bdat ... --enrich
+
+# Verificar pendencias sem promover
+python -m src.manifest.manifest_validator \
+    --file data/contracts/tb_clientes.yaml \
+    --check-only
+
+# Promover para VALIDATED
+python -m src.manifest.manifest_validator \
+    --file data/contracts/tb_clientes.yaml \
+    --steward "Nome do Steward"
+```
+
+### Proximos passos (Sprint 2)
+
+- extractor_csv.py: inferencia de schema por amostragem
+- extractor_fixed.py: arquivos posicionais com layout no manifesto
+- extractor_json.py: normalizacao e inferencia de schema JSON
+- Modulo de normalizacao de encoding na landing (EBCDIC, CP1252, CRLF/LF)
+- Integracao do extrator como task opcional no prefect_flow.py

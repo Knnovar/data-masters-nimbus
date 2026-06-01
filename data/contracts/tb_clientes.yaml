@@ -1,8 +1,12 @@
+# Manifesto: tb_clientes
+# Status: VALIDATED
+# Validado por: Renan em 2026-05-28T22:18:07
+
 table: tb_clientes
 description: Cadastro mestre de clientes pessoa fisica e juridica.
 owner: squad-dados-cadastrais
 version: 1.0.0
-manifest_status: DRAFT
+manifest_status: VALIDATED
 source:
   system: CORE_BANCARIO_TOTVS
   format: csv
@@ -19,9 +23,8 @@ regulatory:
 steward:
   name: Data Steward Cadastral
   email: steward-cadastral@banco.com.br
-business_context: Tabela mestre de clientes utilizada por todos os produtos de credito
-  e relacionamento. A segmentacao (cd_segmento) determina o produto ofertado e o gestor
-  responsavel. Atualizada diariamente pelo batch noturno do CORE_BANCARIO_TOTVS.
+business_context: Tabela mestre de clientes utilizada por todos os produtos de credito e relacionamento. A segmentacao (cd_segmento)
+  determina o produto ofertado e o gestor responsavel. Atualizada diariamente pelo batch noturno do CORE_BANCARIO_TOTVS.
 tolerance:
   max_null_pct: 25
   allow_duplicates: false
@@ -30,18 +33,15 @@ dependencies:
 - tb_segmentos
 sample_queries:
 - description: Distribuicao por segmento
-  sql: SELECT cd_segmento, COUNT(*) as qtd FROM tb_clientes WHERE fl_ativo = true
-    GROUP BY cd_segmento
+  sql: SELECT cd_segmento, COUNT(*) as qtd FROM tb_clientes WHERE fl_ativo = true GROUP BY cd_segmento
 - description: Clientes ativos com renda acima de 10k
-  sql: SELECT cd_cliente, nm_cliente, vl_renda_mensal FROM tb_clientes WHERE fl_ativo
-    = true AND vl_renda_mensal > 10000
+  sql: SELECT cd_cliente, nm_cliente, vl_renda_mensal FROM tb_clientes WHERE fl_ativo = true AND vl_renda_mensal > 10000
 schema:
 - name: cd_cliente
   type: string
   nullable: false
   primary_key: true
-  description: Codigo unico do cliente no sistema legado. Gerado sequencialmente pelo
-    CORE_BANCARIO.
+  description: Codigo unico do cliente no sistema legado. Gerado sequencialmente pelo CORE_BANCARIO.
 - name: nr_cpf_cnpj
   type: string
   nullable: false
@@ -63,8 +63,7 @@ schema:
 - name: cd_segmento
   type: string
   nullable: false
-  description: 'Segmento de relacionamento. Dominio: VAREJO, PRIME, PRIVATE, PJ_PEQUENO,
-    PJ_MEDIO.'
+  description: 'Segmento de relacionamento. Dominio: VAREJO, PRIME, PRIVATE, PJ_PEQUENO, PJ_MEDIO.'
   business_rules:
   - 'PRIME: vl_renda_mensal >= 10000'
   - 'PRIVATE: vl_renda_mensal >= 30000'
@@ -88,3 +87,5 @@ schema:
   type: date
   nullable: false
   description: Data de abertura do cadastro no sistema.
+validated_by: Renan
+validated_at: '2026-05-28T22:18:07'

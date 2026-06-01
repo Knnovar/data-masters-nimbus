@@ -1,7 +1,68 @@
-# Pipeline Data Masters — PoC Local
+# Pipeline Data Masters - PoC Local
 
-Pipeline completa de dados com arquitetura medallion (Bronze → Silver → Gold),
+Pipeline completa de dados com arquitetura medallion (Bronze -> Silver -> Gold),
 contratos evolutivos, profiling estatístico e documentação semântica via SLM local.
+
+---
+
+## Estrutura de pastas
+
+```
+data-masters/
+|
+|-- config.py                        Configuracao central (modelos, paths, flags)
+|-- run_pipeline.py                  Entry point direto (sem Prefect)
+|-- prefect_flow.py                  DAG com 6 tasks mapeadas ao Control-M
+|-- prefect.yaml                     Configuracao de deployments do Prefect
+|-- setup_prefect.py                 Setup do work pool e registro de deployments
+|-- docker-compose.yml               MinIO local (opcional)
+|-- requirements.txt                 Dependencias Python
+|-- .gitignore
+|
+|-- README.md                        Este arquivo
+|-- MIGRATION_PLAN.md                Plano de migracao Azure + Databricks + Control-M
+|-- MANIFEST_ARCHITECTURE.md        Arquitetura do manifesto estendido (referencia)
+|-- context.md                       Historico de desenvolvimento e estado atual
+|
+|-- src/
+|   |
+|   |-- generators/
+|   |   `-- data_generator.py        Gera dados ficticios bancarios + manifestos YAML
+|   |
+|   |-- manifest/                    [Sprint 1] Modulo de manifesto
+|   |   |-- extractor_base.py        Interface ABC + deteccao regulatoria por heuristica
+|   |   |-- extractor_sas7bdat.py    Extrator de metadados SAS7BDAT (CLI + Python)
+|   |   |-- manifest_writer.py       Serializa dict para YAML com protecao VALIDATED
+|   |   `-- manifest_validator.py    Promocao DRAFT -> VALIDATED (HITL)
+|   |
+|   |-- storage/
+|   |   `-- storage.py               Abstracao medallion: LocalStorage | MinIOStorage
+|   |
+|   |-- validation/
+|   |   |-- contracts.py             Modelos de contrato (base + estendido)
+|   |   `-- validator.py             Validacao de schema, nulos, duplicatas e DLQ
+|   |
+|   |-- profiler/
+|   |   `-- duckdb_profiler.py       Profiling estatistico (DuckDB / Pandas fallback)
+|   |
+|   |-- slm/
+|   |   `-- ollama_enrichment.py     Documentacao semantica via Ollama
+|   |
+|   `-- metrics/
+|       `-- metrics_collector.py     Coleta metricas + gera pipeline_report.md
+|
+`-- data/
+    |-- landing/                     Bronze  - CSVs aguardando processamento
+    |-- processed/                   Silver  - arquivos validados e promovidos
+    |-- gold/                        Gold    - metricas agregadas (futuro)
+    |-- quarantine/                  DLQ     - breaking changes isolados
+    |-- contracts/                   Manifestos YAML por tabela e cenario
+    |-- metrics/                     JSON de metricas por run
+    `-- reports/
+        |-- pipeline_report.md       Relatorio consolidado da run
+        |-- *_documentation.md       Documentacao gerada pelo SLM (DRAFT)
+        `-- *_draft.yaml             Rascunho de manifesto quando VALIDATED ja existe
+```
 
 ---
 
@@ -9,32 +70,33 @@ contratos evolutivos, profiling estatístico e documentação semântica via SLM
 
 | Componente | Ferramenta | Papel |
 |---|---|---|
-| Storage abstrato | `src/storage/storage.py` | Medallion — LocalStorage ou MinIO |
-| Validação / DLQ | Python + Pydantic | Contratos YAML, schema evolution, quarentena |
-| Profiler | DuckDB (preferencial) / Pandas (fallback) | Estatísticas por coluna |
-| SLM | Ollama (local) | Documentação semântica como Data Steward |
-| Orquestração | Prefect 2.x (ou execução direta) | DAG com 6 jobs mapeados ao Control-M |
-| Object Storage | MinIO via Docker (opcional) | Simula ADLS Gen2 / S3 do banco |
+| Storage abstrato | `src/storage/storage.py` | Medallion - LocalStorage ou MinIOStorage |
+| Manifesto | `src/manifest/` | Extracao, escrita e promocao HITL |
+| Validacao / DLQ | `src/validation/` | Contratos YAML, schema evolution, quarentena |
+| Profiler | DuckDB (preferencial) / Pandas (fallback) | Estatisticas por coluna |
+| SLM | Ollama (local) | Documentacao semantica como Data Steward |
+| Orquestracao | Prefect 2.x (ou execucao direta) | DAG com 6 jobs mapeados ao Control-M |
+| Object Storage | MinIO via Docker (opcional) | Simula ADLS Gen2 / S3 |
 
 ---
 
-## Pré-requisitos
+## Pre-requisitos
 
 ```
 Python >= 3.11
-ollama   (opcional — sem ele, SLM é ignorado com fallback)
-docker   (opcional — apenas para MinIO)
+ollama   (opcional - sem ele, SLM e ignorado com fallback)
+docker   (opcional - apenas para MinIO)
 ```
 
 ---
 
-## Instalação
+## Instalacao
 
 ```bash
 # 1. Entre na pasta do projeto
 cd data-masters
 
-# 2. Instale as dependências Python
+# 2. Instale as dependencias
 pip install -r requirements.txt
 
 # 3. (Opcional) Instale e inicie o Ollama
@@ -45,24 +107,24 @@ ollama pull phi3.5     # modelo recomendado para CPU
 
 ---
 
-## Configuração — config.py
+## Configuracao - config.py
 
-| Parâmetro | Padrão | Descrição |
+| Parametro | Padrao | Descricao |
 |---|---|---|
-| `OLLAMA_MODEL` | `qwen2.5-coder:7b` | Troque por `phi3.5` para melhor documentação |
+| `OLLAMA_MODEL` | `qwen2.5-coder:7b` | Troque por `phi3.5` para melhor documentacao |
 | `SKIP_SLM` | `False` | `True` desativa o SLM sem quebrar o pipeline |
 | `USE_MINIO` | `False` | `True` ativa o backend MinIO (requer Docker) |
 | `NULL_TOLERANCE_PCT` | `30.0` | % de nulos acima do qual o SLM reporta anomalia |
 
 ---
 
-## Execução direta (sem Prefect)
+## Execucao direta (sem Prefect)
 
 ```bash
-# Todos os cenários em sequência
+# Todos os cenarios em sequencia
 python run_pipeline.py
 
-# Cenário individual
+# Cenario individual
 python run_pipeline.py --scenario baseline
 python run_pipeline.py --scenario non_breaking
 python run_pipeline.py --scenario breaking
@@ -70,12 +132,12 @@ python run_pipeline.py --scenario breaking
 
 ---
 
-## Execução com Prefect
+## Execucao com Prefect
 
-O Prefect oferece UI local, histórico de runs e observabilidade por task.
-Requer três terminais abertos simultaneamente.
+O Prefect oferece UI local, historico de runs e observabilidade por task.
+Requer tres terminais abertos simultaneamente.
 
-### Passo 1 — Variável de ambiente (uma vez por sessão)
+### Passo 1 - Variavel de ambiente (uma vez por sessao)
 
 ```bash
 set PREFECT_API_URL=http://127.0.0.1:4200/api
@@ -85,28 +147,28 @@ Para fixar permanentemente (recomendado):
 
 ```bash
 setx PREFECT_API_URL "http://127.0.0.1:4200/api"
-# Feche e reabra o terminal após o setx
+# Feche e reabra o terminal apos o setx
 ```
 
-### Passo 2 — Terminal 1: servidor Prefect
+### Passo 2 - Terminal 1: servidor Prefect
 
 ```bash
 prefect server start
 # Aguarde aparecer: Prefect UI available at http://127.0.0.1:4200
 ```
 
-### Passo 3 — Terminal 2: setup (apenas na primeira vez)
+### Passo 3 - Terminal 2: setup (apenas na primeira vez)
 
 ```bash
 set PREFECT_API_URL=http://127.0.0.1:4200/api
 python setup_prefect.py
 ```
 
-Isso cria o work pool e registra todos os deployments. Saída esperada:
+Isso cria o work pool e registra todos os deployments. Saida esperada:
 
 ```
-── 1. Criando work pool local ──
-── 2. Registrando deployments ──
+-- 1. Criando work pool local --
+-- 2. Registrando deployments --
 Successfully created/updated all deployments!
   baseline-manual        deployed
   non-breaking-watch     deployed
@@ -115,38 +177,33 @@ Successfully created/updated all deployments!
   all-manual             deployed
 ```
 
-### Passo 4 — Terminal 3: worker
+### Passo 4 - Terminal 3: worker
 
 ```bash
 set PREFECT_API_URL=http://127.0.0.1:4200/api
 prefect worker start --pool data-masters-local
 ```
 
-### Passo 5 — Disparar runs (Terminal 2 ou novo terminal)
+### Passo 5 - Disparar runs (Terminal 2 ou novo terminal)
 
 ```bash
 set PREFECT_API_URL=http://127.0.0.1:4200/api
 
-# Cenário baseline
 prefect deployment run 'data-masters-pipeline/baseline-manual'
-
-# Cenário non-breaking (schema evolution)
 prefect deployment run 'data-masters-pipeline/non-breaking-watch'
-
-# Cenário breaking (DLQ / quarentena)
 prefect deployment run 'data-masters-pipeline/breaking-watch'
 ```
 
-Acompanhe em tempo real: **http://127.0.0.1:4200**
+Acompanhe em tempo real: http://127.0.0.1:4200
 
 ---
 
-## Ativar MinIO (quando Docker estiver disponível)
+## Ativar MinIO (quando Docker estiver disponivel)
 
 ```bash
 # 1. Suba o MinIO
 docker compose up -d
-# Console: http://localhost:9001  (usuário: minioadmin / senha: minioadmin)
+# Console: http://localhost:9001  (usuario: minioadmin / senha: minioadmin)
 
 # 2. Instale o client Python
 pip install minio
@@ -154,7 +211,7 @@ pip install minio
 # 3. Ative em config.py
 USE_MINIO = True
 
-# 4. Execute normalmente — nenhuma outra mudança necessária
+# 4. Execute normalmente
 python run_pipeline.py --scenario baseline
 ```
 
@@ -162,56 +219,171 @@ Para desativar, volte `USE_MINIO = False`. O pipeline usa disco local imediatame
 
 ---
 
-## Cenários de teste
+## Cenarios de teste
 
-| Cenário | O que simula | Resultado esperado |
+| Cenario | O que simula | Resultado esperado |
 |---|---|---|
-| `baseline` | Fluxo feliz — dados válidos com anomalias controladas | tb_clientes PASS, tb_transacoes WARNING (duplicatas), tb_contratos PASS |
-| `non_breaking` | Nova coluna anulável adicionada pelo sistema legado | WARNING — pipeline avança, coluna registrada no log |
-| `breaking` | Coluna obrigatória removida da exportação SAS | tb_clientes DLQ — arquivo isolado em `data/quarantine/` |
+| `baseline` | Fluxo feliz com anomalias controladas | tb_clientes PASS, tb_transacoes WARNING (duplicatas), tb_contratos PASS |
+| `non_breaking` | Nova coluna anulavel adicionada pelo legado | WARNING - pipeline avanca, coluna registrada |
+| `breaking` | Coluna obrigatoria removida da exportacao SAS | tb_clientes DLQ - arquivo isolado em `data/quarantine/` |
 
 ---
 
-## Arquitetura medallion — fluxo de dados
+## Arquitetura medallion - fluxo de dados
 
 ```
-[data_generator]  →  BRONZE (data/landing/)
-                          │
-                  [validator] ──── breaking? ──→  QUARANTINE (data/quarantine/)
-                          │
-                  [profiler]  →  BRONZE promovido para SILVER (data/processed/)
-                          │
-                  [SLM/Ollama] →  REPORTS (data/reports/*_documentation.md)
-                          │
-                  [metrics]   →  METRICS (data/metrics/*.json)
-                          │
-                  [report]    →  REPORTS/pipeline_report.md
+[data_generator]  ->  BRONZE (data/landing/)
+                            |
+                    [validator] -- breaking? --> QUARANTINE (data/quarantine/)
+                            |
+                    [profiler]  -->  BRONZE promovido para SILVER (data/processed/)
+                            |
+                    [SLM/Ollama] --> REPORTS (*_documentation.md)
+                            |
+                    [metrics]   --> METRICS (*.json)
+                            |
+                    [report]    --> REPORTS/pipeline_report.md
 ```
 
 ---
 
-## Saídas geradas
+## O Manifesto de Dados
+
+O manifesto YAML e o componente central do projeto. E o principal insumo
+para a SLM gerar documentacao e para o Devin consultar o contexto das tabelas.
+
+### Estrutura do manifesto estendido
+
+```yaml
+table          : tb_clientes
+version        : 1.0.0
+manifest_status: DRAFT           # DRAFT | VALIDATED
+
+source:
+  system        : CORE_BANCARIO_TOTVS
+  format        : sas7bdat        # csv|fixed_width|sas7bdat|json|xlsx|xml|parquet
+  encoding      : latin-1
+  os            : unix            # windows|unix|mainframe
+  update_frequency: daily
+  contact       : squad@banco.com.br
+
+regulatory:
+  tags              : [LGPD, SCR, BACEN_4658]
+  data_classification: confidential
+  retention_years   : 10
+
+steward:
+  name : Joao Silva
+  email: joao.silva@banco.com.br
+
+business_context: >
+  Tabela mestre de clientes utilizada por todos os produtos de credito.
+  Segmentacao determina o produto ofertado e o gestor responsavel.
+
+tolerance:
+  max_null_pct    : 25
+  allow_duplicates: false
+
+dependencies:
+  - tb_agencias
+  - tb_segmentos
+
+sample_queries:
+  - description: "Distribuicao por segmento"
+    sql: "SELECT cd_segmento, COUNT(*) FROM tb_clientes GROUP BY cd_segmento"
+
+schema:
+  - name       : cd_cliente
+    type       : string
+    nullable   : false
+    primary_key: true
+    description: Codigo unico do cliente no sistema legado.
+    sas_label  : "CODIGO CLIENTE"
+    regulatory_flags: []
+    business_rules  : []
+
+  - name       : nr_cpf_cnpj
+    type       : string
+    nullable   : false
+    description: CPF ou CNPJ sem mascara. Campo sensivel LGPD.
+    regulatory_flags: [LGPD_SENSITIVE]
+```
+
+### Extrator SAS7BDAT
+
+Arquivos `.sas7bdat` carregam metadados internos (nome, label, formato).
+O extrator gera o rascunho do manifesto automaticamente:
+
+```bash
+# Extracao basica
+python -m src.manifest.extractor_sas7bdat \
+    --file data/landing/tb_clientes.sas7bdat \
+    --table tb_clientes \
+    --output data/contracts/tb_clientes.yaml
+
+# Com enriquecimento SLM (requer ollama serve)
+python -m src.manifest.extractor_sas7bdat \
+    --file data/landing/tb_clientes.sas7bdat \
+    --table tb_clientes \
+    --output data/contracts/tb_clientes.yaml \
+    --enrich
+
+# Sobrescrever rascunho existente
+python -m src.manifest.extractor_sas7bdat ... --overwrite
+```
+
+O extrator nunca sobrescreve um manifesto com status VALIDATED.
+Se o destino ja e VALIDATED, cria um arquivo `_draft.yaml` paralelo.
+
+### Fluxo HITL do manifesto
 
 ```
-data/
-├── landing/          Bronze — CSVs aguardando processamento
-├── processed/        Silver — arquivos validados e promovidos
-├── gold/             Gold   — reservado para métricas agregadas (futuro)
-├── quarantine/       DLQ    — arquivos com breaking change isolados
-├── contracts/        Manifestos YAML por tabela e por cenário
-├── metrics/          JSON de métricas por tabela por run
-└── reports/
-    ├── pipeline_report.md              Relatório consolidado da run
-    ├── tb_clientes_documentation.md    Documentação gerada pelo SLM
-    ├── tb_transacoes_documentation.md
-    └── tb_contratos_credito_documentation.md
+Arquivo SAS7BDAT chega na landing
+              |
+    extractor_sas7bdat.py
+    (metadados + SLM opcional)
+              |
+    manifest_status: DRAFT
+    Campos nao inferidos marcados com "# TODO"
+              |
+    Data Steward preenche os TODOs
+              |
+    python -m src.manifest.manifest_validator \
+        --file contracts/tb_clientes.yaml \
+        --steward "Nome Steward"
+              |
+    manifest_status: VALIDATED
+              |
+    Pipeline usa o manifesto sem warning
+    SLM gera documentacao enriquecida
+    Devin consome via RAG
 ```
+
+### Verificar pendencias sem promover
+
+```bash
+python -m src.manifest.manifest_validator \
+    --file data/contracts/tb_clientes.yaml \
+    --check-only
+```
+
+### Campos detectados automaticamente pelo extrator
+
+| Campo | Automatico? | Como |
+|---|---|---|
+| `schema[].name` | Sim | Normalizado do nome SAS (snake_case) |
+| `schema[].type` | Sim | Mapeamento de formato SAS |
+| `schema[].sas_label` | Sim | Label original do SAS7BDAT |
+| `schema[].regulatory_flags` | Sim (heuristica) | Padroes no nome/label da coluna |
+| `regulatory.tags` | Sim (heuristica) | Agregado das colunas |
+| `business_context` | Sim (SLM, flag --enrich) | Gerado pelo Ollama |
+| `sample_queries` | Sim (SLM, flag --enrich) | Gerado pelo Ollama |
+| `source.*` | Nao - manual | Depende do sistema de origem |
+| `steward.*` | Nao - manual | Depende da estrutura organizacional |
 
 ---
 
 ## Mapeamento Control-M
-
-Cada task do Prefect corresponde a um job no Control-M:
 
 | Prefect Task | Job Control-M | Exit codes |
 |---|---|---|
@@ -222,7 +394,7 @@ Cada task do Prefect corresponde a um job no Control-M:
 | `task_collect_metrics` | JOB-DM-005-METRICS | 0=OK |
 | `task_report` | JOB-DM-006-REPORT | 0=OK |
 
-Para rodar sem Prefect (modo compatível com Control-M):
+Modo compativel com Control-M (sem Prefect):
 
 ```bash
 python prefect_flow.py --no-prefect --scenario baseline --run-id %%JOBRUNID%%
@@ -230,109 +402,10 @@ python prefect_flow.py --no-prefect --scenario baseline --run-id %%JOBRUNID%%
 
 ---
 
-## Plano de migração
+## Documentacao adicional
 
-Consulte `MIGRATION_PLAN.md` para o plano completo de migração para
-Azure Databricks, incluindo mapeamento de camadas para ADLS Gen2,
-opções de SLM em produção e integração com Control-M via BMC Helix.
-
----
-
-## O Manifesto de Dados
-
-O manifesto YAML é o componente central do projeto — é ele que define o contrato
-entre o sistema de origem e o pipeline, e é o principal insumo para a SLM gerar
-documentação e para o Devin consultar o contexto das tabelas.
-
-### Estrutura atual
-
-```yaml
-table       : tb_clientes
-description : Cadastro mestre de clientes pessoa física e jurídica.
-owner       : squad-dados-cadastrais
-version     : 1.0.0
-tolerance   :
-  max_null_pct    : 25
-  allow_duplicates: false
-schema      :
-  - name       : cd_cliente
-    type       : string
-    nullable   : false
-    primary_key: true
-  - name       : vl_renda_mensal
-    type       : float
-    nullable   : true
-```
-
-### Evolução planejada — campos a adicionar
-
-```yaml
-# Contexto de origem
-source_format    : csv              # csv | fixed_width | sas7bdat | json | xlsx | xml
-source_encoding  : latin-1          # utf-8 | latin-1 | ebcdic | cp1252
-source_system    : CORE_BANCARIO    # nome do sistema de origem
-source_os        : windows          # windows | unix | mainframe
-update_frequency : daily            # daily | weekly | monthly | event_driven
-
-# Contexto de negócio — insumo direto para SLM e Devin
-business_context : >
-  Tabela mestre de clientes utilizada por todos os produtos de crédito.
-  Segmentação baseada em renda e relacionamento determina o produto ofertado.
-regulatory_tags  :
-  - LGPD
-  - SCR
-  - BACEN_4658
-
-# Governança
-steward          :
-  name : João Silva
-  email: joao.silva@banco.com.br
-dependencies     :
-  - tb_agencias
-  - tb_segmentos
-
-# Sugestões de uso — consumidas pelo Devin via RAG
-sample_queries   :
-  - "SELECT cd_segmento, COUNT(*) FROM tb_clientes GROUP BY cd_segmento"
-  - "SELECT * FROM tb_clientes WHERE fl_ativo = true AND vl_renda_mensal > 10000"
-
-# Layout posicional — apenas para source_format: fixed_width
-layout           :
-  - field: cd_cliente    start: 1   end: 12  dtype: string
-  - field: nr_cpf_cnpj   start: 13  end: 23  dtype: string
-  - field: nm_cliente    start: 24  end: 73  dtype: string
-```
-
-### Estratégias de geração automática
-
-**SAS7BDAT → manifesto automático**
-Arquivos `.sas7bdat` carregam metadados internos (nome de variável, label, formato).
-Um módulo `manifest_extractor.py` lê esses metadados e gera o rascunho YAML
-automaticamente — sem preenchimento manual.
-
-**CSV / JSON → inferência por amostragem**
-Para formatos sem metadados internos, o pipeline lê as primeiras N linhas,
-infere tipos, conta nulos e detecta domínios categóricos, gerando um rascunho
-que o Data Steward revisa e valida.
-
-**SLM gerando o manifesto (inversão do fluxo)**
-Em vez de usar o manifesto como insumo para a SLM, a SLM recebe as estatísticas
-do profiler e gera o rascunho do manifesto — incluindo `business_context` e
-`regulatory_tags`. O Data Steward valida a documentação e o contrato juntos.
-
-### Fluxo HITL do manifesto
-
-```
-Extrator automático / SLM
-        │
-        ▼
-  [MANIFEST_STATUS: DRAFT]   ← nunca consumido pelo Devin
-        │
-  Revisão do Data Steward
-        │
-        ▼
-  [MANIFEST_STATUS: VALIDATED] ← liberado para consumo
-```
-
-O mesmo mecanismo de governança da documentação se aplica ao manifesto.
-O Devin só consome manifestos com status `VALIDATED`.
+| Arquivo | Conteudo |
+|---|---|
+| `MIGRATION_PLAN.md` | Plano completo Azure + Databricks + Control-M |
+| `MANIFEST_ARCHITECTURE.md` | Decisoes de arquitetura do manifesto estendido |
+| `context.md` | Historico de desenvolvimento, estado atual e proximos passos |
