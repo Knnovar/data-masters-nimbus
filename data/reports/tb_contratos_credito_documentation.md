@@ -2,56 +2,57 @@
 
 ## Visão Geral
 
-A tabela `tb_contratos_credito` armazena informações sobre contratos de produtos de crédito ativos e encerrados, conforme descrito no contrato YAML. Ela é gerida pela equipe `squad-credito` e alimenta o Sistema de Controle de Risco (SCR) mensalmente. A tabela está em formato SAS7BDAT com codificação Latin-1 e atualiza-se diariamente.
+A tabela `tb_contratos_credito` contém informações sobre contratos de produtos de crédito ativos e encerrados, conforme descrito no contrato YAML fornecido. Ela é gerida pela equipe `squad-credito` e alimenta o Sistema de Controle de Risco (SCR) mensalmente.
 
-### Contexto de Negócio
+### Fonte de Dados
 
-Os contratos de crédito incluem todos os produtos oferecidos pelo banco, como cartão de crédito, cheque especial, crédito pessoal, financiamento veicular e consignado. A tabela suporta regras específicas, como o valor utilizado (`vl_utilizado`) podendo exceder o limite aprovado (`vl_limite`) em até 15% para produtos com tolerância de limite (ex: cheque especial). Além disso, um contrato com status `EM_ATRASO` desencadeia uma cobrança automática após D+1.
+- **Sistema**: SISTEMA_CREDITO_SAS
+- **Formato**: sas7bdat
+- **Codificação**: latin-1
+- **SO**: Unix
+- **Frequência de Atualização**: Diária
+- **Contato**: squad-credito@banco.com.br
 
-### Regulamentação e Compliance
+### Contexto Regulatório e de Negócios
 
-A tabela está sujeita a várias regulamentações:
-- **SCR**: Candidato para inclusão no SCR.
-- **BACEN_4658**: Normas do Banco Central do Brasil.
-- **LGPD**: Lei Geral de Proteção de Dados.
+- **Tags Regulatórias**: SCR, BACEN_4658, LGPD
+- **Classificação de Dados**: Restrita
+- **Período de Retenção**: 10 anos
 
-Os dados são classificados como restritos e têm uma retenção obrigatória de 10 anos. Qualquer análise ou uso deve considerar essas regulamentações para garantir conformidade.
+#### Contexto de Negócio
 
-## Colunas da Tabela
+Os contratos de crédito abrangem todos os produtos oferecidos pelo banco. O valor utilizado (`vl_utilizado`) pode exceder o limite aprovado (`vl_limite`) em até 15% para produtos com tolerância, como o cheque especial. Um status de contrato `EM_ATRASO` desencadeia cobrança automática após D+1.
 
-### `id_contrato`
-- **Tipo**: String
-- **Descrição**: Identificador único do contrato gerado pelo sistema de crédito.
-- **Comportamento Esperado**: Não nulo, chave primária. Cada valor é único conforme as estatísticas (100% de unicidade).
-- **Anomalias**: Nenhuma observada.
+### Estrutura da Tabela
 
-### `cd_cliente`
-- **Tipo**: String
-- **Descrição**: Referência ao cliente na tabela `tb_clientes`.
-- **Comportamento Esperado**: Não nulo. Deve corresponder a um identificador válido em `tb_clientes`.
-- **Anomalias**: Alta duplicidade observada (213 únicos de 300 registros).
+| Nome da Coluna       | Tipo    | Nulo Permitido | Descrição                                                                                      |
+|----------------------|---------|----------------|------------------------------------------------------------------------------------------------|
+| id_contrato          | string  | Não            | Identificador único do contrato gerado pelo sistema de crédito.                                |
+| cd_cliente           | string  | Não            | Referência ao cliente em `tb_clientes`.                                                         |
+| dt_contrato          | date    | Não            | Data de abertura do contrato.                                                                  |
+| vl_limite            | float   | Não            | Limite de crédito aprovado em BRL.                                                              |
+| vl_utilizado         | float   | Não            | Saldo utilizado atual em BRL. Pode exceder `vl_limite` em produtos com tolerância.              |
+| tp_produto           | string  | Não            | Tipo do produto de crédito: CARTAO_CREDITO, CHEQUE_ESPECIAL, CREDITO_PESSOAL, FINANCIAMENTO_VEICULO, CONSIGNADO. |
+| cd_status            | string  | Não            | Status do contrato: ATIVO, ENCERRADO, EM_ATRASO, RENEGOCIADO.                                   |
+| dt_vencimento        | date    | Não            | Data de vencimento da última parcela ou do contrato.                                           |
+| nr_parcelas          | integer | Não            | Número total de parcelas do contrato. 1 para crédito rotativo.                                  |
+| tx_juros_am          | float   | Não            | Taxa de juros ao mês em percentual (ex: 2.5 = 2,5% a.m.).                                      |
 
-### `dt_contrato`
-- **Tipo**: String
-- **Descrição**: Data de abertura do contrato.
-- **Comportamento Esperado**: Não nulo. Deve ser uma data válida no formato apropriado.
-- **Anomalias**: Tratada como string; deve ser convertida para tipo `date`.
+### Análise das Estatísticas
 
-### `vl_limite`
-- **Tipo**: String
-- **Descrição**: Limite de crédito aprovado em BRL.
-- **Comportamento Esperado**: Não nulo. Deve representar um valor monetário válido.
-- **Anomalias**: Tratada como string; deve ser convertida para tipo `float`.
+#### id_contrato
+- **Tipo**: VARCHAR
+- **Percentual Nulo**: 0%
+- **Contagem Única**: 300
+- **Observação**: Cada contrato possui um identificador único conforme esperado.
 
-### `vl_utilizado`
-- **Tipo**: String
-- **Descrição**: Saldo utilizado atual em BRL. Pode exceder o limite aprovado em até 15% para produtos com tolerância.
-- **Comportamento Esperado**: Não nulo. Deve ser um valor monetário válido e respeitar as regras de tolerância.
-- **Anomalias**: Tratada como string; deve ser convertida para tipo `float`.
+#### cd_cliente
+- **Tipo**: VARCHAR
+- **Percentual Nulo**: 0%
+- **Contagem Única**: 213
+- **Anomalia**: Existem clientes com múltiplos contratos, o que é esperado em operações bancárias normais.
 
-### `tp_produto`
-- **Tipo**: String
-- **Descrição**: Tipo do produto de crédito. Domínio: CARTAO_CREDITO, CHEQUE_ESPECIAL, CREDITO_PESSOAL, FIN
+#### dt
 
 ---
 > **[AI_METADATA_STATUS: DRAFT]**

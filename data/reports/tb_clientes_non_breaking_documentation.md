@@ -2,7 +2,7 @@
 
 ## Visão Geral
 
-A tabela `tb_clientes_non_breaking` é uma versão não quebrada do cadastro mestre de clientes, tanto pessoa física quanto jurídica. Ela é utilizada por todos os produtos de crédito e relacionamento no banco. A segmentação dos clientes determina o produto oferecido e o gestor responsável. Esta tabela é atualizada diariamente pelo batch noturno do sistema CORE_BANCARIO_TOTVS.
+A tabela `tb_clientes_non_breaking` é uma versão não quebra do cadastro mestre de clientes, tanto pessoa física quanto jurídica. Ela serve como base para todos os produtos de crédito e relacionamento no banco, com segmentação determinando o produto ofertado e o gestor responsável.
 
 ### Propriedades da Tabela
 
@@ -13,9 +13,9 @@ A tabela `tb_clientes_non_breaking` é uma versão não quebrada do cadastro mes
   - Sistema: CORE_BANCARIO_TOTVS
   - Formato: CSV
   - Codificação: UTF-8
-  - Sistema Operacional: Unix
+  - SO: Unix
   - Frequência de Atualização: Diária
-  - Contato: squad-dados-cadastrais@banco.com.br
+- **Contato**: squad-dados-cadastrais@banco.com.br
 
 ### Contexto Regulatório
 
@@ -25,22 +25,20 @@ A tabela `tb_clientes_non_breaking` é uma versão não quebrada do cadastro mes
 - **Classificação de Dados**: Confidencial
 - **Período de Retenção**: 10 anos
 
-### Pontos de Atenção
+### Contexto de Negócios
 
-- **Tolerância**:
-  - Máximo de % nulos: 25%
-  - Duplicatas não permitidas
+A tabela é atualizada diariamente pelo batch noturno do CORE_BANCARIO_TOTVS e serve como a base para todas as operações relacionadas aos clientes no banco.
 
 ## Colunas da Tabela
 
 ### `cd_cliente`
 
 - **Tipo**: VARCHAR
-- **Descrição**: Código único do cliente no sistema legado. Gerado sequencialmente pelo CORE_BANCARIO.
+- **Descrição**: Código único do cliente no sistema legado, gerado sequencialmente pelo CORE_BANCARIO.
 - **Negócio**:
   - Propósito: Identificação única de cada cliente.
-  - Comportamento Esperado: Não nulo, valores únicos para todos os registros.
-- **Estatísticas Observadas**:
+  - Comportamento Esperado: Não nulo e exclusivo para todos os registros.
+- **Estatísticas**:
   - % Nulos: 0.0%
   - Contagem Única: 500
 - **Anomalias**: Nenhuma
@@ -51,14 +49,14 @@ A tabela `tb_clientes_non_breaking` é uma versão não quebrada do cadastro mes
 - **Descrição**: CPF (11 dígitos) ou CNPJ (14 dígitos) sem máscara.
 - **Negócio**:
   - Propósito: Identificação fiscal do cliente.
-  - Comportamento Esperado: Não nulo, deve conter valores válidos de CPF ou CNPJ.
-- **Estatísticas Observadas**:
+  - Comportamento Esperado: Não nulo e exclusivo para cada registro.
+- **Estatísticas**:
   - % Nulos: 0.0%
   - Contagem Única: 500
-  - Mínimo: 1457389657.0
-  - Máximo: 98651023405.0
-  - Média: 47631701980.896
-- **Anomalias**: Valores fora do intervalo esperado para CPF/CNPJ.
+  - Mínimo: 1279354607.0
+  - Máximo: 98725460374.0
+  - Média: 50478969775.3
+- **Anomalias**: Nenhuma
 
 ### `nm_cliente`
 
@@ -66,14 +64,20 @@ A tabela `tb_clientes_non_breaking` é uma versão não quebrada do cadastro mes
 - **Descrição**: Nome completo do cliente conforme cadastro na Receita Federal.
 - **Negócio**:
   - Propósito: Identificação nominal do cliente.
-  - Comportamento Esperado: Não nulo, deve ser único para a maioria dos registros.
-- **Estatísticas Observadas**:
+  - Comportamento Esperado: Não nulo e deve ser único, exceto em casos de duplicação legítima (ex.: homônimos).
+- **Estatísticas**:
   - % Nulos: 0.0%
-  - Contagem Única: 497
-  - Valores Duplicados: "Brenda Ribeiro", "Ana Liz Carvalho", "Catarina da Rosa" (cada um com contagem de 2)
-- **Anomalias**: Existem duplicatas nos nomes dos clientes.
+  - Contagem Única: 498
+  - Top Values: "Marina Duarte" aparece duas vezes.
+- **Anomalias**: Possível duplicidade de nomes.
 
-### `dt_nascimento
+### `dt_nascimento`
+
+- **Tipo**: VARCHAR (esperado DATE)
+- **Descrição**: Data de nascimento. Nula para clientes PJ.
+- **Negócio**:
+  - Propósito: Identificação da idade do cliente pessoa física.
+  - Comportamento Esperado
 
 ---
 > **[AI_METADATA_STATUS: DRAFT]**

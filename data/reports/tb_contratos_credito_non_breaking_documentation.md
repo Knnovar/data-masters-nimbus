@@ -2,59 +2,57 @@
 
 ## Visão Geral
 
-A tabela `tb_contratos_credito_non_breaking` contém dados sobre contratos de crédito ativos e encerrados, conforme descrito no manifesto. Ela alimenta o Sistema de Controle de Risco (SCR) mensalmente e é gerida pela equipe `squad-credito`. A tabela está em formato SAS7BDAT com codificação Latin-1 e atualizações diárias.
+A tabela `tb_contratos_credito_non_breaking` contém informações detalhadas sobre contratos de produtos de crédito ativos e encerrados. Ela é alimentada diariamente pelo sistema SISTEMA_CREDITO_SAS em formato SAS7BDAT, com codificação Latin-1 no ambiente Unix. Esta tabela suporta o Sistema de Controle de Risco (SCR) mensalmente e está sob a classificação de dados restrita, com uma retenção obrigatória de 10 anos conforme regulamentações como BACEN_4658 e LGPD.
 
-### Contexto de Negócio
+### Propósito de Negócio
 
-Os contratos incluem todos os produtos oferecidos pelo banco, como cartão de crédito, cheque especial, crédito pessoal, financiamento de veículo e consignado. O valor utilizado (`vl_utilizado`) pode exceder o limite aprovado (`vl_limite`) em até 15% para produtos com tolerância, como o cheque especial. Um contrato com status `EM_ATRASO` desencadeia uma cobrança automática após D+1.
+A tabela serve para gerenciar e monitorar contratos de crédito oferecidos pelo banco. Ela é crucial para a análise do risco, conformidade regulatória e gestão de produtos financeiros. A tabela também suporta operações como cobrança automática em caso de atraso nos pagamentos.
 
-### Regulamentação
+### Estrutura da Tabela
 
-A tabela possui tags regulatórias importantes: SCR, BACEN_4658 e LGPD, indicando que os dados são classificados como restritos e devem ser retidos por 10 anos. As colunas `vl_limite` e `vl_utilizado` são candidatas ao SCR.
+Abaixo está uma descrição detalhada das colunas presentes na tabela:
 
-## Colunas
-
-### id_contrato
-- **Tipo**: VARCHAR
+#### `id_contrato`
+- **Tipo**: string
+- **Nullable**: false
 - **Descrição**: Identificador único do contrato gerado pelo sistema de crédito.
-- **Negócio**: Serve como chave primária, garantindo unicidade em 300 registros.
-- **Estatísticas**: Sem valores nulos; todos os identificadores são únicos.
+- **Comportamento Esperado**: Cada valor deve ser exclusivo, conforme confirmado pelas estatísticas (unique_count = 300).
+- **Anomalias Observadas**: Nenhuma.
 
-### cd_cliente
-- **Tipo**: VARCHAR
-- **Descrição**: Referência ao cliente na tabela `tb_clientes`.
-- **Negócio**: Liga o contrato a um cliente específico.
-- **Estatísticas**: 219 clientes únicos em 300 registros; alguns clientes têm múltiplos contratos.
+#### `cd_cliente`
+- **Tipo**: string
+- **Nullable**: false
+- **Descrição**: Referência ao cliente em `tb_clientes`.
+- **Comportamento Esperado**: Cada contrato deve referenciar um cliente válido.
+- **Anomalias Observadas**: Alta frequência de valores repetidos (top 3 valores com contagem = 4), indicando possíveis duplicatas ou contratos múltiplos para o mesmo cliente.
 
-### dt_contrato
-- **Tipo**: VARCHAR (Deveria ser DATE)
+#### `dt_contrato`
+- **Tipo**: string
+- **Nullable**: false
 - **Descrição**: Data de abertura do contrato.
-- **Negócio**: Indica quando o contrato foi estabelecido.
-- **Estatísticas**: 283 datas únicas; formato deve ser verificado para consistência.
+- **Comportamento Esperado**: Deve ser um valor de data válido e formatado corretamente.
+- **Anomalias Observadas**: Tipo de dado é VARCHAR, o que pode indicar inconsistências no formato da data.
 
-### vl_limite
-- **Tipo**: VARCHAR (Deveria ser FLOAT)
-- **Descrição**: Limite de crédito aprovado em BRL.
-- **Negócio**: Define o máximo que pode ser utilizado pelo cliente.
-- **Estatísticas**: Valores variam de 790.74 a 99981.73; todos os valores são únicos.
+#### `vl_limite`
+- **Tipo**: string
+- **Nullable**: false
+- **Descrição**: Limite de crédito aprovado em BRL. Candidato para SCR.
+- **Comportamento Esperado**: Deve ser um valor numérico positivo.
+- **Anomalias Observadas**: Tipo de dado é VARCHAR, o que pode indicar inconsistências na representação do valor monetário.
 
-### vl_utilizado
-- **Tipo**: VARCHAR (Deveria ser FLOAT)
-- **Descrição**: Saldo atual utilizado em BRL.
-- **Negócio**: Mostra o uso atual do limite, podendo exceder para certos produtos.
-- **Estatísticas**: Valores variam de 40.59 a 112380.03; todos os valores são únicos.
+#### `vl_utilizado`
+- **Tipo**: string
+- **Nullable**: false
+- **Descrição**: Saldo utilizado atual em BRL. Pode exceder `vl_limite` em produtos com tolerância.
+- **Comportamento Esperado**: Deve ser um valor numérico positivo, podendo exceder o limite para certos produtos como cheque especial.
+- **Anomalias Observadas**: Tipo de dado é VARCHAR, o que pode indicar inconsistências na representação do valor monetário.
 
-### tp_produto
-- **Tipo**: VARCHAR
-- **Descrição**: Tipo do produto de crédito (ex: CARTAO_CREDITO, CHEQUE_ESPECIAL).
-- **Negócio**: Identifica o tipo de produto associado ao contrato.
-- **Estatísticas**: 5 tipos únicos; `CREDITO_PESSOAL` e `FINANCIAMENTO_VEICULO` são os mais comuns.
-
-### cd_status
-- **Tipo**: VARCHAR
-- **Descrição**: Status do contrato (ex: ATIVO, ENCERRADO).
-- **Negócio**: Indica a situação atual do contrato.
-
+#### `tp_produto`
+- **Tipo**: string
+- **Nullable**: false
+- **Descrição**: Tipo do produto de crédito. Domínio: CARTAO_CREDITO, CHEQUE_ESPECIAL, CREDITO_PESSOAL, FINANCIAMENTO_VEICULO, CONSIGNADO.
+- **Comportamento Esperado**: Deve conter apenas valores dentro do domínio especificado.
+- **Anomalias
 
 ---
 > **[AI_METADATA_STATUS: DRAFT]**

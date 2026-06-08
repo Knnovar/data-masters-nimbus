@@ -2,63 +2,60 @@
 
 ## Visão Geral
 
-A tabela `tb_transacoes_non_breaking` registra todas as movimentações financeiras por canal, conforme descrito no contrato YAML. Ela é gerida pela equipe `squad-transacoes` e está em conformidade com os regulamentos BACEN_4658 e PCI_DSS. A classificação de dados é confidencial, com um período de retenção de 7 anos.
+A tabela `tb_transacoes_non_breaking` contém registros das movimentações financeiras realizadas através de diversos canais de atendimento do banco. Ela é gerida pela equipe `squad-transacoes` e está em versão 2.3.1, com status atual de DRAFT no contrato de dados.
 
-## Colunas
+### Contexto de Negócio
 
-### id_transacao
-- **Propósito de Negócio**: Identificador único para cada transação.
-- **Tipo**: `VARCHAR`
-- **Comportamento Esperado**: Não nulo e deve ser único. No entanto, foram encontradas duplicatas (2% dos registros).
-- **Anomalias**:
-  - Duplicatas observadas: ~2% de duplicidade.
+- **Propósito**: Registro de todas as movimentações financeiras por canal.
+- **Detalhes Importantes**:
+  - A coluna `fl_suspeita` indica se uma transação está sendo analisada pelo motor antifraude. Transações suspeitas representam aproximadamente 4% do volume total.
+  - O campo `cd_estabelecimento` pode ser nulo para compras online não identificadas, o que ocorre em cerca de 6% dos casos.
 
-### cd_cliente
-- **Propósito de Negócio**: Referência ao cliente na tabela `tb_clientes`.
-- **Tipo**: `VARCHAR`
-- **Comportamento Esperado**: Não nulo.
-- **Anomalias**:
-  - Alta concentração em poucos clientes, indicando potencialmente transações repetidas ou erros de entrada.
+### Regulamentação e Compliance
 
-### dt_transacao
-- **Propósito de Negócio**: Data da transação no fuso horário America/Sao_Paulo.
-- **Tipo**: `VARCHAR`
-- **Comportamento Esperado**: Não nulo e deve ser uma data válida. No entanto, o tipo é incorreto; deveria ser `DATE`.
-- **Anomalias**:
-  - Tipo de dado incorreto: Deveria ser `DATE`.
+- **Tags Regulatórias**: A tabela está sujeita aos padrões BACEN_4658 e PCI_DSS.
+- **Classificação de Dados**: Os dados são classificados como confidenciais, com um período de retenção de 7 anos.
 
-### vl_transacao
-- **Propósito de Negócio**: Valor da transação em BRL.
-- **Tipo**: `VARCHAR`
-- **Comportamento Esperado**: Não nulo e deve representar valores monetários válidos. No entanto, o tipo é incorreto; deveria ser `FLOAT`.
-- **Anomalias**:
-  - Tipo de dado incorreto: Deveria ser `FLOAT`.
+## Esquema da Tabela
 
-### tp_transacao
-- **Propósito de Negócio**: Tipo da operação (COMPRA, SAQUE, TED, PIX, PAGAMENTO_BOLETO, ESTORNO).
-- **Tipo**: `VARCHAR`
-- **Comportamento Esperado**: Não nulo e deve corresponder aos domínios especificados.
-- **Anomalias**:
-  - Nenhum valor fora do domínio observado.
+### Colunas
 
-### cd_estabelecimento
-- **Propósito de Negócio**: CNPJ do estabelecimento. Pode ser nulo para compras online não identificadas.
-- **Tipo**: `VARCHAR`
-- **Comportamento Esperado**: Pode ser nulo, com ~6% esperados como nulos conforme o contexto de negócios.
-- **Anomalias**:
-  - Percentual de valores nulos ligeiramente acima do esperado (~5.86%).
+1. **`id_transacao`**
+   - **Tipo**: `VARCHAR`
+   - **Descrição**: UUID da transação gerado pelo switch transacional no momento da operação.
+   - **Comportamento Esperado**: Não nulo, chave primária única para cada transação.
+   - **Anomalias Observadas**:
+     - 0.2% das transações apresentam duplicatas de `id_transacao`.
 
-### fl_suspeita
-- **Propósito de Negócio**: Flag indicando se a transação está sendo analisada pelo motor antifraude.
-- **Tipo**: `VARCHAR`
-- **Comportamento Esperado**: Não nulo e deve ser booleano (True/False). No entanto, o tipo é incorreto; deveria ser `BOOLEAN`.
-- **Anomalias**:
-  - Tipo de dado incorreto: Deveria ser `BOOLEAN`.
+2. **`cd_cliente`**
+   - **Tipo**: `VARCHAR`
+   - **Descrição**: Referência ao cliente em `tb_clientes`.
+   - **Comportamento Esperado**: Não nulo, deve corresponder a um registro válido na tabela de clientes.
+   - **Anomalias Observadas**:
+     - Algumas IDs de clientes aparecem com alta frequência (ex.: 15 ocorrências para "29F4AE29-495").
 
-### cd_canal
-- **Propósito de Negócio**: Canal de origem da transação (APP, INTERNET, AGENCIA, ATM, POS).
-- **Tipo**: `VARCHAR`
+3. **`dt_transacao`**
+   - **Tipo**: `VARCHAR`
+   - **Descrição**: Data da transação no fuso horário America/Sao_Paulo.
+   - **Comportamento Esperado**: Não nulo, deve ser uma data válida e formatada corretamente.
+   - **Anomalias Observadas**:
+     - A coluna é do tipo `VARCHAR`, o que pode indicar inconsistências no formato de data.
 
+4. **`vl_transacao`**
+   - **Tipo**: `VARCHAR`
+   - **Descrição**: Valor em BRL da transação. Positivo para débitos, negativo para estornos.
+   - **Comportamento Esperado**: Não nulo, deve ser um valor numérico representando o montante da transação.
+   - **Anomalias Observadas**:
+     - A coluna é do tipo `VARCHAR`, sugerindo a necessidade de conversão para um tipo numérico adequado.
+
+5. **`tp_transacao`**
+   - **Tipo**: `VARCHAR`
+   - **Descrição**: Tipo da operação, com domínio definido como COMPRA, SAQUE, TED, PIX, PAGAMENTO_BOLETO, ESTORNO.
+   - **Comportamento Esperado**: Não nulo, deve corresponder a um dos tipos de transação permitidos.
+
+6. **`cd_estabelecimento`**
+   - **Tipo**: `VARCHAR`
+   - **Descrição**: CNPJ do est
 
 ---
 > **[AI_METADATA_STATUS: DRAFT]**

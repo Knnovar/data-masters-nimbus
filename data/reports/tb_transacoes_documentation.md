@@ -2,61 +2,68 @@
 
 ## Visão Geral
 
-A tabela `tb_transacoes` registra todas as movimentações financeiras por canal, conforme descrito no manifesto. Ela é gerida pela equipe `squad-transacoes` e está atualmente em versão 2.3.1. O sistema de origem é o `SWITCH_TRANSACIONAL`, que fornece dados em formato CSV com codificação UTF-8.
+A tabela `tb_transacoes` registra todas as movimentações financeiras realizadas por diferentes canais de atendimento do banco, conforme descrito no contrato YAML. Esta documentação técnica fornece detalhes sobre cada coluna, incluindo propósito de negócio, tipo de dados e comportamento esperado, além de identificar anomalias observadas nas estatísticas do Data Profiler.
 
-### Contexto de Negócio
+### Contexto de Negócios
 
-O propósito principal da tabela é documentar todas as transações financeiras realizadas através dos diversos canais de atendimento do banco. A coluna `fl_suspeita` indica se uma transação está sendo analisada pelo motor antifraude, enquanto a coluna `cd_estabelecimento` pode ser nula para compras online não identificadas.
+- **Registro de Movimentações**: A tabela captura todas as transações financeiras por canal.
+- **Flag de Suspeita**: `fl_suspeita` indica se uma transação está em análise pelo motor antifraude.
+- **Estabelecimento Nulo**: `cd_estabelecimento` pode ser nulo para compras online não identificadas.
 
-### Regulamentações e Classificação de Dados
+### Implicações de Conformidade
 
-- **Tags Regulatórias**: BACEN_4658, PCI_DSS
-- **Classificação de Dados**: Confidencial
-- **Período de Retenção**: 7 anos
+A tabela é classificada como confidencial e sujeita a regulamentações do BACEN (Banco Central do Brasil) e PCI DSS, exigindo medidas rigorosas de proteção de dados e retenção por 7 anos.
 
-## Colunas da Tabela
+## Colunas Detalhadas
 
 ### `id_transacao`
-- **Tipo**: String (VARCHAR)
+- **Tipo**: String
 - **Nullable**: Não
-- **Descrição**: UUID da transação, gerado pelo switch transacional no momento da operação.
-- **Comportamento Esperado**: Valor único para cada transação. No entanto, foram observadas duplicatas em 0.99% dos registros.
+- **Descrição**: UUID da transação gerado pelo sistema no momento da operação.
+- **Propósito**: Identificador único para cada transação.
+- **Anomalias**:
+  - **Duplicatas**: Apenas 2000 valores únicos em 2030 linhas, indicando duplicatas.
 
 ### `cd_cliente`
-- **Tipo**: String (VARCHAR)
+- **Tipo**: String
 - **Nullable**: Não
 - **Descrição**: Referência ao cliente na tabela `tb_clientes`.
-- **Comportamento Esperado**: Valor único por transação. A coluna apresenta alta frequência de valores repetidos, indicando múltiplas transações por cliente.
+- **Propósito**: Identifica o cliente associado à transação.
+- **Comportamento Esperado**: Cada transação deve ter um cliente válido.
 
 ### `dt_transacao`
-- **Tipo**: String (VARCHAR)
+- **Tipo**: String (esperado como Date)
 - **Nullable**: Não
 - **Descrição**: Data da transação no fuso horário America/Sao_Paulo.
-- **Comportamento Esperado**: Deve ser um valor de data válido. A coluna está atualmente como VARCHAR, o que pode indicar inconsistências na formatação.
+- **Propósito**: Registro do momento exato da transação.
+- **Anomalias**:
+  - **Formato de Dados**: Tipo VARCHAR em vez de DATE, o que pode causar problemas na análise.
 
 ### `vl_transacao`
-- **Tipo**: String (VARCHAR)
+- **Tipo**: String (esperado como Float)
 - **Nullable**: Não
-- **Descrição**: Valor em BRL da transação. Positivo para débitos e negativo para estornos.
-- **Comportamento Esperado**: Deve ser um valor numérico. A coluna está atualmente como VARCHAR, o que pode causar problemas de validação.
+- **Descrição**: Valor da transação em BRL. Positivo para débitos e negativo para estornos.
+- **Propósito**: Representa o valor financeiro envolvido na transação.
+- **Anomalias**:
+  - **Formato de Dados**: Tipo VARCHAR em vez de FLOAT, exigindo conversão.
 
 ### `tp_transacao`
-- **Tipo**: String (VARCHAR)
+- **Tipo**: String
 - **Nullable**: Não
-- **Descrição**: Tipo da operação. Dominio: COMPRA, SAQUE, TED, PIX, PAGAMENTO_BOLETO, ESTORNO.
-- **Comportamento Esperado**: Deve conter apenas os valores do domínio especificado.
+- **Descrição**: Tipo da operação (COMPRA, SAQUE, TED, PIX, PAGAMENTO_BOLETO, ESTORNO).
+- **Propósito**: Categoriza a natureza da transação.
+- **Comportamento Esperado**: Deve seguir o domínio especificado.
 
 ### `cd_estabelecimento`
-- **Tipo**: String (VARCHAR)
+- **Tipo**: String
 - **Nullable**: Sim
-- **Descrição**: CNPJ do estabelecimento. Pode ser nulo para compras online não identificadas (~6%).
-- **Comportamento Esperado**: Deve conter valores numéricos válidos de CNPJ ou ser nulo conforme descrito.
+- **Descrição**: CNPJ do estabelecimento. Nulo para compras online não identificadas (~6%).
+- **Propósito**: Identifica o estabelecimento associado à transação.
+- **Comportamento Esperado**: Pode ser nulo conforme descrito no contexto de negócios.
 
 ### `fl_suspeita`
-- **Tipo**: String (VARCHAR)
-- **Nullable**: Não
-- **Descrição**: Flag do motor antifraude. True indica transação em análise (~4% do volume).
-- **Comportamento Esperado**: Deve ser um valor booleano (`True` ou `False`). A coluna está atualmente como VARCHAR
+- **Tipo**: String (esperado como Boolean)
+- **
 
 ---
 > **[AI_METADATA_STATUS: DRAFT]**
