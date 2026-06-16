@@ -24,3 +24,7 @@ prefect>=2.19.0
 
 # ── MinIO client (opcional — apenas se usar docker-compose) ──────────────────
 # minio>=7.2.0
+
+# Sprint 2: multi-formato e encoding
+chardet>=5.0.0
+openpyxl>=3.1.0

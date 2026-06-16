@@ -360,3 +360,111 @@ python -m src.manifest.manifest_validator \
 - extractor_json.py: normalizacao e inferencia de schema JSON
 - Modulo de normalizacao de encoding na landing (EBCDIC, CP1252, CRLF/LF)
 - Integracao do extrator como task opcional no prefect_flow.py
+
+---
+
+## 12. Atualizacao - Sessao atual
+
+### Arquivos adicionados
+
+| Arquivo | Descricao |
+|---|---|
+| `show_metrics.py` | Dashboard de metricas no terminal com 4 views: resumo, evolucao, problemas e SLM. Export CSV via --csv |
+| `Makefile` | Atalhos de execucao: make run, make metrics, make issues, make slm, make export, make check-manifest, make clean |
+| `tests/__init__.py` | Init do modulo de testes |
+| `tests/run_tests.py` | Runner unittest sem dependencias externas |
+| `tests/test_contracts.py` | 14 testes para contracts.py |
+| `tests/test_manifest.py` | 22 testes para extractor_base, manifest_writer e manifest_validator |
+| `tests/test_storage.py` | 18 testes para LocalStorage + integracao com validator |
+| `tests/test_validator.py` | 11 testes para validator.py com LocalStorage real |
+
+### Arquivos modificados
+
+| Arquivo | O que mudou |
+|---|---|
+| `prefect_flow.py` | Reescrito completo: sem type hints Python 3.10+ (str \| None), sem unicode em prints, sem emojis, logica limpa por task |
+| `run_pipeline.py` | Acentos e unicode removidos de strings de runtime |
+| `src/metrics/metrics_collector.py` | Acentos removidos de strings de runtime |
+| `README.md` | Estrutura de pastas atualizada com tests/ e show_metrics.py; secoes Dashboard e Testes adicionadas |
+
+### Estado atual dos testes
+
+```
+65 testes unitarios - 0 falhas
+  test_contracts : 14 testes
+  test_manifest  : 22 testes
+  test_storage   : 18 testes (inclui integracao com validator)
+  test_validator : 11 testes
+
+Executar: python tests/run_tests.py -v
+```
+
+### Unicode - auditoria final
+
+Varredura completa executada. Zero ocorrencias de unicode fora do range
+ASCII em chamadas de print/raise/append em todos os arquivos .py.
+Acentos permitidos apenas em comentarios e docstrings.
+
+### Como retomar em nova sessao
+
+```
+1. Verificar estado: python tests/run_tests.py -v
+2. Smoke test:       python prefect_flow.py --no-prefect --scenario baseline
+3. Dashboard:        python show_metrics.py
+4. Proximos passos:  Sprint 2 (ver secao 11 - Proximos passos)
+```
+
+---
+
+## 13. Sprint 2 — Multi-formato, Encoding e Integracao Prefect
+
+### Arquivos criados
+
+| Arquivo | Descricao |
+|---|---|
+| `src/ingestion/__init__.py` | Init do modulo |
+| `src/ingestion/normalizer.py` | Pre-processador de encoding: UTF-8, CRLF->LF, BOM, EBCDIC avisa |
+| `src/manifest/extractor_csv.py` | Inferencia de schema por amostragem (chardet + csv.Sniffer) |
+| `src/manifest/extractor_fixed.py` | Leiaute posicional TXT/CSV/XLSX + modo inferencia experimental |
+| `src/manifest/extractor_json.py` | JSON/JSONL com json_normalize, preserva __ como separador de nivel |
+| `tests/test_sprint2.py` | 39 testes (todos passando apos fixes) |
+| `SPRINT2_SPECS.md` | Especificacoes tecnicas da sprint |
+| `HANDOFF.md` | Documento de retomada para LLM |
+
+### Arquivos modificados
+
+| Arquivo | O que mudou |
+|---|---|
+| `prefect_flow.py` | task_extract_manifest adicionada (JOB-DM-000, opcional) |
+| `requirements.txt` | chardet>=5.0.0 e openpyxl>=3.1.0 adicionados |
+
+### Decisoes de negocio registradas
+
+| Decisao | Resolucao |
+|---|---|
+| Formato padrao de leiaute | Nenhum institucional — suporta TXT, CSV, XLSX |
+| Repositorio de leiautes | Local em `data/layouts/` para a PoC |
+| EBCDIC | Fora do escopo — detecta e avisa, middleware converte |
+
+### Bugs corrigidos nesta sprint
+
+1. `_detect_line_endings`: CRLF puro detectado como "mixed" — fix: checar LF somente fora dos CRLF
+2. `_make_column` em extractor_fixed: nao instanciar ABC diretamente — _norm inline
+3. `extractor_json` dupla normalizacao de `__`: usar _norm_part por segmento
+4. `_find_collapsed`: dict nao e hashable — fix: str(p) no join
+5. `_load_json`: root_key detectado nao era retornado — fix: tupla com 3 elementos
+6. `test_deep_nesting_collapsed`: series com dicts quebra nunique() — fix: detectar has_complex antes
+
+### Estado final dos testes
+
+```
+104 testes — 104 passando — 0 falhas
+python3 tests/run_tests.py -v
+```
+
+### Proximos passos (Sprint 3 candidatos)
+
+- Tabela Gold consolidada de metricas no metrics_collector.py
+- Interface CLI unificada: `python -m src.manifest.extract --file X --format auto`
+- Deteccao automatica de formato pelo extrator (auto-routing)
+- Integracao do extrator no Prefect com parametro `auto_extract: true`

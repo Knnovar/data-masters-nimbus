@@ -120,7 +120,7 @@ def generate_report(all_metrics: list[dict], reports_dir: Path) -> Path:
     lines += [
         "\n---\n",
         f"## Qualidade Geral da Execução\n",
-        f"- **Score médio:** `{avg_score}/100`",
+        f"- **Score medio:** `{avg_score}/100`",
         f"- **Tabelas processadas:** {len(all_metrics)}",
         f"- **Com DLQ:** {sum(1 for m in all_metrics if m['validation_status'] == 'DLQ')}",
         f"- **Com WARNING:** {sum(1 for m in all_metrics if m['validation_status'] == 'WARNING')}",
@@ -132,7 +132,7 @@ def generate_report(all_metrics: list[dict], reports_dir: Path) -> Path:
     for m in all_metrics:
         lines.append(f"### `{m['table']}`")
         if m["issues"]:
-            lines.append("**Issues críticos:**")
+            lines.append("**Issues criticos:**")
             for i in m["issues"]:
                 lines.append(f"- [ERR] {i}")
         if m["warnings"]:
@@ -140,7 +140,7 @@ def generate_report(all_metrics: list[dict], reports_dir: Path) -> Path:
             for w in m["warnings"]:
                 lines.append(f"- [WARN] {w}")
         if m["null_violations"]:
-            lines.append(f"**Nulos em colunas obrigatórias:** {m['null_violations']}")
+            lines.append(f"**Nulos em colunas obrigatorias:** {m['null_violations']}")
         lines.append("")
 
     lines += [

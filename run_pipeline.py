@@ -86,7 +86,7 @@ def print_summary(all_metrics: list[dict]) -> None:
     print("  RESUMO DA EXECUÇÃO")
     print(f"{'='*66}")
 
-    header = f"{'Tabela':<30} {'Cenário':<14} {'Status':<10} {'Score':>6}"
+    header = f"{'Tabela':<30} {'Cenario':<14} {'Status':<10} {'Score':>6}"
     print(header)
     print("-" * 66)
 
@@ -100,7 +100,7 @@ def print_summary(all_metrics: list[dict]) -> None:
 
     avg = round(sum(m["quality_score"] for m in all_metrics) / len(all_metrics), 1)
     print("-" * 66)
-    print(f"{'Score médio':>55} {avg:>6.1f}/100")
+    print(f"{'Score medio':>55} {avg:>6.1f}/100")
     print()
 
 
@@ -110,7 +110,7 @@ def main():
         "--scenario",
         choices=["baseline", "non_breaking", "breaking", "all"],
         default="all",
-        help="Cenário a executar (padrão: all)",
+        help="Cenario a executar (padrao: all)",
     )
     args = parser.parse_args()
 
@@ -141,8 +141,8 @@ def main():
     with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(all_metrics, f, ensure_ascii=False, indent=2)
 
-    print(f"  Métricas JSON : {summary_path}")
-    print(f"  Relatório MD  : {report_path}")
+    print(f"  Metricas JSON : {summary_path}")
+    print(f"  Relatorio MD  : {report_path}")
     print("\n  Pipeline concluida.\n")
 
 

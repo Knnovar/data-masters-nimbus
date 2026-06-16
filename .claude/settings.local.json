@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find . -name *.md -type f)",
+      "Bash(find . -name *.py -type f)",
+      "Bash(grep -r \"load\\\\|balance\\\\|worker\\\\|concurrency\\\\|parallel\\\\|thread\\\\|async\\\\|pool\" --include=*.py .)"
+    ]
+  }
+}
