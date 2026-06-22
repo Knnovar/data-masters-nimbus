@@ -1,72 +1,78 @@
 # Dicionário Técnico da Tabela `tb_clientes`
 
-## Descrição Geral
+## Visão Geral
 
-A tabela `tb_clientes` é um cadastro mestre que contém informações sobre clientes, tanto pessoas físicas quanto jurídicas. Esta tabela é gerida pela equipe de dados cadastrais do banco.
+A tabela `tb_clientes` é um cadastro mestre que contém informações sobre clientes pessoa física e jurídica. Ela é utilizada por todos os produtos de crédito e relacionamento do banco, com a segmentação determinando o produto ofertado e o gestor responsável. A atualização diária é realizada pelo batch noturno do sistema CORE_BANCARIO_TOTVS.
 
-### Versão e Propriedade
+### Propriedades da Tabela
+
+- **Owner**: squad-dados-cadastrais
 - **Versão**: 1.0.0
-- **Proprietário**: squad-dados-cadastrais
+- **Status do Manifesto**: DRAFT
+- **Fonte**:
+  - Sistema: CORE_BANCARIO_TOTVS
+  - Formato: CSV
+  - Codificação: UTF-8
+  - SO: Unix
+  - Frequência de Atualização: Diária
+  - Contato: squad-dados-cadastrais@banco.com.br
+
+### Contexto Regulatório
+
+- **Tags Regulatórias**: LGPD, BACEN_4658
+- **Classificação de Dados**: Confidencial
+- **Período de Retenção**: 10 anos
 
 ## Colunas da Tabela
 
 ### `cd_cliente`
-- **Tipo**: String (VARCHAR)
-- **Negócio**: Identificador único do cliente.
-- **Comportamento Esperado**: Não deve conter valores nulos e deve ser exclusivo para cada registro. Serve como chave primária.
-- **Estatísticas Observadas**:
-  - Percentual de Nulos: 0%
-  - Contagem Única: 500
-- **Anomalias**: Nenhuma observada.
+
+- **Tipo**: String
+- **Nullable**: Não
+- **Descrição**: Código único do cliente no sistema legado, gerado sequencialmente pelo CORE_BANCARIO.
+- **Propósito de Negócio**: Identificador primário para cada cliente.
+- **Comportamento Esperado**: Sem valores nulos e exclusivo por linha.
 
 ### `nr_cpf_cnpj`
-- **Tipo**: String (VARCHAR)
-- **Negócio**: CPF para pessoas físicas ou CNPJ para empresas.
-- **Comportamento Esperado**: Não deve conter valores nulos e deve ser exclusivo para cada registro.
-- **Estatísticas Observadas**:
-  - Percentual de Nulos: 0%
-  - Contagem Única: 500
-  - Valores Mínimo, Máximo e Médio: Verificados como numéricos (1283495651.0 a 98425103606.0).
-- **Anomalias**: Os valores estão sendo tratados como strings, mas representam números.
+
+- **Tipo**: String
+- **Nullable**: Não
+- **Descrição**: CPF (11 dígitos) ou CNPJ (14 dígitos) sem máscara.
+- **Propósito de Negócio**: Identificação única do cliente conforme cadastro na Receita Federal.
+- **Comportamento Esperado**: Sem valores nulos, deve conter 11 ou 14 caracteres numéricos.
+- **Implicações Regulatórias**: Considerado sensível sob LGPD.
 
 ### `nm_cliente`
-- **Tipo**: String (VARCHAR)
-- **Negócio**: Nome do cliente.
-- **Comportamento Esperado**: Não deve conter valores nulos.
-- **Estatísticas Observadas**:
-  - Percentual de Nulos: 0%
-  - Contagem Única: 495
-  - Valores duplicados observados (ex.: "Gabriel Vargas" aparece duas vezes).
-- **Anomalias**: Existem nomes repetidos, o que pode indicar registros duplicados não identificados pela chave primária.
+
+- **Tipo**: String
+- **Nullable**: Não
+- **Descrição**: Nome completo do cliente conforme cadastro na Receita Federal.
+- **Propósito de Negócio**: Identificação textual do cliente.
+- **Comportamento Esperado**: Sem valores nulos, deve ser único para a maioria dos registros.
+- **Implicações Regulatórias**: Considerado sensível sob LGPD.
 
 ### `dt_nascimento`
-- **Tipo**: String (VARCHAR)
-- **Negócio**: Data de nascimento do cliente.
-- **Comportamento Esperado**: Pode conter valores nulos para clientes jurídicos.
-- **Estatísticas Observadas**:
-  - Percentual de Nulos: 0%
-  - Contagem Única: 495
-  - Valores duplicados observados (ex.: "1988-01-01" aparece duas vezes).
-- **Anomalias**: Tratada como string, mas deveria ser do tipo data.
+
+- **Tipo**: Date
+- **Nullable**: Sim
+- **Descrição**: Data de nascimento. Nula para clientes PJ (pessoa jurídica).
+- **Propósito de Negócio**: Informação demográfica relevante para segmentação e análise.
+- **Comportamento Esperado**: Pode ser nulo, especialmente para clientes PJ.
 
 ### `cd_segmento`
-- **Tipo**: String (VARCHAR)
-- **Negócio**: Segmentação do cliente (ex.: PJ_PEQUENO, PRIVATE).
-- **Comportamento Esperado**: Não deve conter valores nulos.
-- **Estatísticas Observadas**:
-  - Percentual de Nulos: 0%
-  - Contagem Única: 5
-- **Anomalias**: Nenhuma observada.
+
+- **Tipo**: String
+- **Nullable**: Não
+- **Descrição**: Segmento de relacionamento. Domínio: VAREJO, PRIME, PRIVATE, PJ_PEQUENO, PJ_MEDIO.
+- **Propósito de Negócio**: Determina o produto oferecido e o gestor responsável.
+- **Comportamento Esperado**: Sem valores nulos, deve seguir as regras de negócio associadas a renda mensal.
 
 ### `cd_agencia`
-- **Tipo**: String (VARCHAR)
-- **Negócio**: Código da agência associada ao cliente.
-- **Comportamento Esperado**: Não deve conter valores nulos.
-- **Estatísticas Observadas**:
-  - Percentual de Nulos: 0%
-  - Contagem Única: 473
-  - Valores duplicados observados (ex.: "AGENC-???" aparece 15 vezes).
-- **Anomalias**: Exist
+
+- **Tipo**: String
+- **Nullable**: Não
+- **Descrição**: Código numérico de 4 dígitos da agência de relacionamento principal.
+- **Propósito de Negócio**: Identificação da
 
 ---
 > **[AI_METADATA_STATUS: DRAFT]**

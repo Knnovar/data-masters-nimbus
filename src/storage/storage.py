@@ -105,11 +105,52 @@ class LocalStorage(StorageBase):
     def write(self, layer: str, filename: str, df: pd.DataFrame) -> None:
         path = self._path(layer, filename)
         df.to_csv(path, index=False)
-        print(f"   💾  [{layer.upper()}] {filename} gravado ({len(df)} linhas)")
+        print(f"   [WRITE] [{layer.upper()}] {filename} gravado ({len(df)} linhas)")
 
     def read(self, layer: str, filename: str) -> pd.DataFrame:
+        """
+        Le um arquivo da camada e retorna DataFrame.
+        Detecta o formato pelo sufixo do arquivo:
+          .csv / .tsv  -> pd.read_csv
+          .json        -> pd.json_normalize (aceita lista ou {root_key: [...]} )
+          .txt / .dat  -> pd.read_fwf (melhor esforco para fixed-width)
+        """
         path = self._path(layer, filename)
-        return pd.read_csv(path, low_memory=False, dtype=str)
+        ext  = path.suffix.lower()
+
+        if ext == ".json":
+            import json
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            # Resolve root key automaticamente
+            if isinstance(data, dict):
+                for v in data.values():
+                    if isinstance(v, list):
+                        data = v
+                        break
+            if not isinstance(data, list):
+                data = [data]
+            return pd.json_normalize(data, max_level=5).astype(str)
+
+        if ext in (".txt", ".dat", ".pos", ".fix"):
+            # Tenta carregar sidecar de colspecs gerado pelo FixedWidthWriter
+            import json as _json
+            sidecar = path.parent / (path.name + ".layout")
+            if sidecar.exists():
+                spec     = _json.loads(sidecar.read_text(encoding="utf-8"))
+                colspecs = [tuple(cs) for cs in spec["colspecs"]]
+                return pd.read_fwf(path, colspecs=colspecs,
+                                   names=spec["names"], dtype=str)
+            # Sem sidecar: melhor esforco via pandas whitespace detection
+            try:
+                return pd.read_fwf(path, dtype=str)
+            except Exception:
+                return pd.read_csv(path, sep="\s+", dtype=str,
+                                   on_bad_lines="skip", engine="python")
+
+        # Default: CSV (inclui .tsv com sep auto)
+        sep = "\t" if ext == ".tsv" else ","
+        return pd.read_csv(path, low_memory=False, dtype=str, sep=sep)
 
     def move(self, filename: str, from_layer: str, to_layer: str) -> None:
         src = self._path(from_layer, filename)
@@ -117,7 +158,7 @@ class LocalStorage(StorageBase):
         if dst.exists():
             dst.unlink()
         shutil.move(str(src), str(dst))
-        print(f"   📦  {filename}: {from_layer.upper()} → {to_layer.upper()}")
+        print(f"   [MOVE] {filename}: {from_layer.upper()} -> {to_layer.upper()}")
 
     def list(self, layer: str) -> list[str]:
         return [f.name for f in self._layers[layer].glob("*.csv")]
@@ -196,7 +237,7 @@ class MinIOStorage(StorageBase):
             self._bucket(layer), filename, buf, length=buf.getbuffer().nbytes,
             content_type="text/csv"
         )
-        print(f"   ☁️   [{layer.upper()}] {filename} → MinIO ({len(df)} linhas)")
+        print(f"   [WRITE] [{layer.upper()}] {filename} -> MinIO ({len(df)} linhas)")
 
     def read(self, layer: str, filename: str) -> pd.DataFrame:
         response = self._client.get_object(self._bucket(layer), filename)
@@ -209,7 +250,7 @@ class MinIOStorage(StorageBase):
         # CopySource obrigatório a partir do minio-py 7.x
         self._client.copy_object(dst_bucket, filename, CopySource(src_bucket, filename))
         self._client.remove_object(src_bucket, filename)
-        print(f"   📦  {filename}: {from_layer.upper()} → {to_layer.upper()} (MinIO)")
+        print(f"   [MOVE] {filename}: {from_layer.upper()} -> {to_layer.upper()} (MinIO)")
 
     def list(self, layer: str) -> list[str]:
         objects = self._client.list_objects(self._bucket(layer))

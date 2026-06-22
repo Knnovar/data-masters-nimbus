@@ -1,33 +1,73 @@
 table: tb_transacoes
-description: Movimentações financeiras de todos os canais de atendimento.
+description: Movimentacoes financeiras de todos os canais de atendimento.
 owner: squad-transacoes
 version: 2.3.1
+manifest_status: DRAFT
+source:
+  system: SWITCH_TRANSACIONAL
+  format: csv
+  encoding: utf-8
+  os: unix
+  update_frequency: event_driven
+  contact: squad-transacoes@banco.com.br
+regulatory:
+  tags:
+  - BACEN_4658
+  - PCI_DSS
+  data_classification: confidential
+  retention_years: 7
+steward:
+  name: Data Steward Transacional
+  email: steward-transacoes@banco.com.br
+business_context: Registro de todas as movimentacoes financeiras por canal. fl_suspeita
+  sinaliza transacoes em analise pelo motor antifraude. cd_estabelecimento pode ser
+  nulo para compras online nao identificadas.
 tolerance:
   max_null_pct: 10
   allow_duplicates: false
+dependencies:
+- tb_clientes
+sample_queries:
+- description: Volume transacionado por canal no mes
+  sql: SELECT cd_canal, COUNT(*) as qtd, SUM(vl_transacao) as total FROM tb_transacoes
+    GROUP BY cd_canal
+- description: Transacoes suspeitas recentes
+  sql: SELECT * FROM tb_transacoes WHERE fl_suspeita = true ORDER BY dt_transacao
+    DESC LIMIT 100
 schema:
 - name: id_transacao
   type: string
   nullable: false
   primary_key: true
+  description: UUID da transacao. Gerado pelo switch transacional no momento da operacao.
 - name: cd_cliente
   type: string
   nullable: false
+  description: Referencia ao cliente em tb_clientes.
 - name: dt_transacao
   type: date
   nullable: false
+  description: Data da transacao no fuso horario America/Sao_Paulo.
 - name: vl_transacao
   type: float
   nullable: false
+  description: Valor em BRL. Positivo para debitos, negativo para estornos.
 - name: tp_transacao
   type: string
   nullable: false
+  description: 'Tipo da operacao. Dominio: COMPRA, SAQUE, TED, PIX, PAGAMENTO_BOLETO,
+    ESTORNO.'
 - name: cd_estabelecimento
   type: string
   nullable: true
+  description: CNPJ do estabelecimento. Nulo para compras online nao identificadas
+    (~6%).
 - name: fl_suspeita
   type: boolean
   nullable: false
+  description: Flag do motor antifraude. True indica transacao em analise (~4% do
+    volume).
 - name: cd_canal
   type: string
   nullable: false
+  description: 'Canal de origem. Dominio: APP, INTERNET, AGENCIA, ATM, POS.'

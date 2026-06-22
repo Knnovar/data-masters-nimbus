@@ -1,61 +1,76 @@
 # Dicionário Técnico da Tabela `tb_contratos_credito_breaking`
 
-## Descrição Geral
+## Visão Geral
 
-A tabela `tb_contratos_credito_breaking` contém informações sobre contratos de produtos de crédito, tanto ativos quanto encerrados. Ela é gerida pela equipe `squad-credito` e está na versão 3.0.0.
+A tabela `tb_contratos_credito_breaking` contém dados sobre contratos de produtos de crédito ativos e encerrados, conforme descrito no contrato YAML. Ela alimenta o Sistema de Controle de Risco (SCR) mensalmente e está sujeita a regulamentações específicas, incluindo SCR, BACEN 4658 e LGPD.
+
+### Propriedades da Tabela
+
+- **Owner**: squad-credito
+- **Versão**: 3.0.0
+- **Status do Manifesto**: DRAFT
+- **Fonte**:
+  - Sistema: SISTEMA_CREDITO_SAS
+  - Formato: sas7bdat
+  - Codificação: latin-1
+  - SO: unix
+  - Frequência de Atualização: diária
+- **Contato**: squad-credito@banco.com.br
+
+### Contexto Regulatório e de Negócios
+
+- **Tags Regulatórias**:
+  - SCR
+  - BACEN_4658
+  - LGPD
+- **Classificação de Dados**: restrita
+- **Período de Retenção**: 10 anos
 
 ## Colunas da Tabela
 
-### `id_contrato`
-- **Propósito de Negócio**: Identificador único para cada contrato.
-- **Tipo Esperado**: String
-- **Comportamento Esperado**: Não nulo, deve ser único em toda a tabela (chave primária).
-- **Anomalias Observadas**: Nenhuma anomalia detectada; todos os valores são únicos e não há registros nulos.
+### `id_contrato` (string)
 
-### `cd_cliente`
-- **Propósito de Negócio**: Código identificador do cliente associado ao contrato.
-- **Tipo Esperado**: String
-- **Comportamento Esperado**: Não nulo, pode haver duplicatas indicando múltiplos contratos para um mesmo cliente.
-- **Anomalias Observadas**: Alta frequência de valores repetidos (4 e 3 ocorrências), sugerindo que alguns clientes têm múltiplos contratos.
+- **Descrição**: Identificador único do contrato gerado pelo sistema de crédito.
+- **Propósito de Negócio**: Serve como chave primária para identificar exclusivamente cada contrato.
+- **Tipo**: string
+- **Comportamento Esperado**: Não nulos, valores únicos em todas as linhas.
+- **Anomalias Observadas**: Nenhuma anomalia relatada.
 
-### `dt_contrato`
-- **Propósito de Negócio**: Data em que o contrato foi estabelecido.
-- **Tipo Esperado**: Date
-- **Comportamento Esperado**: Não nulo, deve ser uma data válida.
-- **Anomalias Observadas**: Tipo de dado está como `VARCHAR`, indicando um problema na conversão ou armazenamento. Além disso, há valores repetidos.
+### `cd_cliente` (string)
 
-### `vl_limite`
-- **Propósito de Negócio**: Valor limite do crédito disponível no contrato.
-- **Tipo Esperado**: Float
-- **Comportamento Esperado**: Não nulo, deve ser um número positivo.
-- **Anomalias Observadas**: Tipo de dado está como `VARCHAR`, indicando um problema na conversão ou armazenamento.
+- **Descrição**: Referência ao cliente na tabela `tb_clientes`.
+- **Propósito de Negócio**: Liga o contrato a um cliente específico.
+- **Tipo**: string
+- **Comportamento Esperado**: Não nulos, valores únicos em todas as linhas.
+- **Anomalias Observadas**: Nenhuma anomalia relatada.
 
-### `vl_utilizado`
-- **Propósito de Negócio**: Valor do crédito já utilizado pelo cliente.
-- **Tipo Esperado**: Float
-- **Comportamento Esperado**: Não nulo, deve ser um número positivo e não superior ao valor limite (`vl_limite`).
-- **Anomalias Observadas**: Tipo de dado está como `VARCHAR`, indicando um problema na conversão ou armazenamento.
+### `dt_contrato` (string)
 
-### `tp_produto`
-- **Propósito de Negócio**: Tipo do produto de crédito (ex: cheque especial, financiamento veículo).
-- **Tipo Esperado**: String
-- **Comportamento Esperado**: Não nulo.
-- **Anomalias Observadas**: Nenhuma anomalia detectada; os valores são consistentes com tipos esperados.
+- **Descrição**: Data de abertura do contrato.
+- **Propósito de Negócio**: Registra quando o contrato foi inicialmente estabelecido.
+- **Tipo**: string
+- **Comportamento Esperado**: Não nulos, deve ser uma data válida.
+- **Anomalias Observadas**: Nenhuma anomalia relatada.
 
-### `cd_status`
-- **Propósito de Negócio**: Status atual do contrato (ex: renegociado, em atraso).
-- **Tipo Esperado**: String
-- **Comportamento Esperado**: Não nulo.
-- **Anomalias Observadas**: Nenhuma anomalia detectada; os valores são consistentes com status esperados.
+### `vl_limite` (string)
 
-### `dt_vencimento`
-- **Propósito de Negócio**: Data em que o contrato vence ou deve ser totalmente pago.
-- **Tipo Esperado**: Date
-- **Comportamento Esperado**: Não nulo, deve ser uma data válida.
-- **Anomalias Observadas**: Tipo de dado está como `VARCHAR`, indicando um problema na conversão ou armazenamento. Além disso, há valores repetidos.
+- **Descrição**: Limite de crédito aprovado em BRL.
+- **Propósito de Negócio**: Indica o valor máximo disponível para uso sob o contrato.
+- **Tipo**: string
+- **Comportamento Esperado**: Não nulos, valores numéricos positivos.
+- **Anomalias Observadas**: Nenhuma anomalia relatada.
 
-### `nr_parcelas`
-- **Propósito de Negó
+### `vl_utilizado` (string)
+
+- **Descrição**: Saldo utilizado atual em BRL. Pode exceder `vl_limite` para produtos com tolerância.
+- **Propósito de Negócio**: Monitora o uso do limite de crédito pelo cliente.
+- **Tipo**: string
+- **Comportamento Esperado**: Não nulos, valores numéricos positivos ou negativos permitidos conforme regras de negócios.
+- **Anomalias Observadas**: Nenhuma anomalia relatada.
+
+### `tp_produto` (string)
+
+- **Descrição**: Tipo do produto de crédito. Domínio: CARTAO_CREDITO, CHEQUE_ESPECIAL, CREDITO_PESSOAL, FINANCI
 
 ---
 > **[AI_METADATA_STATUS: DRAFT]**

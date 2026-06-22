@@ -1,5 +1,5 @@
 """
-run_pipeline.py — Entry point da Pipeline Data Masters (PoC local)
+run_pipeline.py — Entry point da Pipeline Projeto Nimbus (PoC local)
 
 Executa os três cenários de teste em sequência:
   1. baseline     → fluxo feliz, dados válidos
@@ -29,13 +29,13 @@ from src.metrics.metrics_collector import collect, generate_report
 
 BANNER = """
 ╔══════════════════════════════════════════════════════════════════╗
-║          🏦  PIPELINE DATA MASTERS — PoC LOCAL                  ║
+║          🏦  PIPELINE PROJETO NIMBUS — PoC LOCAL                  ║
 ║          Lakehouse  ·  Contratos  ·  Profiler  ·  SLM           ║
 ╚══════════════════════════════════════════════════════════════════╝
 """
 
 
-def run_scenario(scenario: str, run_id: str) -> list[dict]:
+def run_scenario(scenario: str, run_id: str, fmt: str = "csv") -> list[dict]:
     """Executa um único cenário end-to-end usando a camada Storage."""
     print(f"\n{chr(9552)*66}")
     print(f"  CENARIO: {scenario.upper()}")
@@ -45,7 +45,7 @@ def run_scenario(scenario: str, run_id: str) -> list[dict]:
     storage = get_storage()
 
     # ── 1. Bronze: geração de dados ───────────────────────────────────────
-    produced = generate_all(storage, scenario=scenario)
+    produced = generate_all(storage, scenario=scenario, fmt=fmt)
 
     # ── 2. Loop por tabela ────────────────────────────────────────────────
     scenario_metrics = []
@@ -82,15 +82,15 @@ def run_scenario(scenario: str, run_id: str) -> list[dict]:
 
 def print_summary(all_metrics: list[dict]) -> None:
     """Imprime tabela de resultados no terminal."""
-    print(f"\n{'═'*66}")
+    print(f"\n{'='*66}")
     print("  RESUMO DA EXECUÇÃO")
-    print(f"{'═'*66}")
+    print(f"{'='*66}")
 
-    header = f"{'Tabela':<30} {'Cenário':<14} {'Status':<10} {'Score':>6}"
+    header = f"{'Tabela':<30} {'Cenario':<14} {'Status':<10} {'Score':>6}"
     print(header)
-    print("─" * 66)
+    print("-" * 66)
 
-    icons = {"PASS": "🟢", "WARNING": "🟡", "DLQ": "🔴"}
+    icons = {"PASS": "[PASS]", "WARNING": "[WARN]", "DLQ": "[DLQ]"}
     for m in all_metrics:
         icon = icons.get(m["validation_status"], "⚪")
         print(
@@ -99,18 +99,25 @@ def print_summary(all_metrics: list[dict]) -> None:
         )
 
     avg = round(sum(m["quality_score"] for m in all_metrics) / len(all_metrics), 1)
-    print("─" * 66)
-    print(f"{'Score médio':>55} {avg:>6.1f}/100")
+    print("-" * 66)
+    print(f"{'Score medio':>55} {avg:>6.1f}/100")
     print()
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Pipeline Data Masters — PoC Local")
+    parser = argparse.ArgumentParser(description="Pipeline Projeto Nimbus — PoC Local")
     parser.add_argument(
         "--scenario",
         choices=["baseline", "non_breaking", "breaking", "all"],
         default="all",
-        help="Cenário a executar (padrão: all)",
+        help="Cenario a executar (padrao: all)",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["csv", "json", "fixed", "all"],
+        default="csv",
+        dest="fmt",
+        help="Formato de saida (csv|json|fixed|all). Padrao: csv",
     )
     args = parser.parse_args()
 
@@ -127,10 +134,13 @@ def main():
         else [args.scenario]
     )
 
+    fmt_list = ["csv", "json", "fixed"] if args.fmt == "all" else [args.fmt]
+
     all_metrics: list[dict] = []
     for scenario in scenarios:
-        metrics = run_scenario(scenario, run_id)
-        all_metrics.extend(metrics)
+        for fmt in fmt_list:
+            metrics = run_scenario(scenario, run_id, fmt=fmt)
+            all_metrics.extend(metrics)
 
     # Relatório consolidado
     print_summary(all_metrics)
@@ -141,9 +151,9 @@ def main():
     with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(all_metrics, f, ensure_ascii=False, indent=2)
 
-    print(f"  Métricas JSON : {summary_path}")
-    print(f"  Relatório MD  : {report_path}")
-    print("\n  ✅  Pipeline concluída.\n")
+    print(f"  Metricas JSON : {summary_path}")
+    print(f"  Relatorio MD  : {report_path}")
+    print("\n  Pipeline concluida.\n")
 
 
 if __name__ == "__main__":

@@ -1,36 +1,90 @@
 table: tb_clientes
-description: Cadastro mestre de clientes pessoa física e jurídica.
+description: Cadastro mestre de clientes pessoa fisica e juridica.
 owner: squad-dados-cadastrais
 version: 1.0.0
+manifest_status: DRAFT
+source:
+  system: CORE_BANCARIO_TOTVS
+  format: csv
+  encoding: utf-8
+  os: unix
+  update_frequency: daily
+  contact: squad-dados-cadastrais@banco.com.br
+regulatory:
+  tags:
+  - LGPD
+  - BACEN_4658
+  data_classification: confidential
+  retention_years: 10
+steward:
+  name: Data Steward Cadastral
+  email: steward-cadastral@banco.com.br
+business_context: Tabela mestre de clientes utilizada por todos os produtos de credito
+  e relacionamento. A segmentacao (cd_segmento) determina o produto ofertado e o gestor
+  responsavel. Atualizada diariamente pelo batch noturno do CORE_BANCARIO_TOTVS.
 tolerance:
   max_null_pct: 25
   allow_duplicates: false
+dependencies:
+- tb_agencias
+- tb_segmentos
+sample_queries:
+- description: Distribuicao por segmento
+  sql: SELECT cd_segmento, COUNT(*) as qtd FROM tb_clientes WHERE fl_ativo = true
+    GROUP BY cd_segmento
+- description: Clientes ativos com renda acima de 10k
+  sql: SELECT cd_cliente, nm_cliente, vl_renda_mensal FROM tb_clientes WHERE fl_ativo
+    = true AND vl_renda_mensal > 10000
 schema:
 - name: cd_cliente
   type: string
   nullable: false
   primary_key: true
+  description: Codigo unico do cliente no sistema legado. Gerado sequencialmente pelo
+    CORE_BANCARIO.
 - name: nr_cpf_cnpj
   type: string
   nullable: false
+  description: CPF (11 digitos) ou CNPJ (14 digitos) sem mascara.
+  regulatory_flags:
+  - LGPD_SENSITIVE
 - name: nm_cliente
   type: string
   nullable: false
+  description: Nome completo do cliente conforme cadastro na Receita Federal.
+  regulatory_flags:
+  - LGPD_SENSITIVE
 - name: dt_nascimento
   type: date
   nullable: true
+  description: Data de nascimento. Nula para clientes PJ.
+  regulatory_flags:
+  - LGPD_SENSITIVE
 - name: cd_segmento
   type: string
   nullable: false
+  description: 'Segmento de relacionamento. Dominio: VAREJO, PRIME, PRIVATE, PJ_PEQUENO,
+    PJ_MEDIO.'
+  business_rules:
+  - 'PRIME: vl_renda_mensal >= 10000'
+  - 'PRIVATE: vl_renda_mensal >= 30000'
 - name: cd_agencia
   type: string
   nullable: false
+  description: Codigo numerico de 4 digitos da agencia de relacionamento principal.
 - name: vl_renda_mensal
   type: float
   nullable: true
+  description: Renda mensal declarada em BRL. Nula para clientes PJ.
+  business_rules:
+  - Sempre nulo para cd_segmento IN (PJ_PEQUENO, PJ_MEDIO)
+  regulatory_flags:
+  - SCR_CANDIDATE
 - name: fl_ativo
   type: boolean
   nullable: false
+  description: Indica se o cliente possui relacionamento ativo com o banco.
 - name: dt_cadastro
   type: date
   nullable: false
+  description: Data de abertura do cadastro no sistema.

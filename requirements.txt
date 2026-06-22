@@ -11,6 +11,9 @@ numpy>=1.26.0
 # ── Profiler ─────────────────────────────────────────────────────────────────
 duckdb>=0.10.0
 
+# ── Extrator de manifesto SAS7BDAT ───────────────────────────────────────────
+pyreadstat>=1.2.0    # leitura de SAS7BDAT, SPSS e Stata — sem dependência do SAS
+
 # ── Orquestrador (alternativa ao Control-M) ──────────────────────────────────
 # Prefect é OPCIONAL para a PoC — o run_pipeline.py roda sem ele.
 # Para usar a UI em http://localhost:4200: prefect server start
@@ -21,3 +24,7 @@ prefect>=2.19.0
 
 # ── MinIO client (opcional — apenas se usar docker-compose) ──────────────────
 # minio>=7.2.0
+
+# Sprint 2: multi-formato e encoding
+chardet>=5.0.0
+openpyxl>=3.1.0

@@ -1,59 +1,65 @@
 # Dicionário Técnico da Tabela `tb_transacoes_breaking`
 
-## Descrição Geral
+## Visão Geral
 
-A tabela `tb_transacoes_breaking` registra movimentações financeiras realizadas através de diversos canais de atendimento do banco. Ela é gerida pela equipe responsável pelas transações (squad-transacoes) e está na versão 2.3.1.
+A tabela `tb_transacoes_breaking` contém registros das movimentações financeiras realizadas através de diversos canais de atendimento do banco, conforme descrito no contrato YAML. Este documento visa detalhar cada coluna presente na tabela, destacando propósitos de negócio, tipos de dados, comportamentos esperados e anomalias observadas.
 
-## Colunas da Tabela
+### Contexto de Negócios
 
-### `id_transacao`
-- **Propósito de Negócio**: Identificador único para cada transação.
-- **Tipo Esperado**: String
-- **Comportamento Esperado**: Não deve conter valores nulos e ser única em toda a tabela (chave primária).
-- **Anomalias Observadas**:
-  - Existem duplicatas: `3bc339e0-f2aa-4d33-883b-302d2dd05cfe`, `11698d09-c47f-4130-8e7f-ce7c39271a77` e `3d751a35-70b3-4d09-8ae7-fef53c7f9903` aparecem duas vezes.
-  
-### `cd_cliente`
-- **Propósito de Negócio**: Código identificador do cliente que realizou a transação.
-- **Tipo Esperado**: String
-- **Comportamento Esperado**: Não deve conter valores nulos.
-- **Anomalias Observadas**:
-  - Alta concentração em poucos códigos: `48E5DA3F-4B9`, `08B6AAAB-0CF` e `8536384A-BF4` aparecem com frequência elevada.
+- **Registro de Movimentações**: A tabela registra todas as transações financeiras por canal. 
+- **Flag de Transação Suspeita (`fl_suspeita`)**: Sinaliza transações em análise pelo motor antifraude.
+- **Código do Estabelecimento (`cd_estabelecimento`)**: Pode ser nulo para compras online não identificadas.
 
-### `dt_transacao`
-- **Propósito de Negócio**: Data em que a transação foi realizada.
-- **Tipo Esperado**: Date
-- **Comportamento Esperado**: Não deve conter valores nulos e formatar corretamente as datas.
-- **Anomalias Observadas**:
-  - Tipo de dado incorreto: está sendo armazenado como VARCHAR, o que pode causar problemas na análise temporal.
+### Regulamentações e Compliance
 
-### `vl_transacao`
-- **Propósito de Negócio**: Valor monetário da transação.
-- **Tipo Esperado**: Float
-- **Comportamento Esperado**: Não deve conter valores nulos e representar corretamente os valores financeiros.
-- **Anomalias Observadas**:
-  - Tipo de dado incorreto: está sendo armazenado como VARCHAR, o que pode causar problemas na análise financeira.
+- **Tags Regulatórias**: 
+  - `BACEN_4658`: Norma regulatória brasileira que deve ser observada.
+  - `PCI_DSS`: Requisitos de segurança para processamento de dados de cartão de crédito.
 
-### `tp_transacao`
-- **Propósito de Negócio**: Tipo da transação (ex.: saque, pagamento).
-- **Tipo Esperado**: String
-- **Comportamento Esperado**: Não deve conter valores nulos.
-- **Anomalias Observadas**:
-  - Limitada variedade de tipos: apenas seis tipos distintos são registrados.
+### Classificação e Retenção de Dados
 
-### `cd_estabelecimento`
-- **Propósito de Negócio**: Código do estabelecimento onde a transação foi realizada.
-- **Tipo Esperado**: String
-- **Comportamento Esperado**: Pode conter valores nulos, mas deve ser consistente quando presente.
-- **Anomalias Observadas**:
-  - Percentual de valores nulos: 6.5% dos registros estão sem código de estabelecimento.
+- **Classificação**: Confidencial
+- **Período de Retenção**: 7 anos
 
-### `fl_suspeita`
-- **Propósito de Negócio**: Indicador se a transação é suspeita ou não.
-- **Tipo Esperado**: Boolean
-- **Comportamento Esperado**: Não deve conter valores nulos e ser verdadeiro ou falso.
-- **Anomalias Observadas**:
-  -
+## Descrição das Colunas
+
+### 1. `bf593f98-45de-4688-8ef7-1b9d7121769694A38DFF-81A2023-03-20`
+
+- **Propósito de Negócio**: Identificador único da transação.
+- **Tipo de Dado**: VARCHAR
+- **Comportamento Esperado**: Não deve conter valores nulos. Deve ser único para cada registro, exceto por duplicatas observadas (2 ocorrências).
+- **Anomalias**:
+  - Duplas ocorridas em `top_values` indicam potenciais problemas de integridade.
+
+### 2. `21951.46PIX`
+
+- **Propósito de Negócio**: Tipo da transação.
+- **Tipo de Dado**: VARCHAR
+- **Comportamento Esperado**: Não deve conter valores nulos e deve seguir o domínio definido (`COMPRA`, `SAQUE`, etc.).
+- **Anomalias**:
+  - Duplas ocorridas em `top_values` indicam potenciais problemas de integridade.
+
+### 3. `Unnamed: 2`
+
+- **Propósito de Negócio**: Valor da transação.
+- **Tipo de Dado**: VARCHAR
+- **Comportamento Esperado**: Não deve conter valores nulos, mas apresenta uma taxa de nulidade de 6.16%.
+- **Anomalias**:
+  - Taxa de nulidade acima do limite aceitável (10%).
+  - Valores extremos observados: mínimo de `1235684000173.0` e máximo de `98763105000105.0`.
+
+### 4. `FAPP`
+
+- **Propósito de Negócio**: Canal de origem da transação.
+- **Tipo de Dado**: VARCHAR
+- **Comportamento Esperado**: Não deve conter valores nulos, com domínio definido (`APP`, `INTERNET`, etc.).
+- **Anomalias**:
+  - Nenhuma anomalia observada em relação a duplicatas ou nulidade.
+
+## Pontos de Atenção
+
+1. **Duplas Identificadas**: Existem registros duplicados para os identificadores de transação e tipos de transação, o que pode indicar problemas na integridade dos dados.
+2. **Tax
 
 ---
 > **[AI_METADATA_STATUS: DRAFT]**

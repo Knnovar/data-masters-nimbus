@@ -1,71 +1,72 @@
 # Dicionário Técnico da Tabela `tb_transacoes`
 
-## Descrição Geral
+## Visão Geral
 
-A tabela `tb_transacoes` armazena informações sobre movimentações financeiras realizadas através de diversos canais de atendimento do banco. Ela é gerida pela equipe `squad-transacoes` e está na versão 2.3.1.
+A tabela `tb_transacoes` registra todas as movimentações financeiras realizadas através dos diversos canais de atendimento do banco, conforme especificado no manifesto. Ela é gerida pela equipe `squad-transacoes` e está atualmente em versão 2.3.1 com status de DRAFT.
 
-## Colunas da Tabela
+### Contexto de Negócio
 
-### `id_transacao`
-- **Propósito de Negócio**: Identificador único para cada transação.
-- **Tipo**: String (VARCHAR)
-- **Comportamento Esperado**: Não deve conter valores nulos e é a chave primária da tabela.
-- **Anomalias Observadas**:
-  - Existem duplicatas: 2 registros com o mesmo `id_transacao`.
-  
-### `cd_cliente`
-- **Propósito de Negócio**: Código identificador do cliente que realizou a transação.
-- **Tipo**: String (VARCHAR)
-- **Comportamento Esperado**: Não deve conter valores nulos.
-- **Anomalias Observadas**:
-  - Alta concentração de clientes: alguns códigos aparecem repetidamente, indicando múltiplas transações por cliente.
+- **Propósito**: Registro das movimentações financeiras por canal.
+- **Detalhes Importantes**:
+  - O campo `fl_suspeita` indica se uma transação está sob análise pelo motor antifraude.
+  - O campo `cd_estabelecimento` pode ser nulo para compras online não identificadas, o que ocorre em aproximadamente 6% das entradas.
 
-### `dt_transacao`
-- **Propósito de Negócio**: Data em que a transação foi realizada.
-- **Tipo**: String (VARCHAR) — esperado como tipo Date
-- **Comportamento Esperado**: Não deve conter valores nulos.
-- **Anomalias Observadas**:
-  - Datas futuras presentes, como "2024-02-28", que podem ser erros de entrada.
+### Regulamentações e Compliance
 
-### `vl_transacao`
-- **Propósito de Negócio**: Valor monetário da transação.
-- **Tipo**: String (VARCHAR) — esperado como tipo Float
-- **Comportamento Esperado**: Não deve conter valores nulos.
-- **Anomalias Observadas**:
-  - Tipo de dado incorreto: armazenado como VARCHAR ao invés de FLOAT.
+- **Tags Regulatórias**: BACEN_4658, PCI_DSS
+- **Classificação de Dados**: Confidencial
+- **Período de Retenção**: 7 anos
 
-### `tp_transacao`
-- **Propósito de Negócio**: Tipo da transação (ex.: saque, pagamento).
-- **Tipo**: String (VARCHAR)
-- **Comportamento Esperado**: Não deve conter valores nulos.
-- **Anomalias Observadas**:
-  - Limitada variedade de tipos de transações.
+## Esquema da Tabela
 
-### `cd_estabelecimento`
-- **Propósito de Negócio**: Código identificador do estabelecimento onde a transação ocorreu.
-- **Tipo**: String (VARCHAR)
-- **Comportamento Esperado**: Pode conter valores nulos, com tolerância de 6.5% de nulidade.
-- **Anomalias Observadas**:
-  - Tipo de dado incorreto: armazenado como VARCHAR ao invés de um tipo numérico.
+### Colunas
 
-### `fl_suspeita`
-- **Propósito de Negócio**: Indica se a transação é suspeita (True/False).
-- **Tipo**: String (VARCHAR) — esperado como tipo Boolean
-- **Comportamento Esperado**: Não deve conter valores nulos.
-- **Anomalias Observadas**:
-  - Tipo de dado incorreto: armazenado como VARCHAR ao invés de BOOLEAN.
+1. **`id_transacao`**
+   - **Tipo**: `string`
+   - **Nullable**: Não
+   - **Descrição**: UUID gerado pelo sistema no momento da operação, servindo como chave primária.
+   - **Comportamento Esperado**: Deve ser único e não nulo para cada transação.
 
-### `cd_canal`
-- **Propósito de Negócio**: Canal através do qual a transação foi realizada (ex.: ATM, APP).
-- **Tipo**: String (VARCHAR)
-- **Comportamento Esperado**: Não deve conter valores nulos.
-- **Anomalias Observadas**:
-  - Limitada variedade de canais.
+2. **`cd_cliente`**
+   - **Tipo**: `string`
+   - **Nullable**: Não
+   - **Descrição**: Referência ao cliente na tabela `tb_clientes`.
+   - **Comportamento Esperado**: Sempre deve ter um valor válido referenciando um cliente existente.
 
-## Chaves de Negócio
+3. **`dt_transacao`**
+   - **Tipo**: `date`
+   - **Nullable**: Não
+   - **Descrição**: Data da transação no fuso horário America/Sao_Paulo.
+   - **Comportamento Esperado**: Deve conter a data exata em que a transação ocorreu.
 
-### `id_transacao`
-- **Implicações**: Como chave primária, deve
+4. **`vl_transacao`**
+   - **Tipo**: `float`
+   - **Nullable**: Não
+   - **Descrição**: Valor da transação em BRL. Positivo para débitos e negativo para estornos.
+   - **Comportamento Esperado**: Deve refletir corretamente o valor financeiro da operação.
+
+5. **`tp_transacao`**
+   - **Tipo**: `string`
+   - **Nullable**: Não
+   - **Descrição**: Tipo de transação (COMPRA, SAQUE, TED, PIX, PAGAMENTO_BOLETO, ESTORNO).
+   - **Comportamento Esperado**: Deve estar dentro do domínio especificado.
+
+6. **`cd_estabelecimento`**
+   - **Tipo**: `string`
+   - **Nullable**: Sim
+   - **Descrição**: CNPJ do estabelecimento. Pode ser nulo para compras online não identificadas.
+   - **Comportamento Esperado**: Aproximadamente 6% das entradas devem ter este campo como nulo.
+
+7. **`fl_suspeita`**
+   - **Tipo**: `boolean`
+   - **Nullable**: Não
+   - **Descrição**: Indica se a transação está sendo analisada pelo motor antifraude.
+   - **Comportamento Esperado**: Cerca de 4% das transações devem ter este campo como verdadeiro.
+
+8. **`cd_canal`**
+   - **Tipo**: `string`
+   - **Nullable**: Não
+   - **Descrição**: Canal
 
 ---
 > **[AI_METADATA_STATUS: DRAFT]**

@@ -1,39 +1,96 @@
 table: tb_contratos_credito
-description: Contratos de produtos de crédito ativos e encerrados.
+description: Contratos de produtos de credito ativos e encerrados.
 owner: squad-credito
 version: 3.0.0
+manifest_status: DRAFT
+source:
+  system: SISTEMA_CREDITO_SAS
+  format: sas7bdat
+  encoding: latin-1
+  os: unix
+  update_frequency: daily
+  contact: squad-credito@banco.com.br
+regulatory:
+  tags:
+  - SCR
+  - BACEN_4658
+  - LGPD
+  data_classification: restricted
+  retention_years: 10
+steward:
+  name: Data Steward Credito
+  email: steward-credito@banco.com.br
+business_context: Contratos de credito de todos os produtos ofertados pelo banco.
+  Alimenta o SCR mensalmente. vl_utilizado pode exceder vl_limite em ate 15% para
+  produtos com tolerancia de limite (cheque especial). cd_status EM_ATRASO dispara
+  cobranca automatica apos D+1.
 tolerance:
   max_null_pct: 5
   allow_duplicates: false
+dependencies:
+- tb_clientes
+sample_queries:
+- description: Contratos em atraso por produto
+  sql: SELECT tp_produto, COUNT(*) as qtd FROM tb_contratos_credito WHERE cd_status
+    = 'EM_ATRASO' GROUP BY tp_produto
+- description: Utilizacao media do limite por segmento
+  sql: SELECT tp_produto, AVG(vl_utilizado/NULLIF(vl_limite,0)) as pct_utilizacao
+    FROM tb_contratos_credito WHERE cd_status = 'ATIVO' GROUP BY tp_produto
 schema:
 - name: id_contrato
   type: string
   nullable: false
   primary_key: true
+  description: Identificador unico do contrato gerado pelo sistema de credito.
+  sas_label: ID CONTRATO CREDITO
 - name: cd_cliente
   type: string
   nullable: false
+  description: Referencia ao cliente em tb_clientes.
+  sas_label: CODIGO CLIENTE
 - name: dt_contrato
   type: date
   nullable: false
+  description: Data de abertura do contrato.
+  sas_label: DATA ABERTURA CONTRATO
 - name: vl_limite
   type: float
   nullable: false
+  description: Limite de credito aprovado em BRL.
+  sas_label: VALOR LIMITE APROVADO
+  regulatory_flags:
+  - SCR_CANDIDATE
 - name: vl_utilizado
   type: float
   nullable: false
+  description: Saldo utilizado atual em BRL. Pode exceder vl_limite em produtos com
+    tolerancia.
+  sas_label: VALOR UTILIZADO ATUAL
+  business_rules:
+  - Pode ser ate 15% acima de vl_limite para CHEQUE_ESPECIAL
+  regulatory_flags:
+  - SCR_CANDIDATE
 - name: tp_produto
   type: string
   nullable: false
+  description: 'Tipo do produto de credito. Dominio: CARTAO_CREDITO, CHEQUE_ESPECIAL,
+    CREDITO_PESSOAL, FINANCIAMENTO_VEICULO, CONSIGNADO.'
 - name: cd_status
   type: string
   nullable: false
+  description: 'Status do contrato. Dominio: ATIVO, ENCERRADO, EM_ATRASO, RENEGOCIADO.'
+  business_rules:
+  - EM_ATRASO dispara cobranca automatica apos D+1
 - name: dt_vencimento
   type: date
   nullable: false
+  description: Data de vencimento da ultima parcela ou do contrato.
 - name: nr_parcelas
   type: integer
   nullable: false
+  description: Numero total de parcelas do contrato. 1 para credito rotativo.
 - name: tx_juros_am
   type: float
   nullable: false
+  description: 'Taxa de juros ao mes em percentual. Ex: 2.5 = 2,5% a.m.'
+  sas_label: TAXA JUROS MENSAL

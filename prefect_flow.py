@@ -1,32 +1,28 @@
 """
-prefect_flow.py — Orquestração da Pipeline Data Masters via Prefect
+prefect_flow.py - Orquestracao da Pipeline Projeto Nimbus via Prefect
 
-Filosofia de design para portabilidade com Control-M:
-─────────────────────────────────────────────────────
-Cada @task do Prefect corresponde a exatamente um "job" no Control-M.
-O mapeamento é intencional e documentado abaixo:
-
-  Prefect Task               → Control-M Job (futuro)
-  ─────────────────────────────────────────────────────
-  task_generate_data         → JOB-DM-001-GENERATE
-  task_validate              → JOB-DM-002-VALIDATE
-  task_profile               → JOB-DM-003-PROFILE
-  task_enrich_slm            → JOB-DM-004-ENRICH
-  task_collect_metrics       → JOB-DM-005-METRICS
-  task_report                → JOB-DM-006-REPORT
+Mapeamento Prefect Task -> Control-M Job:
+  task_generate_data   -> JOB-DM-001-GENERATE
+  task_validate        -> JOB-DM-002-VALIDATE
+  task_profile         -> JOB-DM-003-PROFILE
+  task_enrich_slm      -> JOB-DM-004-ENRICH
+  task_collect_metrics -> JOB-DM-005-METRICS
+  task_report          -> JOB-DM-006-REPORT
 
 Cada task:
-  - Recebe e retorna dicts serializáveis (sem objetos complexos entre tasks)
-  - Emite exit code padronizado via TaskResult.exit_code (0/1/2)
-  - Loga para stdout em formato legível por parsers do Control-M
-  - É invocável de forma independente via CLI (ver __main__)
+  - Recebe e retorna dicts serializaveis (sem objetos complexos entre tasks)
+  - Emite exit code padronizado: 0=OK, 1=WARNING, 2=ERROR
+  - Loga para stdout no formato JOBNAME|STEP|STATUS|MSG (parseavel pelo Control-M)
+  - E invocavel de forma independente via CLI (ver __main__)
 
 Uso:
-    # Prefect (com UI local em http://localhost:4200)
-    prefect server start          # em outro terminal
-    python prefect_flow.py        # registra e executa
+    # Com servidor Prefect (UI em http://127.0.0.1:4200)
+    prefect server start          # terminal 1
+    python setup_prefect.py       # terminal 2 - registra deployments
+    prefect worker start --pool data-masters-local  # terminal 3
+    prefect deployment run 'data-masters-pipeline/baseline-manual'
 
-    # Sem Prefect (execução direta, compatível com Control-M)
+    # Sem servidor Prefect (compativel com Control-M)
     python prefect_flow.py --no-prefect --scenario baseline
     python prefect_flow.py --no-prefect --scenario all
 """
@@ -38,8 +34,8 @@ import sys
 import uuid
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
-# Torna o projeto importável de qualquer working directory
 sys.path.insert(0, str(Path(__file__).parent))
 
 from config import METRICS_DIR, REPORTS_DIR
@@ -49,71 +45,140 @@ from src.validation.validator import validate
 from src.profiler.duckdb_profiler import profile
 from src.slm.ollama_enrichment import enrich
 from src.metrics.metrics_collector import collect, generate_report
+from src.ingestion.normalizer import normalize
 
-# Prefect é opcional — sem ele, o flow roda como funções Python normais
+# Prefect e opcional — sem ele os decoradores viram no-ops transparentes
 try:
-    from prefect import flow, task, get_run_logger
-    from prefect.context import get_run_context
+    from prefect import flow, task
     _HAS_PREFECT = True
 except ImportError:
     _HAS_PREFECT = False
-    # Stubs transparentes que tornam os decoradores no-ops
-    def flow(*args, **kwargs):
-        def decorator(fn): return fn
-        return decorator if args and callable(args[0]) else decorator
-    def task(*args, **kwargs):
-        def decorator(fn): return fn
-        return decorator if args and callable(args[0]) else decorator
-    def get_run_logger():
-        import logging
-        return logging.getLogger("data-masters")
+    def flow(*a, **kw):
+        fn = a[0] if a and callable(a[0]) else None
+        def decorator(f): return f
+        return fn if fn else decorator
+    def task(*a, **kw):
+        fn = a[0] if a and callable(a[0]) else None
+        def decorator(f): return f
+        return fn if fn else decorator
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Helpers de logging padronizado
-# Formato compatível com parsers do Control-M (JOBNAME|STEP|STATUS|MSG)
+# Logging padronizado — formato parseavel pelo Control-M
 # ─────────────────────────────────────────────────────────────────────────────
-def _log(job_id: str, step: str, status: str, msg: str) -> None:
+
+def _log(job_id, step, status, msg):
     ts = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-    print(f"[{ts}] {job_id}|{step}|{status}|{msg}", flush=True)
+    print("[{}] {}|{}|{}|{}".format(ts, job_id, step, status, msg), flush=True)
 
 
-def _exit_code(status: str) -> int:
-    """
-    Converte status semântico em exit code numérico.
-
-    Control-M interpreta exit codes assim:
-      0 → OK (job bem-sucedido)
-      1 → WARNING (job OK, mas com alertas — não bloqueia dependentes)
-      2 → ERROR (job falhou — bloqueia dependentes por padrão)
-    """
+def _exit_code(status):
+    """0=PASS/SKIPPED, 1=WARNING, 2=DLQ/ERROR"""
     return {"PASS": 0, "WARNING": 1, "DLQ": 2, "ERROR": 2, "SKIPPED": 0}.get(status, 1)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Tasks — cada uma mapeada 1:1 a um futuro job Control-M
+# Tasks
 # ─────────────────────────────────────────────────────────────────────────────
 
-@task(name="JOB-DM-001-GENERATE", retries=1, retry_delay_seconds=10)
-def task_generate_data(scenario: str, run_id: str) -> list:
+@task(name="JOB-DM-000-EXTRACT", retries=1, retry_delay_seconds=5)
+def task_extract_manifest(filename: str, table_name: str, fmt: str = "csv") -> dict:
     """
-    Control-M equivalent: JOB-DM-001-GENERATE
-    Trigger: schedule (horário de abertura do batch) ou evento de arquivo na landing zone.
-    Depende de: nenhum (início do DAG)
-    Bloqueia: JOB-DM-002-VALIDATE
+    Control-M: JOB-DM-000-EXTRACT (opcional)
+    Gera rascunho de manifesto se ainda nao existir para a tabela.
+    Skipa silenciosamente se manifesto ja estiver presente (DRAFT ou VALIDATED).
+
+    Parametros:
+        filename   : nome do arquivo na landing zone
+        table_name : nome da tabela
+        fmt        : formato do arquivo (csv | fixed | json | sas7bdat)
     """
-    _log("JOB-DM-001", "GENERATE", "STARTED", f"scenario={scenario}")
+    _log("JOB-DM-000", "EXTRACT/{}".format(table_name), "STARTED",
+         "file={} format={}".format(filename, fmt))
     try:
+        storage       = get_storage()
+        contract_file = "{}.yaml".format(table_name)
+
+        # Skipa se manifesto ja existe
+        if storage.exists("contracts", contract_file):
+            _log("JOB-DM-000", "EXTRACT/{}".format(table_name), "SKIPPED",
+                 "manifesto ja existe em contracts/{}".format(contract_file))
+            return {"table": table_name, "status": "SKIPPED",
+                    "contract_filename": contract_file}
+
+        # Normaliza encoding antes de extrair
+        csv_path = storage.read_path("bronze", filename)
+        norm_result = normalize(csv_path, backup=True)
+        if norm_result["status"] == "ebcdic":
+            _log("JOB-DM-000", "EXTRACT/{}".format(table_name), "ENDED_NOTOK",
+                 "EBCDIC detectado - requer conversao manual")
+            return {"table": table_name, "status": "ERROR",
+                    "warning": norm_result["warning"]}
+
+        # Seleciona extrator pelo formato
+        if fmt == "csv":
+            from src.manifest.extractor_csv import CSVExtractor
+            extractor = CSVExtractor()
+            manifest  = extractor.extract(csv_path, table_name)
+        elif fmt == "json":
+            from src.manifest.extractor_json import JSONExtractor
+            extractor = JSONExtractor()
+            manifest  = extractor.extract(csv_path, table_name)
+        elif fmt == "fixed":
+            from src.manifest.extractor_fixed import FixedWidthExtractor
+            extractor = FixedWidthExtractor()
+            manifest  = extractor.extract(csv_path, table_name, infer=True)
+        else:
+            _log("JOB-DM-000", "EXTRACT/{}".format(table_name), "SKIPPED",
+                 "formato {} nao suportado automaticamente".format(fmt))
+            return {"table": table_name, "status": "SKIPPED",
+                    "contract_filename": None}
+
+        import yaml
+        storage.write_text("contracts", contract_file,
+                           yaml.dump(manifest, allow_unicode=True, sort_keys=False))
+
+        _log("JOB-DM-000", "EXTRACT/{}".format(table_name), "ENDED_OK",
+             "manifesto DRAFT gerado -> contracts/{}".format(contract_file))
+        return {"table": table_name, "status": "OK",
+                "contract_filename": contract_file}
+
+    except Exception as e:
+        _log("JOB-DM-000", "EXTRACT/{}".format(table_name), "ENDED_NOTOK", str(e))
+        # Falha nao bloqueia o pipeline — retorna sem manifesto
+        return {"table": table_name, "status": "ERROR", "warning": str(e)}
+
+
+@task(name="JOB-DM-001-GENERATE", retries=1, retry_delay_seconds=10)
+def task_generate_data(scenario, run_id, fmt="csv"):
+    """
+    Control-M: JOB-DM-001-GENERATE
+    Depende de: nenhum (inicio do DAG)
+    Bloqueia: JOB-DM-002-VALIDATE
+
+    Args:
+        scenario: Cenario de dados ('baseline', 'non_breaking', 'breaking').
+        run_id: Identificador da run para rastreio.
+        fmt: Formato de saida ('csv', 'json', 'fixed').
+    """
+    _log("JOB-DM-001", "GENERATE", "STARTED", "scenario={} format={}".format(scenario, fmt))
+    try:
+        from src.generators.writers import SUPPORTED_FORMATS
+        if fmt not in SUPPORTED_FORMATS:
+            raise ValueError(
+                "Formato invalido: '{}'. Opcoes validas: {}".format(fmt, ', '.join(SUPPORTED_FORMATS))
+            )
         storage  = get_storage()
-        produced = generate_all(storage, scenario=scenario)
-        _log("JOB-DM-001", "GENERATE", "ENDED_OK", f"tables={len(produced)} backend={type(storage).__name__}")
-        # Serializa apenas metadados — Storage é recriado em cada task
+        produced = generate_all(storage, scenario=scenario, fmt=fmt)
+        _log("JOB-DM-001", "GENERATE", "ENDED_OK",
+             "tables={} backend={} format={}".format(len(produced), type(storage).__name__, fmt))
         return [
             {
                 "table"            : p["table"],
                 "filename"         : p["filename"],
                 "contract_filename": p["contract_filename"],
                 "scenario"         : scenario,
+                "format"           : fmt,
             }
             for p in produced
         ]
@@ -123,17 +188,14 @@ def task_generate_data(scenario: str, run_id: str) -> list:
 
 
 @task(name="JOB-DM-002-VALIDATE", retries=0)
-def task_validate(item: dict, run_id: str) -> dict:
+def task_validate(item, run_id):
     """
-    Control-M equivalent: JOB-DM-002-VALIDATE
-    Trigger: conclusão de JOB-DM-001-GENERATE
-    Bloqueia: JOB-DM-003-PROFILE (apenas se status != DLQ)
-
-    Exit code 2 (DLQ) interrompe a cadeia para a tabela afetada,
-    mas não bloqueia o processamento das demais.
+    Control-M: JOB-DM-002-VALIDATE
+    exit_code 2 (DLQ) isola a tabela afetada sem bloquear as demais.
     """
     table = item["table"]
-    _log("JOB-DM-002", f"VALIDATE/{table}", "STARTED", f"file=bronze/{item['filename']}")
+    _log("JOB-DM-002", "VALIDATE/{}".format(table), "STARTED",
+         "file=bronze/{}".format(item["filename"]))
     try:
         storage = get_storage()
         result  = validate(
@@ -143,96 +205,91 @@ def task_validate(item: dict, run_id: str) -> dict:
             scenario=item["scenario"],
         )
         ec = _exit_code(result.status)
-        _log(
-            "JOB-DM-002", f"VALIDATE/{table}",
-            "ENDED_OK" if ec < 2 else "ENDED_NOTOK",
-            f"status={result.status} exit_code={ec} layer={'quarantine' if result.status=='DLQ' else 'bronze'} evolution={result.evolution_type}",
-        )
+        _log("JOB-DM-002", "VALIDATE/{}".format(table),
+             "ENDED_OK" if ec < 2 else "ENDED_NOTOK",
+             "status={} exit_code={} layer={} evolution={}".format(
+                 result.status, ec,
+                 "quarantine" if result.status == "DLQ" else "bronze",
+                 result.evolution_type))
         return {
             **item,
-            "validation_status" : result.status,
-            "evolution_type"    : result.evolution_type,
-            "rows_total"        : result.rows_total,
-            "rows_valid"        : result.rows_valid,
-            "duplicate_count"   : result.duplicate_count,
-            "null_violations"   : result.null_violations,
-            "issues"            : result.issues,
-            "warnings"          : result.warnings,
-            "exit_code"         : ec,
+            "validation_status": result.status,
+            "evolution_type"   : result.evolution_type,
+            "rows_total"       : result.rows_total,
+            "rows_valid"       : result.rows_valid,
+            "duplicate_count"  : result.duplicate_count,
+            "null_violations"  : result.null_violations,
+            "issues"           : result.issues,
+            "warnings"         : result.warnings,
+            "exit_code"        : ec,
         }
     except Exception as e:
-        _log("JOB-DM-002", f"VALIDATE/{table}", "ENDED_NOTOK", str(e))
+        _log("JOB-DM-002", "VALIDATE/{}".format(table), "ENDED_NOTOK", str(e))
         raise
 
 
 @task(name="JOB-DM-003-PROFILE", retries=1, retry_delay_seconds=5)
-def task_profile(validated: dict) -> dict:
+def task_profile(validated):
     """
-    Control-M equivalent: JOB-DM-003-PROFILE
-    Trigger: JOB-DM-002-VALIDATE com exit_code 0 ou 1
-    Pré-condição: validation_status != DLQ
-    Bloqueia: JOB-DM-004-ENRICH
+    Control-M: JOB-DM-003-PROFILE
+    Skipa automaticamente se upstream retornou DLQ.
+    Promove o arquivo de BRONZE para SILVER apos profiling.
     """
     table = validated["table"]
     if validated["validation_status"] == "DLQ":
-        _log("JOB-DM-003", f"PROFILE/{table}", "SKIPPED", "upstream DLQ")
-        return {**validated, "profiler_payload": {"table": table, "rows": 0, "profiling_ms": 0, "columns": {}}}
+        _log("JOB-DM-003", "PROFILE/{}".format(table), "SKIPPED", "upstream DLQ")
+        return {**validated, "profiler_payload": {
+            "table": table, "rows": 0, "profiling_ms": 0, "columns": {}}}
 
-    _log("JOB-DM-003", f"PROFILE/{table}", "STARTED", f"reading bronze/{validated['filename']}")
+    _log("JOB-DM-003", "PROFILE/{}".format(table), "STARTED",
+         "reading bronze/{}".format(validated["filename"]))
     try:
         storage  = get_storage()
         csv_path = storage.read_path("bronze", validated["filename"])
         payload  = profile(csv_path)
-        # Promoção Bronze → Silver após profiling bem-sucedido
         storage.move(validated["filename"], "bronze", "silver")
-        _log("JOB-DM-003", f"PROFILE/{table}", "ENDED_OK",
-             f"rows={payload['rows']} ms={payload['profiling_ms']} promoted=bronze->silver")
+        _log("JOB-DM-003", "PROFILE/{}".format(table), "ENDED_OK",
+             "rows={} ms={} promoted=bronze->silver".format(
+                 payload["rows"], payload["profiling_ms"]))
         return {**validated, "profiler_payload": payload}
     except Exception as e:
-        _log("JOB-DM-003", f"PROFILE/{table}", "ENDED_NOTOK", str(e))
+        _log("JOB-DM-003", "PROFILE/{}".format(table), "ENDED_NOTOK", str(e))
         raise
 
 
 @task(name="JOB-DM-004-ENRICH", retries=1, retry_delay_seconds=30)
-def task_enrich_slm(profiled: dict) -> dict:
+def task_enrich_slm(profiled):
     """
-    Control-M equivalent: JOB-DM-004-ENRICH
-    Trigger: JOB-DM-003-PROFILE
-    Timeout recomendado (Control-M): 300s por tabela
-    Bloqueia: JOB-DM-005-METRICS
-
-    Nota: exit_code 1 (WARNING/SKIPPED) é aceitável e não bloqueia dependentes.
-    O SLM pode estar indisponível sem impactar o pipeline de dados.
+    Control-M: JOB-DM-004-ENRICH
+    Timeout recomendado no Control-M: 600s por tabela (CPU lenta).
+    Falha do SLM e nao-fatal — retorna SKIPPED sem bloquear metricas.
     """
     table = profiled["table"]
     if profiled["validation_status"] == "DLQ":
-        _log("JOB-DM-004", f"ENRICH/{table}", "SKIPPED", "upstream DLQ")
-        return {**profiled, "slm_result": {"table": table, "status": "SKIPPED", "inference_ms": 0}}
+        _log("JOB-DM-004", "ENRICH/{}".format(table), "SKIPPED", "upstream DLQ")
+        return {**profiled, "slm_result": {
+            "table": table, "status": "SKIPPED", "inference_ms": 0}}
 
-    _log("JOB-DM-004", f"ENRICH/{table}", "STARTED", "calling Ollama")
+    _log("JOB-DM-004", "ENRICH/{}".format(table), "STARTED", "calling Ollama")
     try:
         storage = get_storage()
         slm     = enrich(storage, profiled["contract_filename"], profiled["profiler_payload"])
-        # Documentação gravada no layer reports via SLM — anota no log
-        _log("JOB-DM-004", f"ENRICH/{table}", "ENDED_OK",
-             f"slm_status={slm['status']} ms={slm['inference_ms']} ai_status=DRAFT")
+        _log("JOB-DM-004", "ENRICH/{}".format(table), "ENDED_OK",
+             "slm_status={} ms={} ai_status=DRAFT".format(
+                 slm["status"], slm["inference_ms"]))
         return {**profiled, "slm_result": slm}
     except Exception as e:
-        _log("JOB-DM-004", f"ENRICH/{table}", "ENDED_NOTOK", str(e))
-        return {**profiled, "slm_result": {"table": table, "status": "ERROR", "inference_ms": 0}}
+        _log("JOB-DM-004", "ENRICH/{}".format(table), "ENDED_NOTOK", str(e))
+        return {**profiled, "slm_result": {
+            "table": table, "status": "ERROR", "inference_ms": 0}}
 
 
 @task(name="JOB-DM-005-METRICS")
-def task_collect_metrics(enriched: dict, run_id: str) -> dict:
-    """
-    Control-M equivalent: JOB-DM-005-METRICS
-    Trigger: JOB-DM-004-ENRICH
-    Bloqueia: JOB-DM-006-REPORT
-    """
+def task_collect_metrics(enriched, run_id):
+    """Control-M: JOB-DM-005-METRICS"""
     table = enriched["table"]
-    _log("JOB-DM-005", f"METRICS/{table}", "STARTED", "")
+    _log("JOB-DM-005", "METRICS/{}".format(table), "STARTED", "")
 
-    # Reconstrói ValidationResult a partir do dict serializado
     from src.validation.validator import ValidationResult
     val_result = ValidationResult(
         table           = table,
@@ -246,7 +303,6 @@ def task_collect_metrics(enriched: dict, run_id: str) -> dict:
         null_violations = enriched.get("null_violations", {}),
         duplicate_count = enriched.get("duplicate_count", 0),
     )
-
     metrics = collect(
         run_id,
         val_result,
@@ -254,26 +310,26 @@ def task_collect_metrics(enriched: dict, run_id: str) -> dict:
         enriched.get("slm_result", {}),
         METRICS_DIR,
     )
-    _log("JOB-DM-005", f"METRICS/{table}", "ENDED_OK", f"score={metrics['quality_score']}")
+    _log("JOB-DM-005", "METRICS/{}".format(table), "ENDED_OK",
+         "score={}".format(metrics["quality_score"]))
     return metrics
 
 
 @task(name="JOB-DM-006-REPORT")
-def task_report(all_metrics: list, run_id: str) -> str:
+def task_report(all_metrics, run_id):
     """
-    Control-M equivalent: JOB-DM-006-REPORT
-    Trigger: conclusão de TODOS os JOB-DM-005-METRICS (fan-in)
-    Depende de: todos os jobs da cadeia
-    Condição: executa mesmo se alguns jobs anteriores retornaram WARNING
+    Control-M: JOB-DM-006-REPORT
+    Fan-in: aguarda conclusao de todos os JOB-DM-005.
+    Roda mesmo se alguns jobs anteriores retornaram WARNING.
     """
-    _log("JOB-DM-006", "REPORT", "STARTED", f"tables={len(all_metrics)}")
+    _log("JOB-DM-006", "REPORT", "STARTED", "tables={}".format(len(all_metrics)))
     report_path = generate_report(all_metrics, REPORTS_DIR)
 
-    summary_path = METRICS_DIR / f"{run_id}_summary.json"
+    summary_path = METRICS_DIR / "{}_summary.json".format(run_id)
     with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(all_metrics, f, ensure_ascii=False, indent=2)
 
-    _log("JOB-DM-006", "REPORT", "ENDED_OK", f"report={report_path.name}")
+    _log("JOB-DM-006", "REPORT", "ENDED_OK", "report={}".format(report_path.name))
     return str(report_path)
 
 
@@ -283,42 +339,42 @@ def task_report(all_metrics: list, run_id: str) -> str:
 
 @flow(
     name="data-masters-pipeline",
-    description="Pipeline lakehouse bancária com contratos, profiler e SLM.",
+    description="Pipeline lakehouse bancaria com contratos, profiler e SLM.",
     version="1.0.0",
 )
-def pipeline_flow(scenario: str = "baseline", run_id: str | None = None) -> dict:
+def pipeline_flow(scenario="baseline", run_id=None, fmt="csv"):
     """
-    DAG completo. Execução por tabela é paralela quando Prefect está disponível.
+    DAG completo. Cada tabela passa pelos jobs 002-005 em sequencia.
+    Com Prefect server ativo, as tres tabelas rodam em paralelo automaticamente.
 
-    Diagrama de dependências (espelha a estrutura de jobs Control-M):
-
+    DAG de dependencias:
         [001-GENERATE]
-              │
-        ┌─────┴──────┐──────────────────┐
-        ▼            ▼                  ▼
-    [002-VAL]   [002-VAL]          [002-VAL]
-    tb_clientes  tb_transacoes  tb_contratos
-        │            │                  │
-    [003-PROF]  [003-PROF]         [003-PROF]
-        │            │                  │
-    [004-ENRICH][004-ENRICH]      [004-ENRICH]
-        │            │                  │
-    [005-MTR]   [005-MTR]          [005-MTR]
-        └────────────┴──────────────────┘
-                     │  fan-in
-                [006-REPORT]
+              |
+        +-----+-----+----------+
+        v           v          v
+    [002-VAL]  [002-VAL]  [002-VAL]
+    tb_clientes tb_trans  tb_contratos
+        |           |          |
+    [003-PROF] [003-PROF] [003-PROF]
+        |           |          |
+    [004-ENRICH]...        ...
+        |           |          |
+    [005-MTR]  [005-MTR]  [005-MTR]
+        +-----+-----+----------+
+                    | fan-in
+              [006-REPORT]
     """
     if run_id is None:
-        import uuid as _uuid
-        run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{str(_uuid.uuid4())[:6]}"
+        run_id = "run_{}_{}".format(
+            datetime.now().strftime("%Y%m%d_%H%M%S"),
+            str(uuid.uuid4())[:6]
+        )
 
-    _log("PIPELINE", "FLOW", "STARTED", f"run_id={run_id} scenario={scenario}")
+    _log("PIPELINE", "FLOW", "STARTED", "run_id={} scenario={} format={}".format(run_id, scenario, fmt))
 
-    # JOB-001: Geração
-    produced = task_generate_data(scenario, run_id)
-
-    # JOB-002 a 005: por tabela (Prefect executa em paralelo automaticamente)
+    produced    = task_generate_data(scenario, run_id, fmt)
     all_metrics = []
+
     for item in produced:
         validated = task_validate(item, run_id)
         profiled  = task_profile(validated)
@@ -326,15 +382,13 @@ def pipeline_flow(scenario: str = "baseline", run_id: str | None = None) -> dict
         metrics   = task_collect_metrics(enriched, run_id)
         all_metrics.append(metrics)
 
-    # JOB-006: Relatório consolidado (fan-in)
-    report_path = task_report(all_metrics, run_id)
+    report_path  = task_report(all_metrics, run_id)
+    worst_exit   = max(_exit_code(m["validation_status"]) for m in all_metrics)
 
-    # Resumo no terminal
     _print_summary(all_metrics, run_id)
-
-    worst_exit = max(_exit_code(m["validation_status"]) for m in all_metrics)
-    _log("PIPELINE", "FLOW", "ENDED_OK" if worst_exit < 2 else "ENDED_NOTOK",
-         f"exit_code={worst_exit} report={report_path}")
+    _log("PIPELINE", "FLOW",
+         "ENDED_OK" if worst_exit < 2 else "ENDED_NOTOK",
+         "exit_code={} report={}".format(worst_exit, report_path))
 
     return {
         "run_id"     : run_id,
@@ -345,38 +399,45 @@ def pipeline_flow(scenario: str = "baseline", run_id: str | None = None) -> dict
     }
 
 
-def _print_summary(all_metrics: list, run_id: str) -> None:
-    icons = {"PASS": "🟢", "WARNING": "🟡", "DLQ": "🔴"}
-    print(f"\n{'═'*66}")
-    print(f"  RUN: {run_id}")
-    print(f"{'═'*66}")
-    print(f"  {'Tabela':<30} {'Cenário':<14} {'Status':<10} {'Score':>6}")
-    print(f"  {'─'*62}")
+def _print_summary(all_metrics, run_id):
+    status_tag = {"PASS": "[PASS]", "WARNING": "[WARN]", "DLQ": "[DLQ]"}
+    print("\n" + "=" * 66)
+    print("  RUN: {}".format(run_id))
+    print("=" * 66)
+    print("  {:<30} {:<14} {:<10} {:>6}".format("Tabela", "Cenario", "Status", "Score"))
+    print("  " + "-" * 62)
     for m in all_metrics:
-        icon = icons.get(m["validation_status"], "⚪")
-        print(
-            f"  {m['table']:<30} {m['scenario']:<14} "
-            f"{icon} {m['validation_status']:<8} {m['quality_score']:>6.1f}/100"
-        )
+        tag = status_tag.get(m["validation_status"], "[?]")
+        print("  {:<30} {:<14} {} {:<8} {:>6.1f}/100".format(
+            m["table"], m["scenario"], tag,
+            m["validation_status"], m["quality_score"]))
     avg = round(sum(m["quality_score"] for m in all_metrics) / len(all_metrics), 1) if all_metrics else 0
-    print(f"  {'─'*62}")
-    print(f"  {'Score médio':>55} {avg:>6.1f}/100\n")
+    print("  " + "-" * 62)
+    print("  {:<55} {:>6.1f}/100\n".format("Score medio", avg))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Entry point CLI
 # ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Data Masters Pipeline")
+    parser = argparse.ArgumentParser(description="Projeto Nimbus Pipeline")
     parser.add_argument(
         "--scenario", choices=["baseline", "non_breaking", "breaking", "all"],
         default="all",
     )
     parser.add_argument(
-        "--no-prefect", action="store_true",
-        help="Executa sem registrar no servidor Prefect (compatível com Control-M)",
+        "--format", choices=["csv", "json", "fixed", "all"],
+        default="csv", dest="fmt",
+        help="Formato de saida dos dados gerados (csv|json|fixed|all).",
     )
-    parser.add_argument("--run-id", default=None, help="Run ID externo (útil para rastreio Control-M)")
+    parser.add_argument(
+        "--no-prefect", action="store_true",
+        help="Executa sem registrar no servidor Prefect (compativel com Control-M)",
+    )
+    parser.add_argument(
+        "--run-id", default=None,
+        help="Run ID externo (util para rastreio Control-M)",
+    )
     args = parser.parse_args()
 
     scenarios = (
@@ -385,14 +446,18 @@ if __name__ == "__main__":
         else [args.scenario]
     )
 
-    # Run ID externo: permite que o Control-M injete seu próprio ID de job
-    base_run_id = args.run_id or f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{str(uuid.uuid4())[:6]}"
+    base_run_id = args.run_id or "run_{}_{}".format(
+        datetime.now().strftime("%Y%m%d_%H%M%S"),
+        str(uuid.uuid4())[:6]
+    )
 
     worst_global = 0
     for sc in scenarios:
-        run_id = f"{base_run_id}_{sc}" if len(scenarios) > 1 else base_run_id
-        result = pipeline_flow(scenario=sc, run_id=run_id)
-        worst_global = max(worst_global, result["exit_code"])
-
-    # Exit code global — o Control-M lê este valor para decidir o status do job pai
+        run_id = "{}_{}".format(base_run_id, sc) if len(scenarios) > 1 else base_run_id
+        # Expande "all" em todos os formatos suportados
+        fmt_list = ["csv", "json", "fixed"] if args.fmt == "all" else [args.fmt]
+        for fmt in fmt_list:
+            result = pipeline_flow(scenario=sc, run_id=run_id, fmt=fmt)
+            worst_global = max(worst_global, result["exit_code"])
+        continue
     sys.exit(worst_global)
