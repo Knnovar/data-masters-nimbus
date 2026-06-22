@@ -1,5 +1,5 @@
 """
-run_pipeline.py — Entry point da Pipeline Data Masters (PoC local)
+run_pipeline.py — Entry point da Pipeline Projeto Nimbus (PoC local)
 
 Executa os três cenários de teste em sequência:
   1. baseline     → fluxo feliz, dados válidos
@@ -29,7 +29,7 @@ from src.metrics.metrics_collector import collect, generate_report
 
 BANNER = """
 ╔══════════════════════════════════════════════════════════════════╗
-║          🏦  PIPELINE DATA MASTERS — PoC LOCAL                  ║
+║          🏦  PIPELINE PROJETO NIMBUS — PoC LOCAL                  ║
 ║          Lakehouse  ·  Contratos  ·  Profiler  ·  SLM           ║
 ╚══════════════════════════════════════════════════════════════════╝
 """
@@ -105,7 +105,7 @@ def print_summary(all_metrics: list[dict]) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Pipeline Data Masters — PoC Local")
+    parser = argparse.ArgumentParser(description="Pipeline Projeto Nimbus — PoC Local")
     parser.add_argument(
         "--scenario",
         choices=["baseline", "non_breaking", "breaking", "all"],

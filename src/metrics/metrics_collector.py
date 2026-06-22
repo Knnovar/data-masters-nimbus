@@ -96,7 +96,7 @@ def generate_report(all_metrics: list[dict], reports_dir: Path) -> Path:
 
     now   = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     lines = [
-        f"# Pipeline Data Masters - Relatorio de Execucao",
+        f"# Pipeline Projeto Nimbus - Relatorio de Execucao",
         f"**Data:** {now}  |  **Run ID:** `{all_metrics[0]['run_id'] if all_metrics else 'N/A'}`\n",
         "---\n",
         "## Resumo por Tabela\n",

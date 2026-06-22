@@ -2,7 +2,7 @@
 
 ## Visão Geral
 
-A tabela `tb_clientes` é um cadastro mestre que contém informações sobre clientes pessoa física e jurídica. Ela é utilizada por todos os produtos de crédito e relacionamento do banco, com segmentação determinando o produto ofertado e o gestor responsável. A tabela é atualizada diariamente pelo batch noturno do sistema CORE_BANCARIO_TOTVS.
+A tabela `tb_clientes` é um cadastro mestre que contém informações sobre clientes pessoa física e jurídica. Ela é utilizada por todos os produtos de crédito e relacionamento do banco, com a segmentação determinando o produto ofertado e o gestor responsável. A atualização diária é realizada pelo batch noturno do sistema CORE_BANCARIO_TOTVS.
 
 ### Propriedades da Tabela
 
@@ -26,52 +26,53 @@ A tabela `tb_clientes` é um cadastro mestre que contém informações sobre cli
 ## Colunas da Tabela
 
 ### `cd_cliente`
-- **Tipo**: VARCHAR (string)
-- **Nulo**: Não permitido
-- **Chave Primária**: Sim
+
+- **Tipo**: String
+- **Nullable**: Não
 - **Descrição**: Código único do cliente no sistema legado, gerado sequencialmente pelo CORE_BANCARIO.
-- **Estatísticas**:
-  - Percentual de Nulos: 0.0%
-  - Contagem Única: 500
+- **Propósito de Negócio**: Identificador primário para cada cliente.
+- **Comportamento Esperado**: Sem valores nulos e exclusivo por linha.
 
 ### `nr_cpf_cnpj`
-- **Tipo**: VARCHAR (string)
-- **Nulo**: Não permitido
+
+- **Tipo**: String
+- **Nullable**: Não
 - **Descrição**: CPF (11 dígitos) ou CNPJ (14 dígitos) sem máscara.
-- **Implicações Regulatórias**: LGPD_SENSITIVE
-- **Estatísticas**:
-  - Percentual de Nulos: 0.0%
-  - Contagem Única: 500
-  - Mínimo: 1395867259.0
-  - Máximo: 98750362429.0
-  - Média: 48825936703.32
+- **Propósito de Negócio**: Identificação única do cliente conforme cadastro na Receita Federal.
+- **Comportamento Esperado**: Sem valores nulos, deve conter 11 ou 14 caracteres numéricos.
+- **Implicações Regulatórias**: Considerado sensível sob LGPD.
 
 ### `nm_cliente`
-- **Tipo**: VARCHAR (string)
-- **Nulo**: Não permitido
+
+- **Tipo**: String
+- **Nullable**: Não
 - **Descrição**: Nome completo do cliente conforme cadastro na Receita Federal.
-- **Implicações Regulatórias**: LGPD_SENSITIVE
-- **Estatísticas**:
-  - Percentual de Nulos: 0.0%
-  - Contagem Única: 499 (Anomalia: Duplicatas)
-  - Valor Mais Comum: "Juliana Rocha" (2 ocorrências)
+- **Propósito de Negócio**: Identificação textual do cliente.
+- **Comportamento Esperado**: Sem valores nulos, deve ser único para a maioria dos registros.
+- **Implicações Regulatórias**: Considerado sensível sob LGPD.
 
 ### `dt_nascimento`
-- **Tipo**: VARCHAR (string) — Esperado como DATE
-- **Nulo**: Permitido
-- **Descrição**: Data de nascimento. Nula para clientes PJ.
-- **Implicações Regulatórias**: LGPD_SENSITIVE
-- **Estatísticas**:
-  - Percentual de Nulos: 0.0%
-  - Contagem Única: 496
+
+- **Tipo**: Date
+- **Nullable**: Sim
+- **Descrição**: Data de nascimento. Nula para clientes PJ (pessoa jurídica).
+- **Propósito de Negócio**: Informação demográfica relevante para segmentação e análise.
+- **Comportamento Esperado**: Pode ser nulo, especialmente para clientes PJ.
 
 ### `cd_segmento`
-- **Tipo**: VARCHAR (string)
-- **Nulo**: Não permitido
+
+- **Tipo**: String
+- **Nullable**: Não
 - **Descrição**: Segmento de relacionamento. Domínio: VAREJO, PRIME, PRIVATE, PJ_PEQUENO, PJ_MEDIO.
-- **Regras de Negócio**:
-  - PRIME: vl_renda_mensal >= 10000
-  - PRIVATE: vl_renda
+- **Propósito de Negócio**: Determina o produto oferecido e o gestor responsável.
+- **Comportamento Esperado**: Sem valores nulos, deve seguir as regras de negócio associadas a renda mensal.
+
+### `cd_agencia`
+
+- **Tipo**: String
+- **Nullable**: Não
+- **Descrição**: Código numérico de 4 dígitos da agência de relacionamento principal.
+- **Propósito de Negócio**: Identificação da
 
 ---
 > **[AI_METADATA_STATUS: DRAFT]**

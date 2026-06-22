@@ -2,7 +2,7 @@
 
 ## Visão Geral
 
-A tabela `tb_clientes_non_breaking` é uma versão não quebra do cadastro mestre de clientes, tanto pessoa física quanto jurídica. Ela serve como base para todos os produtos de crédito e relacionamento no banco, com segmentação determinando o produto ofertado e o gestor responsável.
+A tabela `tb_clientes_non_breaking` é uma versão não quebrada do cadastro mestre de clientes, tanto pessoa física quanto jurídica. Ela serve como base para todos os produtos de crédito e relacionamento oferecidos pelo banco. A segmentação dos clientes determina o produto ofertado e o gestor responsável.
 
 ### Propriedades da Tabela
 
@@ -15,69 +15,68 @@ A tabela `tb_clientes_non_breaking` é uma versão não quebra do cadastro mestr
   - Codificação: UTF-8
   - SO: Unix
   - Frequência de Atualização: Diária
-- **Contato**: squad-dados-cadastrais@banco.com.br
+  - Contato: squad-dados-cadastrais@banco.com.br
 
 ### Contexto Regulatório
 
-- **Tags Regulatórias**:
-  - LGPD (Lei Geral de Proteção de Dados)
-  - BACEN_4658
+- **Tags Regulatórias**: LGPD, BACEN_4658
 - **Classificação de Dados**: Confidencial
 - **Período de Retenção**: 10 anos
-
-### Contexto de Negócios
-
-A tabela é atualizada diariamente pelo batch noturno do CORE_BANCARIO_TOTVS e serve como a base para todas as operações relacionadas aos clientes no banco.
 
 ## Colunas da Tabela
 
 ### `cd_cliente`
 
 - **Tipo**: VARCHAR
-- **Descrição**: Código único do cliente no sistema legado, gerado sequencialmente pelo CORE_BANCARIO.
-- **Negócio**:
-  - Propósito: Identificação única de cada cliente.
-  - Comportamento Esperado: Não nulo e exclusivo para todos os registros.
+- **Descrição**: Código único do cliente no sistema legado. Gerado sequencialmente pelo CORE_BANCARIO.
+- **Nullable**: Não
+- **Chave Primária**: Sim
 - **Estatísticas**:
-  - % Nulos: 0.0%
-  - Contagem Única: 500
-- **Anomalias**: Nenhuma
+  - Percentual de Nulos: 0%
+  - Contagem Única: 499
 
 ### `nr_cpf_cnpj`
 
-- **Tipo**: VARCHAR
+- **Tipo**: VARCHAR (observado como parte do campo composto)
 - **Descrição**: CPF (11 dígitos) ou CNPJ (14 dígitos) sem máscara.
-- **Negócio**:
-  - Propósito: Identificação fiscal do cliente.
-  - Comportamento Esperado: Não nulo e exclusivo para cada registro.
-- **Estatísticas**:
-  - % Nulos: 0.0%
-  - Contagem Única: 500
-  - Mínimo: 1279354607.0
-  - Máximo: 98725460374.0
-  - Média: 50478969775.3
-- **Anomalias**: Nenhuma
+- **Nullable**: Não
+- **Implicações Regulatórias**: LGPD_SENSITIVE
 
 ### `nm_cliente`
 
-- **Tipo**: VARCHAR
+- **Tipo**: VARCHAR (observado como parte do campo composto)
 - **Descrição**: Nome completo do cliente conforme cadastro na Receita Federal.
-- **Negócio**:
-  - Propósito: Identificação nominal do cliente.
-  - Comportamento Esperado: Não nulo e deve ser único, exceto em casos de duplicação legítima (ex.: homônimos).
+- **Nullable**: Não
+- **Implicações Regulatórias**: LGPD_SENSITIVE
 - **Estatísticas**:
-  - % Nulos: 0.0%
-  - Contagem Única: 498
-  - Top Values: "Marina Duarte" aparece duas vezes.
-- **Anomalias**: Possível duplicidade de nomes.
+  - Percentual de Nulos: 0%
+  - Contagem Única: 495
+  - Valores Duplicados: "Alícia Camargo", "Emanuella da Mata", "Aylla Cavalcanti" (cada um com contagem de 2)
 
-### `dt_nascimento`
+### `dt_nascimento` e `cd_segmento`
 
-- **Tipo**: VARCHAR (esperado DATE)
-- **Descrição**: Data de nascimento. Nula para clientes PJ.
-- **Negócio**:
-  - Propósito: Identificação da idade do cliente pessoa física.
-  - Comportamento Esperado
+- **Tipo**: VARCHAR (observado como parte do campo composto)
+- **Descrição**:
+  - `dt_nascimento`: Data de nascimento. Nula para clientes PJ.
+  - `cd_segmento`: Segmento de relacionamento. Dominio: VAREJO, PRIME, PRIVATE, PJ_PEQUENO, PJ_MEDIO.
+- **Nullable**: Não
+- **Estatísticas**:
+  - Percentual de Nulos: 0%
+  - Contagem Única: 497
+
+### `cd_agencia`
+
+- **Tipo**: VARCHAR (observado como parte do campo composto)
+- **Descrição**: Código numérico de 4 dígitos da agência de relacionamento principal.
+- **Nullable**: Não
+- **Estatísticas**:
+  - Percentual de Nulos: 0%
+  - Contagem Única: 472
+  - Valores Duplicados: "AGENC-" (contagem de 15)
+
+### `vl_renda_mensal` e `fl_ativo`
+
+- **Tipo**: VARCHAR (observado como parte do
 
 ---
 > **[AI_METADATA_STATUS: DRAFT]**

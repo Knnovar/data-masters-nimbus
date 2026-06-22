@@ -1,6 +1,8 @@
-# Makefile - Data Masters PoC
+# Makefile - Projeto Nimbus
 # Uso: make <target>
-# Windows: instale make via choco install make ou use o Git Bash
+#
+# Windows: prefira `python tasks.py <comando>` — funciona nativamente,
+# sem precisar instalar make. Veja python tasks.py help
 
 .PHONY: run baseline non-breaking breaking metrics issues slm clean clean-data setup prefect-setup help
 

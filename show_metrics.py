@@ -118,7 +118,7 @@ def view_summary(records: list[dict]) -> None:
         groups[(r.get("table","?"), r.get("scenario","?"))].append(r)
 
     print("\n" + "=" * 72)
-    print("  DASHBOARD DE METRICAS - DATA MASTERS")
+    print("  DASHBOARD DE METRICAS - PROJETO NIMBUS")
     total_runs = len({r.get("run_id") for r in records})
     print(f"  Runs registrados: {total_runs} | Registros: {len(records)}")
     print("=" * 72)
@@ -251,7 +251,7 @@ def export_csv(records: list[dict], output_path: Path) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="Dashboard de metricas - Data Masters")
+    parser = argparse.ArgumentParser(description="Dashboard de metricas - Projeto Nimbus")
     parser.add_argument("--all",      action="store_true", help="Exibe todos os runs (padrao: ultimo por tabela/cenario)")
     parser.add_argument("--table",    default=None,        help="Filtra por tabela (ex: tb_clientes)")
     parser.add_argument("--scenario", default=None,        help="Filtra por cenario (baseline|non_breaking|breaking)")

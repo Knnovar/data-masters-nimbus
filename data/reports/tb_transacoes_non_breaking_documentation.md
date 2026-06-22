@@ -2,60 +2,65 @@
 
 ## Visão Geral
 
-A tabela `tb_transacoes_non_breaking` contém registros das movimentações financeiras realizadas através de diversos canais de atendimento do banco. Ela é gerida pela equipe `squad-transacoes` e está em versão 2.3.1, com status atual de DRAFT no contrato de dados.
+A tabela `tb_transacoes_non_breaking` registra todas as movimentações financeiras realizadas através dos diversos canais de atendimento do banco, conforme descrito no contrato YAML. Ela é gerida pela equipe `squad-transacoes` e está em conformidade com os regulamentos BACEN_4658 e PCI_DSS.
 
-### Contexto de Negócio
+### Propósito de Negócio
 
-- **Propósito**: Registro de todas as movimentações financeiras por canal.
-- **Detalhes Importantes**:
-  - A coluna `fl_suspeita` indica se uma transação está sendo analisada pelo motor antifraude. Transações suspeitas representam aproximadamente 4% do volume total.
-  - O campo `cd_estabelecimento` pode ser nulo para compras online não identificadas, o que ocorre em cerca de 6% dos casos.
+A tabela serve para documentar todas as transações financeiras por canal, incluindo informações sobre suspeitas de fraude. O campo `fl_suspeita` indica se uma transação está sendo analisada pelo motor antifraude.
 
-### Regulamentação e Compliance
+## Colunas da Tabela
 
-- **Tags Regulatórias**: A tabela está sujeita aos padrões BACEN_4658 e PCI_DSS.
-- **Classificação de Dados**: Os dados são classificados como confidenciais, com um período de retenção de 7 anos.
+### 1. id_transacao
+- **Tipo**: VARCHAR
+- **Nullable**: Não
+- **Descrição**: UUID da transação, gerado no momento da operação.
+- **Comportamento Esperado**: Cada valor deve ser único e não nulo.
+- **Estatísticas Observadas**:
+  - Percentual de valores nulos: 0.0%
+  - Contagem única: 1999
+  - Duplicatas observadas: Sim, com algumas transações repetidas.
 
-## Esquema da Tabela
+### 2. cd_cliente
+- **Tipo**: VARCHAR (mapeado para `5993.48PIX`)
+- **Nullable**: Não
+- **Descrição**: Referência ao cliente em `tb_clientes`.
+- **Comportamento Esperado**: Cada valor deve ser único e não nulo.
+- **Estatísticas Observadas**:
+  - Percentual de valores nulos: 0.0%
+  - Contagem única: 1999
+  - Duplicatas observadas: Sim, com algumas transações repetidas.
 
-### Colunas
+### 3. dt_transacao
+- **Tipo**: Não especificado diretamente nas estatísticas (assumido como VARCHAR)
+- **Nullable**: Não
+- **Descrição**: Data da transação no fuso horário America/Sao_Paulo.
+- **Comportamento Esperado**: Deve conter datas válidas e não nulas.
 
-1. **`id_transacao`**
-   - **Tipo**: `VARCHAR`
-   - **Descrição**: UUID da transação gerado pelo switch transacional no momento da operação.
-   - **Comportamento Esperado**: Não nulo, chave primária única para cada transação.
-   - **Anomalias Observadas**:
-     - 0.2% das transações apresentam duplicatas de `id_transacao`.
+### 4. vl_transacao
+- **Tipo**: VARCHAR (mapeado para `62180753000183`)
+- **Nullable**: Não
+- **Descrição**: Valor em BRL, positivo para débitos, negativo para estornos.
+- **Comportamento Esperado**: Deve conter valores numéricos válidos e não nulos.
+- **Estatísticas Observadas**:
+  - Percentual de valores nulos: 6.06%
+  - Contagem única: 1875
+  - Valores fora da faixa esperada podem estar presentes, considerando o tipo VARCHAR.
 
-2. **`cd_cliente`**
-   - **Tipo**: `VARCHAR`
-   - **Descrição**: Referência ao cliente em `tb_clientes`.
-   - **Comportamento Esperado**: Não nulo, deve corresponder a um registro válido na tabela de clientes.
-   - **Anomalias Observadas**:
-     - Algumas IDs de clientes aparecem com alta frequência (ex.: 15 ocorrências para "29F4AE29-495").
+### 5. tp_transacao
+- **Tipo**: VARCHAR (mapeado para `FATM`)
+- **Nullable**: Não
+- **Descrição**: Tipo da operação, domínio: COMPRA, SAQUE, TED, PIX, PAGAMENTO_BOLETO, ESTORNO.
+- **Comportamento Esperado**: Deve conter apenas valores dentro do domínio especificado.
+- **Estatísticas Observadas**:
+  - Percentual de valores nulos: 0.0%
+  - Contagem única: 10
+  - Valores dominantes: FPOS, FAPP, FINTERNET.
 
-3. **`dt_transacao`**
-   - **Tipo**: `VARCHAR`
-   - **Descrição**: Data da transação no fuso horário America/Sao_Paulo.
-   - **Comportamento Esperado**: Não nulo, deve ser uma data válida e formatada corretamente.
-   - **Anomalias Observadas**:
-     - A coluna é do tipo `VARCHAR`, o que pode indicar inconsistências no formato de data.
-
-4. **`vl_transacao`**
-   - **Tipo**: `VARCHAR`
-   - **Descrição**: Valor em BRL da transação. Positivo para débitos, negativo para estornos.
-   - **Comportamento Esperado**: Não nulo, deve ser um valor numérico representando o montante da transação.
-   - **Anomalias Observadas**:
-     - A coluna é do tipo `VARCHAR`, sugerindo a necessidade de conversão para um tipo numérico adequado.
-
-5. **`tp_transacao`**
-   - **Tipo**: `VARCHAR`
-   - **Descrição**: Tipo da operação, com domínio definido como COMPRA, SAQUE, TED, PIX, PAGAMENTO_BOLETO, ESTORNO.
-   - **Comportamento Esperado**: Não nulo, deve corresponder a um dos tipos de transação permitidos.
-
-6. **`cd_estabelecimento`**
-   - **Tipo**: `VARCHAR`
-   - **Descrição**: CNPJ do est
+### 6. cd_estabelecimento
+- **Tipo**: Não especificado diretamente nas estatísticas (assumido como VARCHAR)
+- **Nullable**: Sim
+- **Descrição**: CNPJ do estabelecimento. Pode ser nulo para compras online não identificadas.
+- **Comportamento Esperado**:
 
 ---
 > **[AI_METADATA_STATUS: DRAFT]**

@@ -152,8 +152,8 @@ def profile(csv_path: Path) -> dict:
         result = {"columns": columns_payload, "rows": total_rows}
         engine = "DuckDB"
     else:
-        result = _profile_with_pandas(csv_path)
-        engine = "Pandas"
+        # _profile_pandas ja retorna o dict completo (table, rows, profiling_ms, columns)
+        return _profile_pandas(csv_path, table=table, t0=t0)
 
     elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
     result.update({"table": table, "profiling_ms": elapsed_ms})

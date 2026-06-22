@@ -1,5 +1,5 @@
 """
-prefect_flow.py - Orquestracao da Pipeline Data Masters via Prefect
+prefect_flow.py - Orquestracao da Pipeline Projeto Nimbus via Prefect
 
 Mapeamento Prefect Task -> Control-M Job:
   task_generate_data   -> JOB-DM-001-GENERATE
@@ -420,7 +420,7 @@ def _print_summary(all_metrics, run_id):
 # Entry point CLI
 # ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Data Masters Pipeline")
+    parser = argparse.ArgumentParser(description="Projeto Nimbus Pipeline")
     parser.add_argument(
         "--scenario", choices=["baseline", "non_breaking", "breaking", "all"],
         default="all",

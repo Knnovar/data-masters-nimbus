@@ -2,57 +2,66 @@
 
 ## Visão Geral
 
-A tabela `tb_contratos_credito_non_breaking` contém informações detalhadas sobre contratos de produtos de crédito ativos e encerrados. Ela é alimentada diariamente pelo sistema SISTEMA_CREDITO_SAS em formato SAS7BDAT, com codificação Latin-1 no ambiente Unix. Esta tabela suporta o Sistema de Controle de Risco (SCR) mensalmente e está sob a classificação de dados restrita, com uma retenção obrigatória de 10 anos conforme regulamentações como BACEN_4658 e LGPD.
+A tabela `tb_contratos_credito_non_breaking` contém dados sobre contratos de produtos de crédito ativos e encerrados, conforme descrito no contrato YAML. Ela alimenta o Sistema de Controle de Risco (SCR) mensalmente e é gerida pela equipe `squad-credito`. A tabela está em formato SAS (`sas7bdat`) e é atualizada diariamente.
 
-### Propósito de Negócio
+### Contexto de Negócio
 
-A tabela serve para gerenciar e monitorar contratos de crédito oferecidos pelo banco. Ela é crucial para a análise do risco, conformidade regulatória e gestão de produtos financeiros. A tabela também suporta operações como cobrança automática em caso de atraso nos pagamentos.
+Os contratos incluem todos os produtos oferecidos pelo banco, com tolerância específica para o valor utilizado exceder o limite aprovado até 15% para produtos como cheque especial. O status `EM_ATRASO` desencadeia uma cobrança automática após D+1.
 
-### Estrutura da Tabela
+### Regulamentação e Classificação de Dados
 
-Abaixo está uma descrição detalhada das colunas presentes na tabela:
+- **Tags Regulatórias**: SCR, BACEN_4658, LGPD
+- **Classificação de Dados**: Restrita
+- **Período de Retenção**: 10 anos
 
-#### `id_contrato`
-- **Tipo**: string
-- **Nullable**: false
+## Colunas da Tabela
+
+### `id_contrato`
+
+- **Tipo**: String
 - **Descrição**: Identificador único do contrato gerado pelo sistema de crédito.
-- **Comportamento Esperado**: Cada valor deve ser exclusivo, conforme confirmado pelas estatísticas (unique_count = 300).
-- **Anomalias Observadas**: Nenhuma.
+- **Comportamento Esperado**: Não nulo, chave primária. Cada valor é único conforme as estatísticas (unique_count: 299).
+- **SAS Label**: ID CONTRATO CREDITO
 
-#### `cd_cliente`
-- **Tipo**: string
-- **Nullable**: false
+### `cd_cliente`
+
+- **Tipo**: String
 - **Descrição**: Referência ao cliente em `tb_clientes`.
-- **Comportamento Esperado**: Cada contrato deve referenciar um cliente válido.
-- **Anomalias Observadas**: Alta frequência de valores repetidos (top 3 valores com contagem = 4), indicando possíveis duplicatas ou contratos múltiplos para o mesmo cliente.
+- **Comportamento Esperado**: Não nulo, deve corresponder a um registro válido na tabela de clientes.
+- **Estatísticas**: Todos os valores são únicos (unique_count: 299).
 
-#### `dt_contrato`
-- **Tipo**: string
-- **Nullable**: false
+### `dt_contrato`
+
+- **Tipo**: Date
 - **Descrição**: Data de abertura do contrato.
-- **Comportamento Esperado**: Deve ser um valor de data válido e formatado corretamente.
-- **Anomalias Observadas**: Tipo de dado é VARCHAR, o que pode indicar inconsistências no formato da data.
+- **Comportamento Esperado**: Não nulo, deve ser uma data válida e coerente com o contexto do negócio.
+- **Estatísticas**: Alta variabilidade nas datas (unique_count: 284).
 
-#### `vl_limite`
-- **Tipo**: string
-- **Nullable**: false
-- **Descrição**: Limite de crédito aprovado em BRL. Candidato para SCR.
-- **Comportamento Esperado**: Deve ser um valor numérico positivo.
-- **Anomalias Observadas**: Tipo de dado é VARCHAR, o que pode indicar inconsistências na representação do valor monetário.
+### `vl_limite`
 
-#### `vl_utilizado`
-- **Tipo**: string
-- **Nullable**: false
-- **Descrição**: Saldo utilizado atual em BRL. Pode exceder `vl_limite` em produtos com tolerância.
-- **Comportamento Esperado**: Deve ser um valor numérico positivo, podendo exceder o limite para certos produtos como cheque especial.
-- **Anomalias Observadas**: Tipo de dado é VARCHAR, o que pode indicar inconsistências na representação do valor monetário.
+- **Tipo**: Float
+- **Descrição**: Limite de crédito aprovado em BRL.
+- **Comportamento Esperado**: Não nulo, valores positivos. Candidato para SCR.
+- **Estatísticas**: Variação significativa nos valores (min: 869.5, max: 99856.72).
 
-#### `tp_produto`
-- **Tipo**: string
-- **Nullable**: false
+### `vl_utilizado`
+
+- **Tipo**: Float
+- **Descrição**: Saldo utilizado atual em BRL. Pode exceder o limite aprovado para produtos com tolerância.
+- **Comportamento Esperado**: Não nulo, valores positivos. Para cheque especial, pode ser até 15% acima do `vl_limite`.
+- **Estatísticas**: Variação significativa nos valores (min: 93382.1, max: 15481.19).
+
+### `tp_produto`
+
+- **Tipo**: String
 - **Descrição**: Tipo do produto de crédito. Domínio: CARTAO_CREDITO, CHEQUE_ESPECIAL, CREDITO_PESSOAL, FINANCIAMENTO_VEICULO, CONSIGNADO.
-- **Comportamento Esperado**: Deve conter apenas valores dentro do domínio especificado.
-- **Anomalias
+- **Comportamento Esperado**: Não nulo, deve corresponder a um dos tipos definidos no domínio.
+
+### `cd_status`
+
+- **Tipo**: String
+- **Descrição**: Status do contrato. Domínio: ATIVO, ENCERRADO, EM_ATRASO, RENEGOCIADO.
+- **Comportamento Esperado**: Não nulo, deve corresponder a um dos status definidos
 
 ---
 > **[AI_METADATA_STATUS: DRAFT]**

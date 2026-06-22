@@ -2,73 +2,75 @@
 
 ## Visão Geral
 
-A tabela `tb_contratos_credito_breaking` contém dados sobre contratos de produtos de crédito ativos e encerrados, conforme descrito no contrato YAML. Esses dados alimentam o Sistema de Controle de Risco (SCR) mensalmente e são geridos pela equipe de crédito do banco.
+A tabela `tb_contratos_credito_breaking` contém dados sobre contratos de produtos de crédito ativos e encerrados, conforme descrito no contrato YAML. Ela alimenta o Sistema de Controle de Risco (SCR) mensalmente e está sujeita a regulamentações específicas, incluindo SCR, BACEN 4658 e LGPD.
 
-### Propósito de Negócio
+### Propriedades da Tabela
 
-A tabela serve para monitorar e analisar contratos de crédito oferecidos pelo banco, incluindo informações sobre limites aprovados, utilização atual, tipos de produtos, status dos contratos e outras métricas financeiras relevantes. Essas informações são cruciais para o gerenciamento de riscos e conformidade regulatória.
+- **Owner**: squad-credito
+- **Versão**: 3.0.0
+- **Status do Manifesto**: DRAFT
+- **Fonte**:
+  - Sistema: SISTEMA_CREDITO_SAS
+  - Formato: sas7bdat
+  - Codificação: latin-1
+  - SO: unix
+  - Frequência de Atualização: diária
+- **Contato**: squad-credito@banco.com.br
 
-### Fonte de Dados
+### Contexto Regulatório e de Negócios
 
-- **Sistema**: SISTEMA_CREDITO_SAS
-- **Formato**: sas7bdat
-- **Codificação**: latin-1
-- **SO**: unix
-- **Frequência de Atualização**: diária
-
-### Responsáveis
-
-- **Proprietário**: squad-credito
-- **Data Steward**: Data Steward Credito (steward-credito@banco.com.br)
+- **Tags Regulatórias**:
+  - SCR
+  - BACEN_4658
+  - LGPD
+- **Classificação de Dados**: restrita
+- **Período de Retenção**: 10 anos
 
 ## Colunas da Tabela
 
-### `id_contrato`
+### `id_contrato` (string)
 
-- **Tipo**: string
-- **Nullable**: false
 - **Descrição**: Identificador único do contrato gerado pelo sistema de crédito.
-- **Comportamento Esperado**: Deve ser exclusivo para cada registro (não duplicados).
-- **Anomalias Observadas**: Nenhuma anomalia detectada; 100% dos valores são únicos.
-
-### `cd_cliente`
-
+- **Propósito de Negócio**: Serve como chave primária para identificar exclusivamente cada contrato.
 - **Tipo**: string
-- **Nullable**: false
-- **Descrição**: Referência ao cliente em `tb_clientes`.
-- **Comportamento Esperado**: Deve corresponder a um identificador válido de cliente.
-- **Anomalias Observadas**: 221 valores únicos entre 300 registros, indicando clientes com múltiplos contratos.
+- **Comportamento Esperado**: Não nulos, valores únicos em todas as linhas.
+- **Anomalias Observadas**: Nenhuma anomalia relatada.
 
-### `dt_contrato`
+### `cd_cliente` (string)
 
-- **Tipo**: string (esperado date)
-- **Nullable**: false
+- **Descrição**: Referência ao cliente na tabela `tb_clientes`.
+- **Propósito de Negócio**: Liga o contrato a um cliente específico.
+- **Tipo**: string
+- **Comportamento Esperado**: Não nulos, valores únicos em todas as linhas.
+- **Anomalias Observadas**: Nenhuma anomalia relatada.
+
+### `dt_contrato` (string)
+
 - **Descrição**: Data de abertura do contrato.
-- **Comportamento Esperado**: Deve ser uma data válida no formato apropriado.
-- **Anomalias Observadas**: Tipo de dado está como `VARCHAR`, o que pode indicar problemas na conversão ou formatação.
-
-### `vl_limite`
-
-- **Tipo**: string (esperado float)
-- **Nullable**: false
-- **Descrição**: Limite de crédito aprovado em BRL.
-- **Comportamento Esperado**: Deve ser um valor numérico positivo.
-- **Anomalias Observadas**: Tipo de dado está como `VARCHAR`, o que pode indicar problemas na conversão ou formatação.
-
-### `vl_utilizado`
-
-- **Tipo**: string (esperado float)
-- **Nullable**: false
-- **Descrição**: Saldo utilizado atual em BRL. Pode exceder `vl_limite` em produtos com tolerância.
-- **Comportamento Esperado**: Deve ser um valor numérico positivo, podendo exceder o limite para certos produtos.
-- **Anomalias Observadas**: Tipo de dado está como `VARCHAR`, o que pode indicar problemas na conversão ou formatação.
-
-### `tp_produto`
-
+- **Propósito de Negócio**: Registra quando o contrato foi inicialmente estabelecido.
 - **Tipo**: string
-- **Nullable**: false
-- **Descrição**: Tipo do produto de crédito. Domínio: CARTAO_CREDITO, CHEQUE_ESPECIAL, CREDITO_PESSOAL, FINANCIAMENTO_VEICULO, CONSIGNADO.
-- **
+- **Comportamento Esperado**: Não nulos, deve ser uma data válida.
+- **Anomalias Observadas**: Nenhuma anomalia relatada.
+
+### `vl_limite` (string)
+
+- **Descrição**: Limite de crédito aprovado em BRL.
+- **Propósito de Negócio**: Indica o valor máximo disponível para uso sob o contrato.
+- **Tipo**: string
+- **Comportamento Esperado**: Não nulos, valores numéricos positivos.
+- **Anomalias Observadas**: Nenhuma anomalia relatada.
+
+### `vl_utilizado` (string)
+
+- **Descrição**: Saldo utilizado atual em BRL. Pode exceder `vl_limite` para produtos com tolerância.
+- **Propósito de Negócio**: Monitora o uso do limite de crédito pelo cliente.
+- **Tipo**: string
+- **Comportamento Esperado**: Não nulos, valores numéricos positivos ou negativos permitidos conforme regras de negócios.
+- **Anomalias Observadas**: Nenhuma anomalia relatada.
+
+### `tp_produto` (string)
+
+- **Descrição**: Tipo do produto de crédito. Domínio: CARTAO_CREDITO, CHEQUE_ESPECIAL, CREDITO_PESSOAL, FINANCI
 
 ---
 > **[AI_METADATA_STATUS: DRAFT]**
