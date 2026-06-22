@@ -14,11 +14,20 @@ import random
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Literal
+from typing import Dict, List, Literal, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import yaml
+
+from src.generators.writers import (
+    BaseWriter,
+    CSVWriter,
+    JSONWriter,
+    FixedWidthWriter,
+    WriterFactory,
+    SUPPORTED_FORMATS,
+)
 
 random.seed(42)
 np.random.seed(42)
@@ -371,46 +380,161 @@ def _contrato_contratos_credito() -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 # Entry point público
 # ─────────────────────────────────────────────────────────────────────────────
+# ─── Leiaute posicional padrão para FixedWidthWriter ─────────────────────────
+_FIXED_LAYOUT_CLIENTES: List[Tuple[str, int, str]] = [
+    ("cd_cliente",      12, "string"),
+    ("nr_cpf_cnpj",     14, "string"),
+    ("nm_cliente",      40, "string"),
+    ("dt_nascimento",   10, "date"),
+    ("cd_segmento",     12, "string"),
+    ("cd_agencia",       6, "string"),
+    ("vl_renda_mensal", 12, "float"),
+    ("fl_ativo",         1, "string"),
+    ("dt_cadastro",     10, "date"),
+]
+
+_FIXED_LAYOUT_TRANSACOES: List[Tuple[str, int, str]] = [
+    ("id_transacao",       36, "string"),
+    ("cd_cliente",         12, "string"),
+    ("dt_transacao",       10, "date"),
+    ("vl_transacao",       12, "float"),
+    ("tp_transacao",       20, "string"),
+    ("cd_estabelecimento", 18, "string"),
+    ("fl_suspeita",         1, "string"),
+    ("cd_canal",            8, "string"),
+]
+
+_FIXED_LAYOUT_CONTRATOS: List[Tuple[str, int, str]] = [
+    ("id_contrato",    36, "string"),
+    ("cd_cliente",     12, "string"),
+    ("dt_contrato",    10, "date"),
+    ("vl_limite",      12, "float"),
+    ("vl_utilizado",   12, "float"),
+    ("tp_produto",     24, "string"),
+    ("cd_status",      12, "string"),
+    ("dt_vencimento",  10, "date"),
+    ("nr_parcelas",     5, "integer"),
+    ("tx_juros_am",     8, "float"),
+]
+
+# Aninhamento JSON para testar json_normalize da pipeline
+_JSON_NEST_CLIENTES: Dict[str, List[str]] = {
+    "dados_pessoais": ["nm_cliente", "dt_nascimento", "nr_cpf_cnpj"],
+    "dados_bancarios": ["cd_segmento", "cd_agencia", "vl_renda_mensal"],
+}
+
+_JSON_NEST_CONTRATOS: Dict[str, List[str]] = {
+    "valores": ["vl_limite", "vl_utilizado", "tx_juros_am"],
+    "info_contrato": ["tp_produto", "cd_status", "dt_vencimento", "nr_parcelas"],
+}
+
+
+def _build_writer(fmt: str, table_name: str) -> BaseWriter:
+    """
+    Constrói o writer adequado para a tabela e formato solicitados.
+
+    Args:
+        fmt: Formato de saida ('csv', 'json', 'fixed').
+        table_name: Nome da tabela para selecionar leiaute/nesting correto.
+
+    Returns:
+        Instância de BaseWriter configurada.
+
+    Raises:
+        ValueError: Formato invalido ou tabela sem leiaute definido.
+    """
+    if fmt == "csv":
+        return WriterFactory.get("csv")
+
+    if fmt == "json":
+        # Pipeline usa JSON flat — colunas correspondem ao contrato sem transformacao.
+        # O aninhamento (_JSON_NEST_CLIENTES / _JSON_NEST_CONTRATOS) existe apenas
+        # para testes do extractor_json.py, nao para o fluxo de validacao.
+        return WriterFactory.get("json", nest_columns=None, root_key="data")
+
+    if fmt == "fixed":
+        layout_map: Dict[str, List[Tuple[str, int, str]]] = {
+            "tb_clientes"          : _FIXED_LAYOUT_CLIENTES,
+            "tb_transacoes"        : _FIXED_LAYOUT_TRANSACOES,
+            "tb_contratos_credito" : _FIXED_LAYOUT_CONTRATOS,
+        }
+        if table_name not in layout_map:
+            raise ValueError(f"Sem leiaute posicional definido para: {table_name}")
+        return WriterFactory.get("fixed", layout=layout_map[table_name])
+
+    raise ValueError(
+        f"Formato nao suportado: '{fmt}'. Opcoes validas: {', '.join(SUPPORTED_FORMATS)}"
+    )
+
+
 def generate_all(
     storage,
     scenario: ScenarioType = "baseline",
-) -> list[dict]:
+    fmt: str = "csv",
+) -> List[dict]:
     """
-    Gera dados fictícios e persiste via Storage (bronze + contracts).
+    Gera dados fictícios bancários e persiste via Storage na landing zone.
 
-    Bronze layer  : CSVs com os dados gerados (landing zone)
-    Contracts     : manifestos YAML com os contratos de dados
+    Separa a responsabilidade de geração de dados (domínio) da escrita
+    (formato), delegando para o writer selecionado por WriterFactory.
 
-    Retorna lista de dicts com metadados de cada tabela produzida.
+    Args:
+        storage: Instância de StorageBase (LocalStorage ou MinIOStorage).
+        scenario: Cenario de dados. Um de: 'baseline', 'non_breaking', 'breaking'.
+        fmt: Formato de saída. Um de: 'csv', 'json', 'fixed'.
+
+    Returns:
+        Lista de dicts com metadados das tabelas produzidas:
+        [{"table": ..., "filename": ..., "contract_filename": ..., "scenario": ...}]
+
+    Raises:
+        ValueError: Formato nao suportado ou parametros invalidos.
     """
-    print(f"\n[GENERATE] Gerando dados ficticios - cenario: [{scenario.upper()}]")
+    if fmt not in SUPPORTED_FORMATS:
+        raise ValueError(
+            f"Formato nao suportado: '{fmt}'. Opcoes validas: {', '.join(SUPPORTED_FORMATS)}"
+        )
+
+    print(f"\n[GENERATE] Gerando dados ficticios - cenario: [{scenario.upper()}] - formato: [{fmt.upper()}]")
 
     clientes_df   = _gerar_clientes(500, scenario)
     transacoes_df = _gerar_transacoes(clientes_df)
     contratos_df  = _gerar_contratos_credito(clientes_df)
 
-    datasets = [
+    datasets: List[Tuple[str, pd.DataFrame, dict]] = [
         ("tb_clientes",          clientes_df,   _contrato_clientes(scenario)),
         ("tb_transacoes",        transacoes_df, _contrato_transacoes()),
         ("tb_contratos_credito", contratos_df,  _contrato_contratos_credito()),
     ]
 
-    produced = []
+    produced: List[dict] = []
+
     for table_name, df, contract in datasets:
         suffix            = f"_{scenario}" if scenario != "baseline" else ""
-        csv_filename      = f"{table_name}{suffix}.csv"
         contract_filename = f"{table_name}{suffix}.yaml"
 
-        storage.write("bronze", csv_filename, df)
+        # Seleciona writer — delega serialização para o Strategy correto
+        writer                = _build_writer(fmt, table_name)
+        base_name             = f"{table_name}{suffix}"
+        filename, file_content = writer.serialize(df, base_name)
+
+        # Persiste via storage (agnostico de backend)
+        storage.write_text("bronze", filename, file_content)
+
+        # Para fixed-width, grava sidecar com colspecs para leitura posterior
+        if fmt == "fixed" and hasattr(writer, "layout_sidecar"):
+            sidecar_name, sidecar_content = writer.layout_sidecar(base_name)
+            storage.write_text("bronze", sidecar_name, sidecar_content)
         storage.write_text("contracts", contract_filename,
                            yaml.dump(contract, allow_unicode=True, sort_keys=False))
 
-        print(f"   [OK] {table_name}: {len(df)} linhas -> bronze/{csv_filename}")
+        print(f"   [OK] {table_name}: {len(df)} linhas -> bronze/{filename}")
         produced.append({
             "table"            : table_name,
-            "filename"         : csv_filename,
+            "filename"         : filename,
             "contract_filename": contract_filename,
             "scenario"         : scenario,
+            "format"           : fmt,
         })
 
     return produced

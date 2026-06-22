@@ -2,7 +2,7 @@
 
 ## Visão Geral
 
-A tabela `tb_clientes` é um cadastro mestre de clientes pessoa física e jurídica, utilizada por todos os produtos de crédito e relacionamento do banco. A segmentação dos clientes determina o produto oferecido e o gestor responsável. Esta tabela é atualizada diariamente pelo batch noturno do sistema CORE_BANCARIO_TOTVS.
+A tabela `tb_clientes` é um cadastro mestre que contém informações sobre clientes pessoa física e jurídica. Ela é utilizada por todos os produtos de crédito e relacionamento do banco, com segmentação determinando o produto ofertado e o gestor responsável. A tabela é atualizada diariamente pelo batch noturno do sistema CORE_BANCARIO_TOTVS.
 
 ### Propriedades da Tabela
 
@@ -17,7 +17,7 @@ A tabela `tb_clientes` é um cadastro mestre de clientes pessoa física e juríd
   - Frequência de Atualização: Diária
   - Contato: squad-dados-cadastrais@banco.com.br
 
-### Regulamentação e Classificação
+### Contexto Regulatório
 
 - **Tags Regulatórias**: LGPD, BACEN_4658
 - **Classificação de Dados**: Confidencial
@@ -26,51 +26,52 @@ A tabela `tb_clientes` é um cadastro mestre de clientes pessoa física e juríd
 ## Colunas da Tabela
 
 ### `cd_cliente`
-- **Tipo**: String
-- **Pode ser Nulo?**: Não
+- **Tipo**: VARCHAR (string)
+- **Nulo**: Não permitido
 - **Chave Primária**: Sim
 - **Descrição**: Código único do cliente no sistema legado, gerado sequencialmente pelo CORE_BANCARIO.
 - **Estatísticas**:
   - Percentual de Nulos: 0.0%
   - Contagem Única: 500
-  - Valores Principais: Todos únicos
 
 ### `nr_cpf_cnpj`
-- **Tipo**: String
-- **Pode ser Nulo?**: Não
+- **Tipo**: VARCHAR (string)
+- **Nulo**: Não permitido
 - **Descrição**: CPF (11 dígitos) ou CNPJ (14 dígitos) sem máscara.
 - **Implicações Regulatórias**: LGPD_SENSITIVE
 - **Estatísticas**:
   - Percentual de Nulos: 0.0%
   - Contagem Única: 500
-  - Intervalo: Min = 1325896721, Max = 98762314564
+  - Mínimo: 1395867259.0
+  - Máximo: 98750362429.0
+  - Média: 48825936703.32
 
 ### `nm_cliente`
-- **Tipo**: String
-- **Pode ser Nulo?**: Não
+- **Tipo**: VARCHAR (string)
+- **Nulo**: Não permitido
 - **Descrição**: Nome completo do cliente conforme cadastro na Receita Federal.
 - **Implicações Regulatórias**: LGPD_SENSITIVE
 - **Estatísticas**:
   - Percentual de Nulos: 0.0%
   - Contagem Única: 499 (Anomalia: Duplicatas)
-  - Valores Principais: "Matheus Silva" aparece duas vezes
+  - Valor Mais Comum: "Juliana Rocha" (2 ocorrências)
 
 ### `dt_nascimento`
-- **Tipo**: String
-- **Pode ser Nulo?**: Sim
+- **Tipo**: VARCHAR (string) — Esperado como DATE
+- **Nulo**: Permitido
 - **Descrição**: Data de nascimento. Nula para clientes PJ.
 - **Implicações Regulatórias**: LGPD_SENSITIVE
 - **Estatísticas**:
   - Percentual de Nulos: 0.0%
-  - Contagem Única: 496 (Anomalia: Duplicatas)
-  - Valores Principais: "1987-08-12" e outros aparecem duas vezes
+  - Contagem Única: 496
 
 ### `cd_segmento`
-- **Tipo**: String
-- **Pode ser Nulo?**: Não
+- **Tipo**: VARCHAR (string)
+- **Nulo**: Não permitido
 - **Descrição**: Segmento de relacionamento. Domínio: VAREJO, PRIME, PRIVATE, PJ_PEQUENO, PJ_MEDIO.
 - **Regras de Negócio**:
-  - PRIME: `vl_renda_mensal
+  - PRIME: vl_renda_mensal >= 10000
+  - PRIVATE: vl_renda
 
 ---
 > **[AI_METADATA_STATUS: DRAFT]**

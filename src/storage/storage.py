@@ -108,8 +108,49 @@ class LocalStorage(StorageBase):
         print(f"   [WRITE] [{layer.upper()}] {filename} gravado ({len(df)} linhas)")
 
     def read(self, layer: str, filename: str) -> pd.DataFrame:
+        """
+        Le um arquivo da camada e retorna DataFrame.
+        Detecta o formato pelo sufixo do arquivo:
+          .csv / .tsv  -> pd.read_csv
+          .json        -> pd.json_normalize (aceita lista ou {root_key: [...]} )
+          .txt / .dat  -> pd.read_fwf (melhor esforco para fixed-width)
+        """
         path = self._path(layer, filename)
-        return pd.read_csv(path, low_memory=False, dtype=str)
+        ext  = path.suffix.lower()
+
+        if ext == ".json":
+            import json
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            # Resolve root key automaticamente
+            if isinstance(data, dict):
+                for v in data.values():
+                    if isinstance(v, list):
+                        data = v
+                        break
+            if not isinstance(data, list):
+                data = [data]
+            return pd.json_normalize(data, max_level=5).astype(str)
+
+        if ext in (".txt", ".dat", ".pos", ".fix"):
+            # Tenta carregar sidecar de colspecs gerado pelo FixedWidthWriter
+            import json as _json
+            sidecar = path.parent / (path.name + ".layout")
+            if sidecar.exists():
+                spec     = _json.loads(sidecar.read_text(encoding="utf-8"))
+                colspecs = [tuple(cs) for cs in spec["colspecs"]]
+                return pd.read_fwf(path, colspecs=colspecs,
+                                   names=spec["names"], dtype=str)
+            # Sem sidecar: melhor esforco via pandas whitespace detection
+            try:
+                return pd.read_fwf(path, dtype=str)
+            except Exception:
+                return pd.read_csv(path, sep="\s+", dtype=str,
+                                   on_bad_lines="skip", engine="python")
+
+        # Default: CSV (inclui .tsv com sep auto)
+        sep = "\t" if ext == ".tsv" else ","
+        return pd.read_csv(path, low_memory=False, dtype=str, sep=sep)
 
     def move(self, filename: str, from_layer: str, to_layer: str) -> None:
         src = self._path(from_layer, filename)

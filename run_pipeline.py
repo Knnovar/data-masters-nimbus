@@ -35,7 +35,7 @@ BANNER = """
 """
 
 
-def run_scenario(scenario: str, run_id: str) -> list[dict]:
+def run_scenario(scenario: str, run_id: str, fmt: str = "csv") -> list[dict]:
     """Executa um único cenário end-to-end usando a camada Storage."""
     print(f"\n{chr(9552)*66}")
     print(f"  CENARIO: {scenario.upper()}")
@@ -45,7 +45,7 @@ def run_scenario(scenario: str, run_id: str) -> list[dict]:
     storage = get_storage()
 
     # ── 1. Bronze: geração de dados ───────────────────────────────────────
-    produced = generate_all(storage, scenario=scenario)
+    produced = generate_all(storage, scenario=scenario, fmt=fmt)
 
     # ── 2. Loop por tabela ────────────────────────────────────────────────
     scenario_metrics = []
@@ -112,6 +112,13 @@ def main():
         default="all",
         help="Cenario a executar (padrao: all)",
     )
+    parser.add_argument(
+        "--format",
+        choices=["csv", "json", "fixed", "all"],
+        default="csv",
+        dest="fmt",
+        help="Formato de saida (csv|json|fixed|all). Padrao: csv",
+    )
     args = parser.parse_args()
 
     print(BANNER)
@@ -127,10 +134,13 @@ def main():
         else [args.scenario]
     )
 
+    fmt_list = ["csv", "json", "fixed"] if args.fmt == "all" else [args.fmt]
+
     all_metrics: list[dict] = []
     for scenario in scenarios:
-        metrics = run_scenario(scenario, run_id)
-        all_metrics.extend(metrics)
+        for fmt in fmt_list:
+            metrics = run_scenario(scenario, run_id, fmt=fmt)
+            all_metrics.extend(metrics)
 
     # Relatório consolidado
     print_summary(all_metrics)

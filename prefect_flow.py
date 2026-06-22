@@ -150,24 +150,35 @@ def task_extract_manifest(filename: str, table_name: str, fmt: str = "csv") -> d
 
 
 @task(name="JOB-DM-001-GENERATE", retries=1, retry_delay_seconds=10)
-def task_generate_data(scenario, run_id):
+def task_generate_data(scenario, run_id, fmt="csv"):
     """
     Control-M: JOB-DM-001-GENERATE
     Depende de: nenhum (inicio do DAG)
     Bloqueia: JOB-DM-002-VALIDATE
+
+    Args:
+        scenario: Cenario de dados ('baseline', 'non_breaking', 'breaking').
+        run_id: Identificador da run para rastreio.
+        fmt: Formato de saida ('csv', 'json', 'fixed').
     """
-    _log("JOB-DM-001", "GENERATE", "STARTED", "scenario={}".format(scenario))
+    _log("JOB-DM-001", "GENERATE", "STARTED", "scenario={} format={}".format(scenario, fmt))
     try:
+        from src.generators.writers import SUPPORTED_FORMATS
+        if fmt not in SUPPORTED_FORMATS:
+            raise ValueError(
+                "Formato invalido: '{}'. Opcoes validas: {}".format(fmt, ', '.join(SUPPORTED_FORMATS))
+            )
         storage  = get_storage()
-        produced = generate_all(storage, scenario=scenario)
+        produced = generate_all(storage, scenario=scenario, fmt=fmt)
         _log("JOB-DM-001", "GENERATE", "ENDED_OK",
-             "tables={} backend={}".format(len(produced), type(storage).__name__))
+             "tables={} backend={} format={}".format(len(produced), type(storage).__name__, fmt))
         return [
             {
                 "table"            : p["table"],
                 "filename"         : p["filename"],
                 "contract_filename": p["contract_filename"],
                 "scenario"         : scenario,
+                "format"           : fmt,
             }
             for p in produced
         ]
@@ -331,7 +342,7 @@ def task_report(all_metrics, run_id):
     description="Pipeline lakehouse bancaria com contratos, profiler e SLM.",
     version="1.0.0",
 )
-def pipeline_flow(scenario="baseline", run_id=None):
+def pipeline_flow(scenario="baseline", run_id=None, fmt="csv"):
     """
     DAG completo. Cada tabela passa pelos jobs 002-005 em sequencia.
     Com Prefect server ativo, as tres tabelas rodam em paralelo automaticamente.
@@ -359,9 +370,9 @@ def pipeline_flow(scenario="baseline", run_id=None):
             str(uuid.uuid4())[:6]
         )
 
-    _log("PIPELINE", "FLOW", "STARTED", "run_id={} scenario={}".format(run_id, scenario))
+    _log("PIPELINE", "FLOW", "STARTED", "run_id={} scenario={} format={}".format(run_id, scenario, fmt))
 
-    produced    = task_generate_data(scenario, run_id)
+    produced    = task_generate_data(scenario, run_id, fmt)
     all_metrics = []
 
     for item in produced:
@@ -415,6 +426,11 @@ if __name__ == "__main__":
         default="all",
     )
     parser.add_argument(
+        "--format", choices=["csv", "json", "fixed", "all"],
+        default="csv", dest="fmt",
+        help="Formato de saida dos dados gerados (csv|json|fixed|all).",
+    )
+    parser.add_argument(
         "--no-prefect", action="store_true",
         help="Executa sem registrar no servidor Prefect (compativel com Control-M)",
     )
@@ -438,7 +454,10 @@ if __name__ == "__main__":
     worst_global = 0
     for sc in scenarios:
         run_id = "{}_{}".format(base_run_id, sc) if len(scenarios) > 1 else base_run_id
-        result = pipeline_flow(scenario=sc, run_id=run_id)
-        worst_global = max(worst_global, result["exit_code"])
-
+        # Expande "all" em todos os formatos suportados
+        fmt_list = ["csv", "json", "fixed"] if args.fmt == "all" else [args.fmt]
+        for fmt in fmt_list:
+            result = pipeline_flow(scenario=sc, run_id=run_id, fmt=fmt)
+            worst_global = max(worst_global, result["exit_code"])
+        continue
     sys.exit(worst_global)

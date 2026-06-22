@@ -3,7 +3,9 @@
     "allow": [
       "Bash(find . -name *.md -type f)",
       "Bash(find . -name *.py -type f)",
-      "Bash(grep -r \"load\\\\|balance\\\\|worker\\\\|concurrency\\\\|parallel\\\\|thread\\\\|async\\\\|pool\" --include=*.py .)"
+      "Bash(grep -r \"load\\\\|balance\\\\|worker\\\\|concurrency\\\\|parallel\\\\|thread\\\\|async\\\\|pool\" --include=*.py .)",
+      "Bash(find . -name *.json -o -name *.jsonl -o -name *layout*)",
+      "Bash(python:*)"
     ]
   }
 }
