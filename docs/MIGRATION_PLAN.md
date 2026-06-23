@@ -503,3 +503,158 @@ reduz para aproximadamente **0.5 sprint**, já que:
 | YAML contracts | Delta Live Tables Expectations | ⚠️ Requer reescrita das regras em Python DLT |
 | JSON metrics local | Delta table Gold | ✅ Sim — mesmo schema, destino diferente |
 | pipeline_report.md | Unity Catalog lineage | ✅ Complementar — MD continua existindo |
+
+---
+
+## Parte 4 — Estratégia de Escalabilidade e Load Balance
+
+> Análise dos gargalos reais esperados quando o projeto sair da PoC para
+> produção, com estratégias concretas para cada componente.
+
+### Visão geral dos gargalos por componente
+
+O pipeline possui três naturezas de carga distintas — cada uma exige uma
+estratégia diferente de escalabilidade:
+
+| Componente | Natureza | Gargalo real |
+|---|---|---|
+| Validator + Profiler | CPU-bound, stateless | Paralelismo de tasks |
+| SLM (Ollama / Azure OpenAI) | I/O-bound, lento, stateful | Fila + workers assíncronos |
+| Storage (MinIO / ADLS Gen2) | I/O-bound, object storage | Nativo — escala horizontal sem intervenção |
+
+---
+
+### 1. SLM — o gargalo que mais importa
+
+A SLM é o único componente genuinamente lento e stateful. Uma chamada
+para documentar uma tabela via Ollama local leva de 30s a 5min dependendo
+do hardware e do modelo. Com dezenas de tabelas chegando simultaneamente,
+uma instância única não escala.
+
+**Estratégia A — Fila + múltiplos workers (escala moderada)**
+
+Desacopla o enriquecimento semântico do pipeline principal. O validator e
+o profiler executam em tempo real (rápidos), e a tarefa de enriquecimento
+é enfileirada para consumo assíncrono.
+
+```
+Pipeline principal (rápido, síncrono):
+  BRONZE → Validator → Profiler → SILVER → [enfileira enriquecimento]
+
+Workers de enriquecimento (assíncronos, paralelos):
+  [fila] → Worker 1 → SLM instância A → reports/
+  [fila] → Worker 2 → SLM instância B → reports/
+  [fila] → Worker N → SLM instância N → reports/
+```
+
+Tecnologias: Celery + Redis, ou o próprio Prefect com `concurrency_limit`
+por deployment. Cada worker tem sua própria instância Ollama — sem
+compartilhamento de estado.
+
+**Estratégia B — Batch assíncrono (padrão Databricks)**
+
+A documentação semântica não precisa ser síncrona com a ingestão. O
+manifest fica em `DRAFT` após o pipeline principal e o enriquecimento
+acontece em um job separado agendado fora do horário de pico. É o
+comportamento que o projeto já suporta nativamente — `SKIP_SLM=True`
+no pipeline principal e um job dedicado de enriquecimento rodando à parte.
+
+**Estratégia C — Azure OpenAI com throttling gerenciado (produção Azure)**
+
+Ao migrar para Azure OpenAI em Private Endpoint, o load balance é
+responsabilidade do provedor. A vantagem é rate limiting automático,
+retry com backoff nativo e escala sem gestão de instâncias. A mudança
+no código é apenas de configuração:
+
+```python
+# config.py
+OLLAMA_HOST  = "https://<resource>.openai.azure.com"
+OLLAMA_MODEL = "gpt-4o-mini"   # ou o modelo implantado
+# header de autenticação via Azure Key Vault
+```
+
+O módulo `ollama_enrichment.py` já usa uma interface REST genérica —
+a troca de endpoint não requer alteração de lógica.
+
+**Recomendação por fase:**
+
+| Fase | Carga esperada | Estratégia |
+|---|---|---|
+| PoC / piloto | < 20 tabelas/dia | SKIP_SLM + batch manual (hoje) |
+| Expansão interna | 20–200 tabelas/dia | Fila Prefect + 2-3 workers Ollama |
+| Produção plena | > 200 tabelas/dia | Azure OpenAI com rate limiting gerenciado |
+
+---
+
+### 2. Pipeline (Validator + Profiler) — paralelismo de tasks
+
+O pipeline atual é sequencial por design de PoC. Em produção, o Prefect
+já resolve isso sem mudança de código: cada tabela é uma task independente
+e o scheduler distribui automaticamente entre workers disponíveis.
+
+**PoC (hoje):**
+```
+tb_clientes   → [validate] → [profile] → [enrich] → [metrics]
+tb_transacoes → [validate] → [profile] → [enrich] → [metrics]  (sequencial)
+tb_contratos  → [validate] → [profile] → [enrich] → [metrics]
+```
+
+**Produção com Prefect work pool (múltiplos workers):**
+```
+tb_clientes   → [validate] → [profile] → [enrich] → [metrics]  \
+tb_transacoes → [validate] → [profile] → [enrich] → [metrics]   ├─ paralelo
+tb_contratos  → [validate] → [profile] → [enrich] → [metrics]  /
+```
+
+A mudança é apenas de infraestrutura — subir mais workers apontando para
+o mesmo work pool. O código do `prefect_flow.py` não muda.
+
+Em Databricks, isso vira Databricks Workflows com `max_concurrent_runs`
+configurado no nível do job, ou DLT com paralelismo gerenciado pela
+plataforma.
+
+---
+
+### 3. Storage — escala nativa
+
+Storage object (S3-compatível) é horizontalmente escalável por arquitetura.
+MinIO em cluster ou ADLS Gen2 lidam com milhares de escritas simultâneas
+sem intervenção. O único ponto de atenção é o contention em leituras e
+escritas simultâneas na mesma camada (ex: múltiplos workers escrevendo
+em Silver ao mesmo tempo) — resolvido com particionamento por `run_id`
+no path dos arquivos, que já é o comportamento do projeto.
+
+---
+
+### 4. Argumento de venda para a diretoria
+
+A arquitetura da PoC foi desenhada para que a escalabilidade seja uma
+troca de peças, não uma reescrita:
+
+```
+PoC Local          →     Produção Azure
+─────────────────────────────────────────────────────────────
+LocalStorage       →     ADLS Gen2       (1 linha em config.py)
+Ollama local       →     Azure OpenAI    (1 linha em config.py)
+Prefect 1 worker   →     N workers       (infra, zero código)
+Sequencial         →     Paralelo        (infra, zero código)
+JSON metrics       →     Delta Lake Gold  (novo sink, mesma lógica)
+```
+
+Nenhum dos gargalos identificados exige reescrita de lógica de negócio.
+O investimento na abstração de Storage (`StorageBase`), na separação de
+responsabilidades do pipeline e no uso de padrões como Strategy (writers)
+e Factory (storage) foi feito exatamente para que este upgrade seja
+incremental e de baixo risco.
+
+---
+
+### 5. Estimativa de esforço para escalar
+
+| Mudança | Esforço estimado | Dependência |
+|---|---|---|
+| Múltiplos workers Prefect | < 1 dia (só infra) | Work pool configurado |
+| Fila de enriquecimento SLM | 2–3 dias (Celery/Redis ou Prefect) | Redis ou Prefect server |
+| Troca Ollama → Azure OpenAI | 1 dia (config + autenticação) | Workspace Azure aprovado |
+| Troca LocalStorage → ADLS Gen2 | 2–3 dias (ADLSStorage impl.) | ADLS Gen2 provisionado |
+| Pipeline sequencial → paralelo em Databricks | 3–5 dias (DLT) | Databricks workspace |

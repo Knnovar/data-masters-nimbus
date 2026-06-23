@@ -1,154 +1,88 @@
 # Arquitetura — Projeto Nimbus
 
-Documento técnico de referência para a arquitetura do pipeline. Para uma
-visão geral e início rápido, consulte o [README](../README.md).
+Este documento descreve a estrutura técnica do pipeline, as decisões de design que moldaram cada componente e como eles se conectam. Para uma visão geral do projeto e instruções de uso, consulte o [README](../README.md).
 
 ---
 
-## 1. Visão Geral do Fluxo
+## O fluxo de dados de ponta a ponta
+
+O dado chega na landing zone no formato que o sistema de origem produz — pode ser CSV, JSON, Fixed-Width ou SAS7BDAT. Antes de qualquer processamento, um módulo de normalização garante que o arquivo está em UTF-8 com terminadores de linha LF, independentemente do sistema operacional que gerou o arquivo. Arquivos em EBCDIC são detectados e sinalizados para tratamento manual, sem que o pipeline trave.
+
+A partir daí, o arquivo entra na camada Bronze e passa pela validação de contrato. Se o schema não bate com o que foi declarado no Manifest — uma coluna obrigatória removida, por exemplo — o arquivo é isolado na quarentena sem interromper o processamento das demais tabelas. Se a mudança é não-quebradora, como uma coluna nova adicionada pela origem, o pipeline avança com um aviso registrado.
+
+As tabelas que passam pela validação seguem para o profiling via DuckDB, são promovidas para Silver e têm sua documentação gerada pela SLM. Por fim, métricas de qualidade são calculadas e consolidadas em um relatório por execução.
 
 ```
-Arquivo bruto (CSV/JSON/Fixed-Width/SAS7BDAT)
-        │
-        ▼
-┌───────────────────┐
-│  NORMALIZER        │  encoding, CRLF→LF, BOM, EBCDIC (detecta e avisa)
-└───────────────────┘
-        │
-        ▼
-┌───────────────────┐
-│  BRONZE             │  dado bruto, recém-chegado
-└───────────────────┘
-        │
-        ▼
-┌───────────────────┐      breaking change
-│  VALIDATOR          │ ────────────────────► QUARANTINE (DLQ)
-└───────────────────┘
-        │ pass / warning
-        ▼
-┌───────────────────┐
-│  PROFILER (DuckDB)  │  estatísticas por coluna
-└───────────────────┘
-        │
-        ▼
-┌───────────────────┐
-│  SILVER             │  dado validado e promovido
-└───────────────────┘
-        │
-        ▼
-┌───────────────────┐
-│  SLM (Ollama)        │  documentação semântica usando o Manifest VALIDATED
-└───────────────────┘
-        │
-        ▼
-┌───────────────────┐
-│  METRICS + REPORTS  │  quality score, pipeline_report.md
-└───────────────────┘
+Arquivo bruto
+     |
+ Normalização de encoding
+     |
+  [ BRONZE ]
+     |
+  Validação de contrato ------ breaking change ------> [ QUARENTENA ]
+     |
+  Profiling (DuckDB)
+     |
+  [ SILVER ]
+     |
+  SLM documenta
+     |
+  Métricas + Relatório
 ```
 
 ---
 
-## 2. Arquitetura Medallion
+## Arquitetura Medallion
 
-| Camada | Diretório local | Papel |
-|---|---|---|
-| **Bronze** | `data/landing/` | Dado bruto, como chegou da origem |
-| **Silver** | `data/processed/` | Dado validado e promovido pelo profiler |
-| **Gold** | `data/gold/` | Métricas agregadas (reservado para evolução futura) |
-| **Quarantine** | `data/quarantine/` | Arquivos com breaking change isolados (DLQ) |
-| **Contracts** | `data/contracts/` | Manifestos YAML — um por tabela |
-| **Metrics** | `data/metrics/` | JSON de métricas por execução |
-| **Reports** | `data/reports/` | Documentação SLM + relatório consolidado |
+O projeto segue a arquitetura medallion com sete camadas mapeadas em diretórios locais ou buckets S3 quando o backend é MinIO:
+
+O **Bronze** é a landing zone — o dado bruto exatamente como chegou. O **Silver** é onde vão os arquivos que passaram pela validação e pelo profiling. O **Gold** está reservado para métricas agregadas em futuras iterações. A **Quarentena** isola arquivos com breaking changes sem descartá-los — eles ficam disponíveis para análise. Os **Contracts** armazenam os Manifests YAML. As **Metrics** guardam os JSONs de métricas por execução. Os **Reports** reúnem a documentação gerada pela SLM e o relatório consolidado da execução.
 
 ---
 
-## 3. Camada de Storage
+## A camada de Storage
 
-`src/storage/storage.py` abstrai onde os dados fisicamente residem. O resto
-do pipeline nunca acessa disco ou bucket diretamente — sempre via `storage`.
+`src/storage/storage.py` é a abstração que impede que o restante do pipeline saiba onde os dados fisicamente residem. Todos os módulos interagem com a mesma interface — `read()`, `write()`, `move()`, `write_text()` — sem importar se estão trabalhando com disco local ou um bucket MinIO.
 
-```python
-storage.write("bronze", "tb_clientes.csv", df)
-storage.read("bronze", "tb_clientes.csv")
-storage.move("tb_clientes.csv", "bronze", "silver")
-storage.write_text("contracts", "tb_clientes.yaml", yaml_str)
-```
+O `LocalStorage` é o backend padrão, sem nenhuma dependência externa. O `MinIOStorage` é ativado com `USE_MINIO = True` em `config.py` e requer `docker compose up -d`. A troca é transparente para o pipeline inteiro.
 
-Dois backends implementados:
+Uma decisão importante: o método `read()` detecta o formato pelo sufixo do arquivo e usa o parser correto automaticamente. Um `.json` é lido via `json_normalize`, um `.txt` é lido via `read_fwf` usando os colspecs gravados em um arquivo sidecar `.layout` gerado no momento da escrita. Isso garante que cada formato pode percorrer o pipeline sem tratamento especial nos módulos downstream.
 
-- **`LocalStorage`** — disco local, padrão da PoC, sem dependência externa
-- **`MinIOStorage`** — object storage S3-compatível, ativado com `USE_MINIO=True`
-  em `config.py` (requer `docker compose up -d`)
-
-A troca de backend é transparente — nenhum outro módulo do pipeline sabe
-qual está em uso. Isso antecipa a migração para ADLS Gen2 em produção
-(ver [MIGRATION_PLAN.md](MIGRATION_PLAN.md)).
-
-`storage.read()` detecta o formato pela extensão do arquivo e usa o parser
-correto: `.csv` via pandas, `.json` via `json_normalize`, `.txt`/`.dat`
-(fixed-width) via `read_fwf` com colspecs lidos de um arquivo sidecar
-`.layout` gerado automaticamente na escrita.
+Essa abstração foi projetada para ser o primeiro passo da migração para ADLS Gen2 — uma nova implementação de `StorageBase` é suficiente para trocar o backend sem tocar em nenhum outro módulo. O plano detalhado está em [MIGRATION_PLAN.md](MIGRATION_PLAN.md).
 
 ---
 
-## 4. Suporte Multi-formato
+## Suporte multi-formato
 
-O projeto não trata apenas CSV — reflete a realidade de um banco, onde
-dados chegam em formatos heterogêneos vindos de sistemas distintos.
+O projeto trata dados bancários como eles realmente chegam — em formatos heterogêneos de sistemas distintos. CSV com semicolon de sistemas Windows, JSON aninhado de APIs, arquivos posicionais de mainframe, SAS7BDAT do sistema de crédito.
 
-| Formato | Geração (PoC) | Leitura (Storage) | Extração de Manifest |
-|---|---|---|---|
-| CSV | `CSVWriter` | `pd.read_csv` | `extractor_csv.py` (inferência por amostragem) |
-| JSON | `JSONWriter` | `pd.json_normalize` | `extractor_json.py` (suporta aninhamento) |
-| Fixed-Width | `FixedWidthWriter` | `pd.read_fwf` + sidecar | `extractor_fixed.py` (leiaute TXT/CSV/XLSX) |
-| SAS7BDAT | — (apenas leitura) | — | `extractor_sas7bdat.py` (metadados internos) |
+Para a geração dos dados fictícios da PoC, o projeto usa o padrão Strategy: cada formato tem um Writer (`CSVWriter`, `JSONWriter`, `FixedWidthWriter`) que recebe um DataFrame em memória e devolve `(filename, content)`. A lógica de domínio que gera os dados nunca sabe em qual formato o resultado será gravado.
 
-A geração de dados fictícios (`src/generators/`) usa o padrão **Strategy**:
-cada formato tem um `Writer` (`src/generators/writers.py`) que recebe um
-DataFrame em memória e devolve `(filename, content)` — a lógica de domínio
-que inventa os dados nunca conhece o formato de saída.
+O `FixedWidthWriter` tem um comportamento específico: ao serializar, gera também um arquivo sidecar `.layout` com os colspecs exatos de cada campo. Esse arquivo é lido pelo `LocalStorage.read()` para garantir que a leitura posterior usa as posições corretas — sem esse sidecar, `read_fwf` precisaria inferir as colunas por análise heurística, o que introduziria erros.
 
 ---
 
-## 5. Validação e Schema Evolution
+## Validação e detecção de schema evolution
 
-`src/validation/validator.py` compara o arquivo recebido contra o contrato
-declarado no manifest. Três cenários:
+O `validator.py` compara o arquivo recebido com o contrato declarado no Manifest e classifica o resultado em três categorias. O cenário feliz retorna `PASS` ou `WARNING` — quando há nulos acima da tolerância ou duplicatas dentro de limites aceitáveis. Um breaking change, como uma coluna obrigatória removida ou um tipo incompatível, retorna `DLQ` e move o arquivo para quarentena. Uma mudança não-quebradora, como uma coluna nova adicionada pela origem, retorna `WARNING` com o tipo de evolução registrado.
 
-| Cenário | O que detecta | Resultado |
-|---|---|---|
-| **Baseline** | Dados conformes ao contrato | `PASS` ou `WARNING` (nulos/duplicatas dentro da tolerância) |
-| **Non-breaking** | Coluna nova adicionada pela origem | `WARNING` — pipeline segue normalmente |
-| **Breaking** | Coluna obrigatória removida ou tipo incompatível | `DLQ` — arquivo isolado em quarentena |
+O Manifest em status `DRAFT` não bloqueia o pipeline, mas gera um aviso em todas as execuções enquanto não for promovido para `VALIDATED`.
 
 ---
 
-## 6. Profiling
+## Profiling
 
-`src/profiler/duckdb_profiler.py` usa DuckDB como engine principal (rápido,
-sem servidor) com fallback automático para Pandas quando o formato não é
-CSV/TSV ou quando o DuckDB não está disponível no ambiente.
+O profiler usa DuckDB como engine principal pela velocidade — sem servidor, sem overhead. Para arquivos em formatos não suportados diretamente pelo DuckDB (JSON, Fixed-Width) ou quando o DuckDB não está disponível no ambiente, o fallback é Pandas com a mesma lógica de extração de estatísticas.
 
-Estatísticas geradas por coluna: contagem de nulos, valores únicos, min/max
-(numéricos), top-N valores mais frequentes (categóricos).
+O profiler gera por coluna: percentual de nulos, contagem de valores únicos, min, max e média para numéricos, e os cinco valores mais frequentes para categóricos. Essas estatísticas são o que a SLM recebe junto com o Manifest.
 
 ---
 
-## 7. Documentação Semântica (SLM)
+## Orquestração
 
-Ver documento dedicado: [SLM.md](SLM.md).
+O projeto oferece dois modos de execução com a mesma lógica de negócio. O `run_pipeline.py` é execução direta, sem dependência de orquestrador — adequado para desenvolvimento e para integração com scripts externos. O `prefect_flow.py` é a mesma pipeline decorada com `@task` e `@flow` do Prefect 2.x, com cada task mapeada para um job Control-M com exit codes padronizados.
 
----
-
-## 8. Orquestração
-
-Dois modos de execução, mesma lógica de negócio:
-
-- **`run_pipeline.py`** — execução direta, sem dependências de orquestrador
-- **`prefect_flow.py`** — mesma pipeline decorada com `@task`/`@flow` do
-  Prefect 2.x, com mapeamento explícito para jobs Control-M
-
-| Prefect Task | Job Control-M | Exit codes |
+| Task Prefect | Job Control-M | Exit codes |
 |---|---|---|
 | `task_extract_manifest` | JOB-DM-000-EXTRACT (opcional) | 0=OK, 1=SKIPPED, 2=ERROR |
 | `task_generate_data` | JOB-DM-001-GENERATE | 0=OK, 2=ERROR |
@@ -158,7 +92,7 @@ Dois modos de execução, mesma lógica de negócio:
 | `task_collect_metrics` | JOB-DM-005-METRICS | 0=OK |
 | `task_report` | JOB-DM-006-REPORT | 0=OK |
 
-Modo compatível com Control-M (sem servidor Prefect):
+O modo `--no-prefect` executa o mesmo fluxo sem registrar nada no servidor Prefect, o que torna a integração com Control-M simples:
 
 ```bash
 python prefect_flow.py --no-prefect --scenario baseline --run-id %%JOBRUNID%%
@@ -166,16 +100,6 @@ python prefect_flow.py --no-prefect --scenario baseline --run-id %%JOBRUNID%%
 
 ---
 
-## 9. Métricas e Quality Score
+## Métricas e quality score
 
-`src/metrics/metrics_collector.py` calcula um score de 0-100 por tabela
-a cada execução:
-
-| Dimensão | Peso | Critério |
-|---|---|---|
-| Status de validação | 40 pts | PASS / WARNING / DLQ |
-| Taxa de nulos | 30 pts | % de nulos em colunas obrigatórias |
-| Taxa de duplicatas | 20 pts | % de chaves duplicadas |
-| Cobertura de schema | 10 pts | % de colunas com `description` preenchida |
-
-Dashboard de consulta: `python show_metrics.py` (ver [README](../README.md)).
+A cada execução, `metrics_collector.py` calcula um score de 0 a 100 por tabela combinando quatro dimensões: o status da validação (40 pontos), a taxa de nulos em colunas obrigatórias (30 pontos), a taxa de duplicatas (20 pontos) e a cobertura de descrições no schema (10 pontos). Esses scores ficam em JSON em `data/metrics/` e são consultáveis via `python show_metrics.py`.

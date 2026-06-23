@@ -1,96 +1,51 @@
 # Changelog — Projeto Nimbus
 
-Histórico de evolução do projeto, da concepção inicial até o estado atual.
-Documento de maturidade — mostra como o projeto cresceu em robustez ao
-longo do tempo.
+Histórico de evolução do projeto, da concepção até o estado atual. O objetivo deste documento é que alguém de fora consiga entender por que o projeto está estruturado como está — não apenas o que existe hoje, mas as decisões que moldaram cada escolha.
 
 ---
 
-## Sprint 1 — Fundação: Pipeline + Manifest Estendido
+## Sprint 1 — Fundação
 
-**Objetivo:** estabelecer a arquitetura medallion local e o manifest como
-contrato de dados extensível.
+O objetivo da primeira sprint era estabelecer a arquitetura medallion local e provar que o Manifest poderia funcionar como um contrato de dados extensível, capaz de carregar tanto a estrutura técnica quanto o contexto de negócio.
 
-**Entregue:**
-- Arquitetura medallion completa (Bronze/Silver/Gold/Quarantine) com
-  abstração de Storage (`LocalStorage`)
-- Modelo de contrato (`DataContract`) com schema base + campos estendidos
-  (`source`, `regulatory`, `steward`, `business_context`, `sample_queries`)
-- Extrator automático de manifest para SAS7BDAT via `pyreadstat`
-  (metadados sem carregar dados em memória)
-- Fluxo HITL: `manifest_status` DRAFT → VALIDATED, com `ManifestValidator`
-  bloqueando promoção até todos os `# TODO` serem resolvidos
-- Integração SLM (Ollama local) para documentação semântica baseada no
-  manifest + estatísticas do profiler
-- Orquestração dupla: `run_pipeline.py` (direto) e `prefect_flow.py`
-  (Prefect 2.x com mapeamento 1:1 para jobs Control-M)
-- 65 testes unitários
+O entregável principal foi a arquitetura completa de Bronze, Silver, Gold e Quarantine com a abstração de Storage — uma interface única que o restante do pipeline usa sem saber se está escrevendo em disco local ou em um bucket S3. Essa decisão foi tomada cedo e com intenção clara: a migração para ADLS Gen2 em produção precisaria ser uma troca de implementação, não uma reescrita de lógica.
 
-**Decisões de arquitetura registradas:**
-- Control-M substituído localmente por Prefect; mapeamento de exit codes
-  0/1/2 preservado para compatibilidade
-- ChromaDB apenas para PoC; produção usa Databricks Vector Search
-- MinIO como espelho local do ADLS Gen2, troca de backend em uma linha
+O modelo de contrato (`DataContract`) ganhou os campos estendidos nesta sprint: `source`, `regulatory`, `steward`, `business_context` e `sample_queries`. Todos opcionais e backward-compatible — Manifests antigos continuam carregando sem erro.
+
+O extrator para SAS7BDAT foi o primeiro a ser implementado, e por um motivo estratégico: é o formato mais rico em metadados internos. O arquivo SAS já carrega nome de variável, label descritivo e formato — o extrator apenas organiza isso em YAML sem precisar carregar os dados em memória.
+
+O fluxo HITL foi estabelecido nesta sprint: todo Manifest nasce como `DRAFT`, e só avança para `VALIDATED` depois de revisão humana via `manifest_validator.py`. O pipeline emite aviso quando consome um contrato não validado, mas não trava.
+
+A orquestração foi implementada em paralelo com duas camadas: `run_pipeline.py` para execução direta e `prefect_flow.py` para integração com Prefect e mapeamento explícito para jobs Control-M com exit codes padronizados (0=OK, 1=WARNING, 2=ERROR/DLQ).
+
+A sprint encerrou com 65 testes unitários passando.
 
 ---
 
-## Sprint 2 — Multi-formato, Encoding e Geração Realista
+## Sprint 2 — Multi-formato e encoding
 
-**Objetivo:** expandir a cobertura de formatos de origem (refletindo a
-heterogeneidade real de um banco) e resolver problemas de encoding que
-travavam o pipeline em arquivos legados.
+A segunda sprint partiu de uma constatação prática: um banco real não trabalha só com CSV. Arquivos chegam de sistemas distintos em formatos distintos, frequentemente com encoding incorreto para o ambiente de processamento.
 
-**Entregue:**
-- `normalizer.py` — pré-processador de encoding (UTF-8, CRLF→LF, BOM,
-  detecção de EBCDIC com aviso)
-- Extratores de manifest para CSV (inferência por amostragem), Fixed-Width
-  (leiaute TXT/CSV/XLSX + modo de inferência experimental) e JSON
-  (normalização de estruturas aninhadas)
-- Refatoração do gerador de dados fictícios para o padrão **Strategy**:
-  `BaseWriter` (ABC) com `CSVWriter`, `JSONWriter`, `FixedWidthWriter` —
-  domínio de negócio desacoplado do formato de saída
-- `Storage.read()` tornado format-aware: detecta extensão e usa o parser
-  correto (CSV, JSON via `json_normalize`, Fixed-Width via `read_fwf` +
-  sidecar de colspecs)
-- Task opcional no Prefect (`JOB-DM-000-EXTRACT`) para geração automática
-  de manifest quando ainda não existe
-- 83 testes unitários adicionais (total: 148)
+O primeiro entregável foi o `normalizer.py` — um pré-processador que garante UTF-8 e LF antes de qualquer coisa tocar o arquivo. Ele trata Latin-1, CP1252, BOM e CRLF automaticamente. Para EBCDIC, a decisão foi consciente: detectar e sinalizar, mas não converter. O middleware de transferência normalmente já faz essa conversão, e implementar um codec EBCDIC completo para casos esporádicos não justificaria o custo de manutenção.
 
-**Bugs corrigidos durante a sprint** (documentados para referência futura):
-- Detecção de line endings retornava `mixed` incorretamente para CRLF puro
-- Dupla normalização de nomes de coluna quebrava separador `__` em JSON
-  aninhado
-- `nunique()` falhava em colunas JSON colapsadas (contendo dicts)
-- DuckDB falhava no sniff automático de CSV gerado no Windows (`\r\n` sem
-  `lineterminator` explícito)
-- Profiler e SLM não executavam para formatos JSON/Fixed-Width — causa raiz:
-  `Storage.read()` sempre assumia CSV
+Os extratores de Manifest para CSV, Fixed-Width e JSON foram implementados seguindo a mesma interface do extrator SAS7BDAT da Sprint 1. O de Fixed-Width tem um detalhe importante: sem um arquivo de leiaute externo, um arquivo posicional é completamente ilegível. Por isso o extrator exige o leiaute (TXT, CSV ou XLSX) e oferece um modo de inferência experimental apenas como último recurso, marcando o resultado como `DRAFT_EXPERIMENTAL` para forçar revisão.
+
+O gerador de dados fictícios foi refatorado nesta sprint. A lógica que inventa os dados e a lógica que decide o formato de saída estavam misturadas — um problema que ficaria pior à medida que novos formatos fossem adicionados. A refatoração introduziu o padrão Strategy: `BaseWriter` como interface, `CSVWriter`, `JSONWriter` e `FixedWidthWriter` como implementações. O gerador de domínio entrega um DataFrame, o writer decide como serializar.
+
+O `FixedWidthWriter` introduziu um mecanismo de sidecar: ao gravar um `.txt`, ele grava também um `.layout` com os colspecs exatos de cada campo. O `LocalStorage.read()` usa esse sidecar para garantir que a leitura posterior use as posições corretas. Sem isso, `read_fwf` tentaria inferir as colunas por heurística e chegaria a resultados errados.
+
+Seis bugs foram corrigidos durante a sprint e documentados com causa raiz: a detecção de line endings que retornava `mixed` incorretamente para CRLF puro, a dupla normalização de nomes de coluna que quebrava o separador `__` em campos JSON aninhados, o `nunique()` que falhava em colunas com dicts colapsados, o DuckDB que falhava no sniff de CSV gerado no Windows sem `lineterminator` explícito, e o Storage que sempre assumia CSV ao ler — o que fazia JSON e Fixed-Width irem para DLQ antes mesmo de chegar ao validator.
+
+A sprint encerrou com 148 testes unitários passando.
 
 ---
 
-## Reestruturação de Documentação (sessão atual)
+## Reestruturação de documentação e rebrand
 
-**Objetivo:** eliminar fragmentação de instruções entre múltiplos arquivos
-`.md`, resolver dependência do `make` (incompatível nativamente com Windows)
-e organizar a documentação por audiência e propósito.
+Com o projeto funcional e estável, a necessidade passou a ser outra: tornar o código acessível para quem não participou do desenvolvimento. Havia instruções espalhadas em seis arquivos `.md` sem hierarquia clara, e o `Makefile` como único ponto de entrada de comandos — inutilizável no Windows sem instalação adicional.
 
-**Entregue:**
-- `tasks.py` — runner cross-platform substituindo a dependência exclusiva
-  do Makefile para usuários Windows
-- Reestruturação de toda a documentação em `docs/`, separada por tema:
-  arquitetura, manifest, SLM, testes, changelog, próximos passos
-- README.md reescrito como porta de entrada: visão geral, estrutura,
-  manual rápido — sem detalhe técnico profundo (delegado aos docs)
-- Rebrand do projeto: **Data Masters → Projeto Nimbus**
+O `tasks.py` foi criado como runner cross-platform: `python tasks.py <comando>` funciona nativamente em Windows, Mac e Linux sem dependência de `make`. Todos os fluxos do Makefile foram replicados e o comportamento padrão dos comandos de pipeline foi atualizado para rodar os três formatos por padrão — CSV, JSON e Fixed-Width — em vez de apenas CSV.
 
----
+A documentação foi reorganizada em uma pasta `docs/` com arquivos temáticos: arquitetura, manifest, SLM, testes, changelog, próximos passos e plano de migração. O README foi reescrito como porta de entrada — apresentação, estrutura e manual rápido, sem detalhe técnico que pertence aos documentos específicos.
 
-## Convenção deste changelog
-
-Cada entrada de sprint documenta: objetivo, o que foi entregue, decisões
-de arquitetura relevantes e bugs corrigidos com causa raiz — não apenas
-lista de arquivos. O objetivo é que alguém lendo de fora consiga entender
-*por que* o projeto está estruturado como está, não só *o que* existe hoje.
-
-Pendências e planejamento futuro não ficam aqui — consulte sempre
-[NEXT_STEPS.md](NEXT_STEPS.md) para o estado mais atual.
+O projeto foi renomeado de Data Masters para **Projeto Nimbus**.
