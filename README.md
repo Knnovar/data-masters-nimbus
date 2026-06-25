@@ -89,10 +89,11 @@ O detalhamento técnico de cada componente está em [docs/ARCHITECTURE.md](docs/
 ## 3. Rodando pela primeira vez
 
 O único pré-requisito obrigatório é Python 3.11 ou superior. O Ollama (para documentação semântica) e o Docker (para o backend MinIO) são opcionais — sem eles o pipeline funciona normalmente, apenas sem essas funcionalidades ativas.
+ 
 Obs.: Instalação do Docker e Ollama deve ser feita através dos sites de cada empresa, segue link de referência:
-
+ 
 Docker: https://docs.docker.com/desktop/setup/install/windows-install
-
+ 
 Ollama: https://ollama.com/download/windows
 
 ```bash
