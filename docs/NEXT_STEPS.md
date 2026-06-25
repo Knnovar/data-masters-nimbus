@@ -1,57 +1,33 @@
 # Próximos Passos — Projeto Nimbus
 
-> Este arquivo é **substituído a cada sessão de desenvolvimento**, não
-> acumula histórico. Para ver o que já foi feito, consulte
-> [CHANGELOG.md](CHANGELOG.md).
+> Este arquivo é substituído a cada sessão de desenvolvimento, não acumula histórico. Para ver o que já foi feito, consulte o [CHANGELOG.md](CHANGELOG.md).
 
-Última atualização: reestruturação de documentação (rebrand para Projeto Nimbus).
+Última atualização: reestruturação de documentação e rebrand para Projeto Nimbus.
 
 ---
 
 ## Pendente da última sessão
 
-Nenhuma pendência aberta — a reestruturação de documentação foi concluída
-nesta sessão: pasta `docs/` criada, `tasks.py` entregue como alternativa
-cross-platform ao Makefile, README reescrito, rebrand aplicado.
+Nada ficou aberto. A reestruturação de documentação foi concluída integralmente: pasta `docs/` criada, `tasks.py` entregue, README reescrito, todos os arquivos `.md` revisados com linguagem natural, rebrand aplicado em código e documentação.
 
 ---
 
-## Planejado — Sprint 3 (candidatos)
+## Planejado
 
-Nenhuma decisão de priorização tomada ainda. Candidatos identificados ao
-longo do desenvolvimento:
+Nenhuma priorização formal foi feita ainda. Os itens abaixo foram identificados ao longo do desenvolvimento como candidatos naturais para a próxima sprint.
 
-### Manifest e Extração
-- CLI unificada com auto-detecção de formato:
-  `python -m src.manifest.extract --file X --format auto`
-- Parâmetro `auto_extract: true` no `prefect.yaml` para acionar
-  `JOB-DM-000-EXTRACT` automaticamente em deployments agendados
+**CLI unificada para extração de Manifest.** Hoje cada extrator tem seu próprio módulo com interface ligeiramente diferente. Uma interface única com detecção automática de formato simplificaria o uso: `python -m src.manifest.extract --file X` detectaria se é SAS7BDAT, CSV, JSON ou Fixed-Width e rotearia para o extrator correto. O parâmetro `--format auto` também seria útil no `tasks.py`.
 
-### Métricas
-- Tabela Gold consolidada de métricas (hoje fica apenas em JSON por run)
-- Série histórica de quality score por tabela ao longo do tempo
+**Série histórica de quality score.** As métricas de qualidade ficam em JSON por execução, o que permite consultar um run específico mas dificulta ver a tendência de uma tabela ao longo do tempo. Uma tabela Gold consolidando o histórico de scores por tabela tornaria o `show_metrics.py` mais útil para acompanhamento contínuo.
 
-### Infraestrutura
-- Validar backend `MinIOStorage` end-to-end quando Docker estiver
-  disponível no ambiente de desenvolvimento
-- Testar `prefect_flow.py` com servidor Prefect real (hoje validado
-  apenas via `--no-prefect`)
+**Parâmetro `auto_extract` no Prefect.** A task `JOB-DM-000-EXTRACT` existe e funciona, mas precisa ser disparada manualmente. Adicionar `auto_extract: true` no `prefect.yaml` permitiria que deployments agendados gerassem o Manifest automaticamente quando um arquivo novo chegar sem contrato associado.
 
-### Migração
-- Nenhuma ação iniciada rumo a Azure/Databricks — projeto segue como PoC
-  local. Plano completo documentado em [MIGRATION_PLAN.md](MIGRATION_PLAN.md)
-  para quando houver aprovação de avançar.
+**Validação do backend MinIO end-to-end.** O `MinIOStorage` está implementado e testado unitariamente, mas nunca foi validado em um fluxo completo com o Docker rodando. Quando houver um ambiente com Docker disponível, esse teste precisa ser feito antes de qualquer apresentação que use o MinIO como argumento.
+
+**Cobertura de testes para integração com Prefect.** Os testes do `prefect_flow.py` usam `--no-prefect`, o que valida a lógica mas não a integração real com o servidor. Um conjunto de testes de integração que suba um servidor Prefect local para o teste completaria a cobertura.
 
 ---
 
-## Como usar este arquivo
+## Como atualizar este arquivo
 
-Ao final de cada sessão de desenvolvimento, este arquivo deve ser
-**reescrito** (não anexado) com:
-
-1. O que ficou pendente desta sessão, se houver
-2. O que está planejado, com prioridade se já definida
-3. Decisões de negócio aguardando resposta, se houver
-
-Decisões já tomadas e resolvidas saem deste arquivo e viram entrada no
-[CHANGELOG.md](CHANGELOG.md).
+No início de cada sessão, leia este arquivo. No final, substitua-o com o que ficou pendente e o que está planejado para a próxima. Não acrescente — substitua. O histórico acumulado fica no CHANGELOG.md.

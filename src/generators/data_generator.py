@@ -429,14 +429,13 @@ _JSON_NEST_CONTRATOS: Dict[str, List[str]] = {
 }
 
 
-def _build_writer(fmt: str, table_name: str, scenario: ScenarioType = "baseline") -> BaseWriter:
+def _build_writer(fmt: str, table_name: str) -> BaseWriter:
     """
     Constrói o writer adequado para a tabela e formato solicitados.
 
     Args:
         fmt: Formato de saida ('csv', 'json', 'fixed').
         table_name: Nome da tabela para selecionar leiaute/nesting correto.
-        scenario: Cenario de dados (afeta layouts para 'breaking').
 
     Returns:
         Instância de BaseWriter configurada.
@@ -461,11 +460,7 @@ def _build_writer(fmt: str, table_name: str, scenario: ScenarioType = "baseline"
         }
         if table_name not in layout_map:
             raise ValueError(f"Sem leiaute posicional definido para: {table_name}")
-        layout = layout_map[table_name]
-        # Em cenário 'breaking', cd_agencia foi removida — ajusta layout
-        if scenario == "breaking" and table_name == "tb_clientes":
-            layout = [col for col in layout if col[0] != "cd_agencia"]
-        return WriterFactory.get("fixed", layout=layout)
+        return WriterFactory.get("fixed", layout=layout_map[table_name])
 
     raise ValueError(
         f"Formato nao suportado: '{fmt}'. Opcoes validas: {', '.join(SUPPORTED_FORMATS)}"
@@ -519,7 +514,7 @@ def generate_all(
         contract_filename = f"{table_name}{suffix}.yaml"
 
         # Seleciona writer — delega serialização para o Strategy correto
-        writer                = _build_writer(fmt, table_name, scenario)
+        writer                = _build_writer(fmt, table_name)
         base_name             = f"{table_name}{suffix}"
         filename, file_content = writer.serialize(df, base_name)
 

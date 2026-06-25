@@ -1,195 +1,150 @@
 # Projeto Nimbus
 
-Pipeline de dados bancaria com arquitetura medallion, contratos de dados
-extensiveis e documentacao semantica gerada por IA local — construido para
-resolver uma dor concreta: a distancia entre o time de negocio e o time
-tecnico na hora de entender o que um dado significa.
+Quando times de dados passam a usar IA para acelerar o desenvolvimento, surge uma tensão nova: o código sai mais rápido, mas o entendimento sobre o dado não acompanha o ritmo. Times técnicos implementam sobre tabelas sem contexto de negócio suficiente. Times de negócio não conseguem validar o que foi entregue porque a documentação, quando existe, descreve colunas mas não explica o que elas representam no mundo real.
+
+O Projeto Nimbus foi construído como resposta direta a essa dor, conectando três peças que no dia a dia ficam separadas: o contrato formal do dado, a inteligência que o documenta e o julgamento humano que valida tudo antes que chegue a produção.
 
 ---
 
-## 1. Por que este projeto existe
+## 1. A ideia central
 
-Com LLMs acelerando a velocidade de escrita de codigo, o gargalo deixou de
-ser "quao rapido eu codifico" e passou a ser **"quao bem eu entendo o dado
-antes de codificar"**. Times tecnicos seguem implementando sobre tabelas
-sem contexto de negocio suficiente, e times de negocio nao conseguem validar
-o que foi construido porque a documentacao, quando existe, fica desatualizada
-ou tecnica demais para quem nao programa.
+O **Manifest** é um arquivo YAML versionado que vai além do schema técnico. Ele descreve de onde o dado vem, qual regulação se aplica, o que cada coluna significa no contexto do negócio bancário e exemplos concretos de como usar a tabela. É o ponto de partida para tudo o que o pipeline faz.
 
-O **Projeto Nimbus** resolve isso com tres pecas que se conectam:
+A **SLM** (Small Language Model) roda localmente via Ollama e, depois que o dado passa pela validação e pelo profiling estatístico, lê o Manifest junto com as estatísticas reais e escreve a documentação técnica da tabela em linguagem de negócio. Ela parte sempre do que já foi declarado no contrato — não especula, não inventa, só expande o que o Data Steward definiu.
 
-**Manifest** — um contrato de dados YAML versionado que descreve nao so o
-schema tecnico (nome, tipo, nulidade), mas o contexto de negocio, tags
-regulatorias (LGPD, SCR), dependencias e exemplos de uso. Ver
-[docs/MANIFEST.md](docs/MANIFEST.md).
-
-**SLM (Small Language Model local)** — um modelo de IA rodando localmente
-via Ollama que le o Manifest e as estatisticas reais dos dados, e gera
-documentacao legivel tanto por analistas de negocio quanto por agentes de
-codificacao como o Devin. A SLM nunca inventa — ela parte do que ja foi
-declarado pelo Data Steward e expande. Ver [docs/SLM.md](docs/SLM.md).
-
-**Data Steward** — o elo humano do processo. Toda documentacao gerada por
-IA nasce com status `DRAFT` e so vira fonte de verdade confiavel (`VALIDATED`)
-depois que uma pessoa revisa. Isso elimina o risco de "alucinacao" virar
-contrato de producao, mantendo a velocidade que a IA proporciona.
+O **Data Steward** é quem fecha o ciclo. Toda documentação gerada por IA nasce como `DRAFT` — visível, mas sinalizada como não confiável. Só depois da revisão humana ela avança para `VALIDATED` e passa a ser consumida com segurança pelo restante do pipeline e por agentes de codificação como o Devin.
 
 ```
-Dado bruto -> Extrator gera Manifest DRAFT -> Data Steward valida -> VALIDATED
-                                                                       |
-                                                    SLM documenta com seguranca
-                                                                       |
-                                                    Devin codifica com contexto real
+Dado bruto -> Extrator gera Manifest DRAFT -> Data Steward revisa -> VALIDATED
+                                                                          |
+                                               SLM documenta usando o contrato validado
+                                                                          |
+                                               Devin codifica com contexto real do negócio
 ```
+
+A documentação detalhada de cada uma dessas peças está em [docs/MANIFEST.md](docs/MANIFEST.md) e [docs/SLM.md](docs/SLM.md).
 
 ---
 
-## 2. Estrutura do Projeto
-
-### 2.1 Arvore de pastas
+## 2. Como o projeto está organizado
 
 ```
 nimbus/
 |-- README.md                 Este arquivo
-|-- tasks.py                  Runner cross-platform (Windows/Mac/Linux)
-|-- Makefile                  Atalhos via `make` (Mac/Linux/WSL)
-|-- config.py                 Configuracao central
-|-- run_pipeline.py           Execucao direta do pipeline
-|-- prefect_flow.py           Orquestracao via Prefect (mapeado para Control-M)
-|-- show_metrics.py           Dashboard de metricas no terminal
+|-- tasks.py                  Runner de comandos para Windows, Mac e Linux
+|-- Makefile                  Alternativa via make (Mac/Linux/WSL)
+|-- config.py                 Configuração central (modelos, storage, flags)
+|-- run_pipeline.py           Execução direta do pipeline
+|-- prefect_flow.py           Orquestração via Prefect, mapeada para Control-M
+|-- show_metrics.py           Dashboard de métricas no terminal
 |-- requirements.txt
 |
-|-- docs/                     Documentacao completa do projeto
-|   |-- ARCHITECTURE.md       Arquitetura tecnica detalhada
-|   |-- MANIFEST.md           Estrutura do contrato + papel do Data Steward
-|   |-- SLM.md                Como a IA se encaixa no fluxo
-|   |-- TESTING.md            Testes, cobertura, criterios de aceite
-|   |-- CHANGELOG.md          Historico de evolucao (Sprints 1 e 2)
-|   |-- NEXT_STEPS.md         Pendencias e planejamento (vivo, atualizado por sessao)
-|   `-- MIGRATION_PLAN.md     Plano de migracao para Azure Databricks
+|-- docs/                     Toda a documentação técnica do projeto
+|   |-- ARCHITECTURE.md       Arquitetura detalhada, camadas e orquestração
+|   |-- MANIFEST.md           Como o contrato funciona e o papel do Data Steward
+|   |-- SLM.md                O que a IA faz, o que ela recebe e o que produz
+|   |-- TESTING.md            Cobertura de testes e critérios de aceite
+|   |-- CHANGELOG.md          Histórico de evolução do projeto
+|   |-- NEXT_STEPS.md         O que ficou pendente e o que está planejado
+|   `-- MIGRATION_PLAN.md     Plano de migração para Azure Databricks
 |
 |-- src/
-|   |-- generators/           Dados ficticios + writers multi-formato (CSV/JSON/Fixed)
-|   |-- ingestion/            Normalizacao de encoding
-|   |-- manifest/             Extratores de manifest + validacao HITL
-|   |-- storage/              Abstracao medallion (Local | MinIO)
-|   |-- validation/           Contratos de dados + schema evolution
-|   |-- profiler/             Profiling estatistico (DuckDB)
-|   |-- slm/                  Integracao com Ollama
-|   `-- metrics/              Coleta de metricas e relatorios
+|   |-- generators/           Geração de dados fictícios em CSV, JSON e Fixed-Width
+|   |-- ingestion/            Normalização de encoding antes da ingestão
+|   |-- manifest/             Extratores automáticos e validação HITL
+|   |-- storage/              Abstração medallion — LocalStorage ou MinIO
+|   |-- validation/           Contratos de dados e detecção de schema evolution
+|   |-- profiler/             Profiling estatístico via DuckDB
+|   |-- slm/                  Integração com Ollama
+|   `-- metrics/              Coleta de métricas e geração de relatórios
 |
-|-- tests/                    148 testes unitarios (unittest nativo)
-`-- data/                     Camadas medallion (landing, processed, contracts...)
+|-- tests/                    148 testes unitários sem dependências externas
+`-- data/                     Camadas medallion em disco (landing, processed, etc.)
 ```
 
-### 2.2 Desenho da Arquitetura
+O fluxo de dados segue a arquitetura medallion: o arquivo bruto entra no Bronze, passa pela validação de contrato, pelo profiling e segue para o Silver. Arquivos com quebras de contrato são isolados em quarentena sem interromper o restante. A SLM documenta o que passou e as métricas consolidam tudo em um relatório por execução.
 
 ```
 Arquivo bruto (CSV / JSON / Fixed-Width / SAS7BDAT)
         |
-        v
   Normaliza encoding (UTF-8, LF)
         |
-        v
-   +---------+
-   | BRONZE  |  dado bruto recebido
-   +---------+
+   [ BRONZE ]  dado bruto recebido
         |
-        v
-   Validacao de contrato ---- breaking change ---> QUARENTENA (DLQ)
-        | ok
-        v
-   Profiling (DuckDB)
+  Validação de contrato ---- breaking change ----> QUARENTENA
         |
-        v
-   +---------+
-   | SILVER  |  dado validado
-   +---------+
+  Profiling (DuckDB)
         |
-        v
-   SLM documenta (le o Manifest + estatisticas)
+   [ SILVER ]  dado validado
         |
-        v
-   Metricas + Relatorio consolidado
+  SLM documenta (Manifest + estatísticas)
+        |
+  Métricas + Relatório consolidado
 ```
 
-Detalhamento completo de cada camada: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+O detalhamento técnico de cada componente está em [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---
 
-## 3. Manual Rapido
+## 3. Rodando pela primeira vez
 
-### Pre-requisitos
-
-```
-Python >= 3.11
-ollama   (opcional — sem ele, a documentacao fica pendente, pipeline nao trava)
-docker   (opcional — apenas para o backend MinIO)
-```
-
-### Instalacao
+O único pré-requisito obrigatório é Python 3.11 ou superior. O Ollama (para documentação semântica) e o Docker (para o backend MinIO) são opcionais — sem eles o pipeline funciona normalmente, apenas sem essas funcionalidades ativas.
+ 
+Obs.: Instalação do Docker e Ollama deve ser feita através dos sites de cada empresa, segue link de referência:
+ 
+Docker: https://docs.docker.com/desktop/setup/install/windows-install
+ 
+Ollama: https://ollama.com/download/windows
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### Executar o pipeline (3 comandos)
+Com isso, três comandos são suficientes para ver o projeto funcionando:
 
 ```bash
-# 1. Roda o cenario padrao
-python tasks.py baseline
-
-# 2. Veja o resultado
-python tasks.py metrics
-
-# 3. (Opcional) Teste o cenario de quebra de contrato
-python tasks.py breaking
+python tasks.py baseline   # gera dados fictícios e roda o pipeline completo
+python tasks.py metrics    # mostra o resultado da execução
+python tasks.py breaking   # simula uma quebra de contrato e testa o isolamento em quarentena
 ```
 
-> **Windows:** use sempre `python tasks.py <comando>` — funciona nativamente,
-> sem precisar instalar `make`. A tabela completa de comandos esta em
-> `python tasks.py help`.
+No Windows, use sempre `python tasks.py` — funciona nativamente sem precisar instalar nada adicional. No Mac e Linux, o `make` também funciona como atalho. Para ver todos os comandos disponíveis, `python tasks.py help`.
 
-### Comandos mais usados
+Para ativar a documentação semântica via SLM, basta ter o Ollama rodando em segundo plano:
+
+```bash
+ollama serve
+ollama pull phi3.5
+```
+
+Sem isso, o enriquecimento fica marcado como `SKIPPED` e o pipeline segue normalmente. Para ativar o backend MinIO em vez de disco local, `docker compose up -d` e mude `USE_MINIO = True` em `config.py`.
+
+É possível utilizar quaisquer modelos de SLM que desejar, apenas realizando o download local via Ollama e alterando o nome no em `config.py`.
+
+A referência completa de comandos está na tabela abaixo:
 
 | Comando | O que faz |
 |---|---|
-| `python tasks.py baseline` | Roda o pipeline com dados de exemplo validos |
-| `python tasks.py breaking` | Simula uma quebra de contrato (testa DLQ) |
-| `python tasks.py metrics` | Mostra o resultado da ultima execucao |
-| `python tasks.py issues` | Lista apenas o que deu problema |
-| `python tasks.py test` | Roda os 148 testes unitarios |
-| `python tasks.py check-manifest --file <path>` | Verifica pendencias de um manifest |
-| `python tasks.py validate-manifest --file <path> --steward "Nome"` | Promove DRAFT -> VALIDATED |
-| `python tasks.py help` | Lista todos os comandos disponiveis |
-
-### Ativar a SLM (opcional)
-
-```bash
-ollama serve              # em um terminal separado
-ollama pull phi3.5        # modelo recomendado para CPU
-```
-
-Sem isso, o pipeline roda normalmente — a documentacao semantica fica
-marcada como `SKIPPED` ate o Ollama estar disponivel.
-
-### Ativar MinIO (opcional, requer Docker)
-
-```bash
-docker compose up -d
-# Em config.py: USE_MINIO = True
-```
+| `python tasks.py run` | Executa todos os cenários nos três formatos de arquivo |
+| `python tasks.py baseline` | Cenário com dados válidos, todos os formatos |
+| `python tasks.py breaking` | Simula quebra de contrato e testa o DLQ |
+| `python tasks.py metrics` | Resumo do último run |
+| `python tasks.py issues` | Mostra apenas registros com problema |
+| `python tasks.py test` | Roda a suite de 148 testes unitários |
+| `python tasks.py check-manifest --file <path>` | Verifica pendências antes de validar |
+| `python tasks.py validate-manifest --file <path> --steward "Nome"` | Promove DRAFT para VALIDATED |
+| `python tasks.py help` | Lista todos os comandos |
 
 ---
 
 ## 4. Onde encontrar mais
 
-| Preciso entender... | Va para |
+| Para entender... | Consulte |
 |---|---|
-| A arquitetura tecnica completa (camadas, storage, orquestracao) | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| Como o Manifest funciona e o papel do Data Steward | [docs/MANIFEST.md](docs/MANIFEST.md) |
-| Como a IA (SLM) se encaixa e por que ela nao "inventa" | [docs/SLM.md](docs/SLM.md) |
-| Quais testes existem e o que eles garantem | [docs/TESTING.md](docs/TESTING.md) |
-| A evolucao do projeto ate aqui | [docs/CHANGELOG.md](docs/CHANGELOG.md) |
-| O que esta pendente e planejado agora | [docs/NEXT_STEPS.md](docs/NEXT_STEPS.md) |
-| O plano de migracao para Azure Databricks | [docs/MIGRATION_PLAN.md](docs/MIGRATION_PLAN.md) |
+| A arquitetura técnica completa | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| O Manifest e o papel do Data Steward | [docs/MANIFEST.md](docs/MANIFEST.md) |
+| Como a SLM funciona e por que não inventa | [docs/SLM.md](docs/SLM.md) |
+| Os testes e o que eles garantem | [docs/TESTING.md](docs/TESTING.md) |
+| A evolução do projeto ao longo das sprints | [docs/CHANGELOG.md](docs/CHANGELOG.md) |
+| O que está pendente e planejado | [docs/NEXT_STEPS.md](docs/NEXT_STEPS.md) |
+| O plano de migração para Azure Databricks | [docs/MIGRATION_PLAN.md](docs/MIGRATION_PLAN.md) |
