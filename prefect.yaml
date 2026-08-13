@@ -20,7 +20,7 @@ prefect-version: "2.19.0"       # versão mínima — atualize se usar versão m
 # Em produção, troque por pull do tipo "git_clone" apontando para o repositório.
 pull:
   - prefect.deployments.steps.set_working_directory:
-      directory: "C:\\Users\\Renan\\OneDrive\\Documents\\Programacao\\data-masters\\data-masters-nimbus"            # diretório onde o prefect.yaml está
+      directory: "."            # diretório onde o prefect.yaml está
 
 # ── Deployments ───────────────────────────────────────────────────────────
 # Cada deployment representa um modo de execução do mesmo flow.

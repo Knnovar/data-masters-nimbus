@@ -1,338 +1,150 @@
-# Pipeline Data Masters — PoC Local
+# Projeto Nimbus
 
-Pipeline completa de dados com arquitetura medallion (Bronze → Silver → Gold),
-contratos evolutivos, profiling estatístico e documentação semântica via SLM local.
+Quando times de dados passam a usar IA para acelerar o desenvolvimento, surge uma tensão nova: o código sai mais rápido, mas o entendimento sobre o dado não acompanha o ritmo. Times técnicos implementam sobre tabelas sem contexto de negócio suficiente. Times de negócio não conseguem validar o que foi entregue porque a documentação, quando existe, descreve colunas mas não explica o que elas representam no mundo real.
 
----
-
-## Stack
-
-| Componente | Ferramenta | Papel |
-|---|---|---|
-| Storage abstrato | `src/storage/storage.py` | Medallion — LocalStorage ou MinIO |
-| Validação / DLQ | Python + Pydantic | Contratos YAML, schema evolution, quarentena |
-| Profiler | DuckDB (preferencial) / Pandas (fallback) | Estatísticas por coluna |
-| SLM | Ollama (local) | Documentação semântica como Data Steward |
-| Orquestração | Prefect 2.x (ou execução direta) | DAG com 6 jobs mapeados ao Control-M |
-| Object Storage | MinIO via Docker (opcional) | Simula ADLS Gen2 / S3 do banco |
+O Projeto Nimbus foi construído como resposta direta a essa dor, conectando três peças que no dia a dia ficam separadas: o contrato formal do dado, a inteligência que o documenta e o julgamento humano que valida tudo antes que chegue a produção.
 
 ---
 
-## Pré-requisitos
+## 1. A ideia central
+
+O **Manifest** é um arquivo YAML versionado que vai além do schema técnico. Ele descreve de onde o dado vem, qual regulação se aplica, o que cada coluna significa no contexto do negócio bancário e exemplos concretos de como usar a tabela. É o ponto de partida para tudo o que o pipeline faz.
+
+A **SLM** (Small Language Model) roda localmente via Ollama e, depois que o dado passa pela validação e pelo profiling estatístico, lê o Manifest junto com as estatísticas reais e escreve a documentação técnica da tabela em linguagem de negócio. Ela parte sempre do que já foi declarado no contrato — não especula, não inventa, só expande o que o Data Steward definiu.
+
+O **Data Steward** é quem fecha o ciclo. Toda documentação gerada por IA nasce como `DRAFT` — visível, mas sinalizada como não confiável. Só depois da revisão humana ela avança para `VALIDATED` e passa a ser consumida com segurança pelo restante do pipeline e por agentes de codificação como o Devin.
 
 ```
-Python >= 3.11
-ollama   (opcional — sem ele, SLM é ignorado com fallback)
-docker   (opcional — apenas para MinIO)
+Dado bruto -> Extrator gera Manifest DRAFT -> Data Steward revisa -> VALIDATED
+                                                                          |
+                                               SLM documenta usando o contrato validado
+                                                                          |
+                                               Devin codifica com contexto real do negócio
 ```
+
+A documentação detalhada de cada uma dessas peças está em [docs/MANIFEST.md](docs/MANIFEST.md) e [docs/SLM.md](docs/SLM.md).
 
 ---
 
-## Instalação
+## 2. Como o projeto está organizado
+
+```
+nimbus/
+|-- README.md                 Este arquivo
+|-- tasks.py                  Runner de comandos para Windows, Mac e Linux
+|-- Makefile                  Alternativa via make (Mac/Linux/WSL)
+|-- config.py                 Configuração central (modelos, storage, flags)
+|-- run_pipeline.py           Execução direta do pipeline
+|-- prefect_flow.py           Orquestração via Prefect, mapeada para Control-M
+|-- show_metrics.py           Dashboard de métricas no terminal
+|-- requirements.txt
+|
+|-- docs/                     Toda a documentação técnica do projeto
+|   |-- ARCHITECTURE.md       Arquitetura detalhada, camadas e orquestração
+|   |-- MANIFEST.md           Como o contrato funciona e o papel do Data Steward
+|   |-- SLM.md                O que a IA faz, o que ela recebe e o que produz
+|   |-- TESTING.md            Cobertura de testes e critérios de aceite
+|   |-- CHANGELOG.md          Histórico de evolução do projeto
+|   |-- NEXT_STEPS.md         O que ficou pendente e o que está planejado
+|   `-- MIGRATION_PLAN.md     Plano de migração para Azure Databricks
+|
+|-- src/
+|   |-- generators/           Geração de dados fictícios em CSV, JSON e Fixed-Width
+|   |-- ingestion/            Normalização de encoding antes da ingestão
+|   |-- manifest/             Extratores automáticos e validação HITL
+|   |-- storage/              Abstração medallion — LocalStorage ou MinIO
+|   |-- validation/           Contratos de dados e detecção de schema evolution
+|   |-- profiler/             Profiling estatístico via DuckDB
+|   |-- slm/                  Integração com Ollama
+|   `-- metrics/              Coleta de métricas e geração de relatórios
+|
+|-- tests/                    148 testes unitários sem dependências externas
+`-- data/                     Camadas medallion em disco (landing, processed, etc.)
+```
+
+O fluxo de dados segue a arquitetura medallion: o arquivo bruto entra no Bronze, passa pela validação de contrato, pelo profiling e segue para o Silver. Arquivos com quebras de contrato são isolados em quarentena sem interromper o restante. A SLM documenta o que passou e as métricas consolidam tudo em um relatório por execução.
+
+```
+Arquivo bruto (CSV / JSON / Fixed-Width / SAS7BDAT)
+        |
+  Normaliza encoding (UTF-8, LF)
+        |
+   [ BRONZE ]  dado bruto recebido
+        |
+  Validação de contrato ---- breaking change ----> QUARENTENA
+        |
+  Profiling (DuckDB)
+        |
+   [ SILVER ]  dado validado
+        |
+  SLM documenta (Manifest + estatísticas)
+        |
+  Métricas + Relatório consolidado
+```
+
+O detalhamento técnico de cada componente está em [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+---
+
+## 3. Rodando pela primeira vez
+
+O único pré-requisito obrigatório é Python 3.11 ou superior. O Ollama (para documentação semântica) e o Docker (para o backend MinIO) são opcionais — sem eles o pipeline funciona normalmente, apenas sem essas funcionalidades ativas.
+ 
+Obs.: Instalação do Docker e Ollama deve ser feita através dos sites de cada empresa, segue link de referência:
+ 
+Docker: https://docs.docker.com/desktop/setup/install/windows-install
+ 
+Ollama: https://ollama.com/download/windows
 
 ```bash
-# 1. Entre na pasta do projeto
-cd data-masters
-
-# 2. Instale as dependências Python
 pip install -r requirements.txt
-
-# 3. (Opcional) Instale e inicie o Ollama
-#    Download: https://ollama.com/download
-ollama serve           # em um terminal separado
-ollama pull phi3.5     # modelo recomendado para CPU
 ```
 
----
-
-## Configuração — config.py
-
-| Parâmetro | Padrão | Descrição |
-|---|---|---|
-| `OLLAMA_MODEL` | `qwen2.5-coder:7b` | Troque por `phi3.5` para melhor documentação |
-| `SKIP_SLM` | `False` | `True` desativa o SLM sem quebrar o pipeline |
-| `USE_MINIO` | `False` | `True` ativa o backend MinIO (requer Docker) |
-| `NULL_TOLERANCE_PCT` | `30.0` | % de nulos acima do qual o SLM reporta anomalia |
-
----
-
-## Execução direta (sem Prefect)
+Com isso, três comandos são suficientes para ver o projeto funcionando:
 
 ```bash
-# Todos os cenários em sequência
-python run_pipeline.py
-
-# Cenário individual
-python run_pipeline.py --scenario baseline
-python run_pipeline.py --scenario non_breaking
-python run_pipeline.py --scenario breaking
+python tasks.py baseline   # gera dados fictícios e roda o pipeline completo
+python tasks.py metrics    # mostra o resultado da execução
+python tasks.py breaking   # simula uma quebra de contrato e testa o isolamento em quarentena
 ```
+
+No Windows, use sempre `python tasks.py` — funciona nativamente sem precisar instalar nada adicional. No Mac e Linux, o `make` também funciona como atalho. Para ver todos os comandos disponíveis, `python tasks.py help`.
+
+Para ativar a documentação semântica via SLM, basta ter o Ollama rodando em segundo plano:
+
+```bash
+ollama serve
+ollama pull phi3.5
+```
+
+Sem isso, o enriquecimento fica marcado como `SKIPPED` e o pipeline segue normalmente. Para ativar o backend MinIO em vez de disco local, `docker compose up -d` e mude `USE_MINIO = True` em `config.py`.
+
+É possível utilizar quaisquer modelos de SLM que desejar, apenas realizando o download local via Ollama e alterando o nome no em `config.py`.
+
+A referência completa de comandos está na tabela abaixo:
+
+| Comando | O que faz |
+|---|---|
+| `python tasks.py run` | Executa todos os cenários nos três formatos de arquivo |
+| `python tasks.py baseline` | Cenário com dados válidos, todos os formatos |
+| `python tasks.py breaking` | Simula quebra de contrato e testa o DLQ |
+| `python tasks.py metrics` | Resumo do último run |
+| `python tasks.py issues` | Mostra apenas registros com problema |
+| `python tasks.py test` | Roda a suite de 148 testes unitários |
+| `python tasks.py check-manifest --file <path>` | Verifica pendências antes de validar |
+| `python tasks.py validate-manifest --file <path> --steward "Nome"` | Promove DRAFT para VALIDATED |
+| `python tasks.py help` | Lista todos os comandos |
 
 ---
 
-## Execução com Prefect
+## 4. Onde encontrar mais
 
-O Prefect oferece UI local, histórico de runs e observabilidade por task.
-Requer três terminais abertos simultaneamente.
-
-### Passo 1 — Variável de ambiente (uma vez por sessão)
-
-```bash
-set PREFECT_API_URL=http://127.0.0.1:4200/api
-```
-
-Para fixar permanentemente (recomendado):
-
-```bash
-setx PREFECT_API_URL "http://127.0.0.1:4200/api"
-# Feche e reabra o terminal após o setx
-```
-
-### Passo 2 — Terminal 1: servidor Prefect
-
-```bash
-prefect server start
-# Aguarde aparecer: Prefect UI available at http://127.0.0.1:4200
-```
-
-### Passo 3 — Terminal 2: setup (apenas na primeira vez)
-
-```bash
-set PREFECT_API_URL=http://127.0.0.1:4200/api
-python setup_prefect.py
-```
-
-Isso cria o work pool e registra todos os deployments. Saída esperada:
-
-```
-── 1. Criando work pool local ──
-── 2. Registrando deployments ──
-Successfully created/updated all deployments!
-  baseline-manual        deployed
-  non-breaking-watch     deployed
-  breaking-watch         deployed
-  scheduled-daily        deployed
-  all-manual             deployed
-```
-
-### Passo 4 — Terminal 3: worker
-
-```bash
-set PREFECT_API_URL=http://127.0.0.1:4200/api
-prefect worker start --pool data-masters-local
-```
-
-### Passo 5 — Disparar runs (Terminal 2 ou novo terminal)
-
-```bash
-set PREFECT_API_URL=http://127.0.0.1:4200/api
-
-# Cenário baseline
-prefect deployment run 'data-masters-pipeline/baseline-manual'
-
-# Cenário non-breaking (schema evolution)
-prefect deployment run 'data-masters-pipeline/non-breaking-watch'
-
-# Cenário breaking (DLQ / quarentena)
-prefect deployment run 'data-masters-pipeline/breaking-watch'
-```
-
-Acompanhe em tempo real: **http://127.0.0.1:4200**
-
----
-
-## Ativar MinIO (quando Docker estiver disponível)
-
-```bash
-# 1. Suba o MinIO
-docker compose up -d
-# Console: http://localhost:9001  (usuário: minioadmin / senha: minioadmin)
-
-# 2. Instale o client Python
-pip install minio
-
-# 3. Ative em config.py
-USE_MINIO = True
-
-# 4. Execute normalmente — nenhuma outra mudança necessária
-python run_pipeline.py --scenario baseline
-```
-
-Para desativar, volte `USE_MINIO = False`. O pipeline usa disco local imediatamente.
-
----
-
-## Cenários de teste
-
-| Cenário | O que simula | Resultado esperado |
-|---|---|---|
-| `baseline` | Fluxo feliz — dados válidos com anomalias controladas | tb_clientes PASS, tb_transacoes WARNING (duplicatas), tb_contratos PASS |
-| `non_breaking` | Nova coluna anulável adicionada pelo sistema legado | WARNING — pipeline avança, coluna registrada no log |
-| `breaking` | Coluna obrigatória removida da exportação SAS | tb_clientes DLQ — arquivo isolado em `data/quarantine/` |
-
----
-
-## Arquitetura medallion — fluxo de dados
-
-```
-[data_generator]  →  BRONZE (data/landing/)
-                          │
-                  [validator] ──── breaking? ──→  QUARANTINE (data/quarantine/)
-                          │
-                  [profiler]  →  BRONZE promovido para SILVER (data/processed/)
-                          │
-                  [SLM/Ollama] →  REPORTS (data/reports/*_documentation.md)
-                          │
-                  [metrics]   →  METRICS (data/metrics/*.json)
-                          │
-                  [report]    →  REPORTS/pipeline_report.md
-```
-
----
-
-## Saídas geradas
-
-```
-data/
-├── landing/          Bronze — CSVs aguardando processamento
-├── processed/        Silver — arquivos validados e promovidos
-├── gold/             Gold   — reservado para métricas agregadas (futuro)
-├── quarantine/       DLQ    — arquivos com breaking change isolados
-├── contracts/        Manifestos YAML por tabela e por cenário
-├── metrics/          JSON de métricas por tabela por run
-└── reports/
-    ├── pipeline_report.md              Relatório consolidado da run
-    ├── tb_clientes_documentation.md    Documentação gerada pelo SLM
-    ├── tb_transacoes_documentation.md
-    └── tb_contratos_credito_documentation.md
-```
-
----
-
-## Mapeamento Control-M
-
-Cada task do Prefect corresponde a um job no Control-M:
-
-| Prefect Task | Job Control-M | Exit codes |
-|---|---|---|
-| `task_generate_data` | JOB-DM-001-GENERATE | 0=OK, 2=ERROR |
-| `task_validate` | JOB-DM-002-VALIDATE | 0=PASS, 1=WARNING, 2=DLQ |
-| `task_profile` | JOB-DM-003-PROFILE | 0=OK, 2=ERROR |
-| `task_enrich_slm` | JOB-DM-004-ENRICH | 0=OK, 1=SKIPPED, 2=ERROR |
-| `task_collect_metrics` | JOB-DM-005-METRICS | 0=OK |
-| `task_report` | JOB-DM-006-REPORT | 0=OK |
-
-Para rodar sem Prefect (modo compatível com Control-M):
-
-```bash
-python prefect_flow.py --no-prefect --scenario baseline --run-id %%JOBRUNID%%
-```
-
----
-
-## Plano de migração
-
-Consulte `MIGRATION_PLAN.md` para o plano completo de migração para
-Azure Databricks, incluindo mapeamento de camadas para ADLS Gen2,
-opções de SLM em produção e integração com Control-M via BMC Helix.
-
----
-
-## O Manifesto de Dados
-
-O manifesto YAML é o componente central do projeto — é ele que define o contrato
-entre o sistema de origem e o pipeline, e é o principal insumo para a SLM gerar
-documentação e para o Devin consultar o contexto das tabelas.
-
-### Estrutura atual
-
-```yaml
-table       : tb_clientes
-description : Cadastro mestre de clientes pessoa física e jurídica.
-owner       : squad-dados-cadastrais
-version     : 1.0.0
-tolerance   :
-  max_null_pct    : 25
-  allow_duplicates: false
-schema      :
-  - name       : cd_cliente
-    type       : string
-    nullable   : false
-    primary_key: true
-  - name       : vl_renda_mensal
-    type       : float
-    nullable   : true
-```
-
-### Evolução planejada — campos a adicionar
-
-```yaml
-# Contexto de origem
-source_format    : csv              # csv | fixed_width | sas7bdat | json | xlsx | xml
-source_encoding  : latin-1          # utf-8 | latin-1 | ebcdic | cp1252
-source_system    : CORE_BANCARIO    # nome do sistema de origem
-source_os        : windows          # windows | unix | mainframe
-update_frequency : daily            # daily | weekly | monthly | event_driven
-
-# Contexto de negócio — insumo direto para SLM e Devin
-business_context : >
-  Tabela mestre de clientes utilizada por todos os produtos de crédito.
-  Segmentação baseada em renda e relacionamento determina o produto ofertado.
-regulatory_tags  :
-  - LGPD
-  - SCR
-  - BACEN_4658
-
-# Governança
-steward          :
-  name : João Silva
-  email: joao.silva@banco.com.br
-dependencies     :
-  - tb_agencias
-  - tb_segmentos
-
-# Sugestões de uso — consumidas pelo Devin via RAG
-sample_queries   :
-  - "SELECT cd_segmento, COUNT(*) FROM tb_clientes GROUP BY cd_segmento"
-  - "SELECT * FROM tb_clientes WHERE fl_ativo = true AND vl_renda_mensal > 10000"
-
-# Layout posicional — apenas para source_format: fixed_width
-layout           :
-  - field: cd_cliente    start: 1   end: 12  dtype: string
-  - field: nr_cpf_cnpj   start: 13  end: 23  dtype: string
-  - field: nm_cliente    start: 24  end: 73  dtype: string
-```
-
-### Estratégias de geração automática
-
-**SAS7BDAT → manifesto automático**
-Arquivos `.sas7bdat` carregam metadados internos (nome de variável, label, formato).
-Um módulo `manifest_extractor.py` lê esses metadados e gera o rascunho YAML
-automaticamente — sem preenchimento manual.
-
-**CSV / JSON → inferência por amostragem**
-Para formatos sem metadados internos, o pipeline lê as primeiras N linhas,
-infere tipos, conta nulos e detecta domínios categóricos, gerando um rascunho
-que o Data Steward revisa e valida.
-
-**SLM gerando o manifesto (inversão do fluxo)**
-Em vez de usar o manifesto como insumo para a SLM, a SLM recebe as estatísticas
-do profiler e gera o rascunho do manifesto — incluindo `business_context` e
-`regulatory_tags`. O Data Steward valida a documentação e o contrato juntos.
-
-### Fluxo HITL do manifesto
-
-```
-Extrator automático / SLM
-        │
-        ▼
-  [MANIFEST_STATUS: DRAFT]   ← nunca consumido pelo Devin
-        │
-  Revisão do Data Steward
-        │
-        ▼
-  [MANIFEST_STATUS: VALIDATED] ← liberado para consumo
-```
-
-O mesmo mecanismo de governança da documentação se aplica ao manifesto.
-O Devin só consome manifestos com status `VALIDATED`.
+| Para entender... | Consulte |
+|---|---|
+| A arquitetura técnica completa | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| O Manifest e o papel do Data Steward | [docs/MANIFEST.md](docs/MANIFEST.md) |
+| Como a SLM funciona e por que não inventa | [docs/SLM.md](docs/SLM.md) |
+| Os testes e o que eles garantem | [docs/TESTING.md](docs/TESTING.md) |
+| A evolução do projeto ao longo das sprints | [docs/CHANGELOG.md](docs/CHANGELOG.md) |
+| O que está pendente e planejado | [docs/NEXT_STEPS.md](docs/NEXT_STEPS.md) |
+| O plano de migração para Azure Databricks | [docs/MIGRATION_PLAN.md](docs/MIGRATION_PLAN.md) |

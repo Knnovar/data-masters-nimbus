@@ -32,7 +32,7 @@ def run(cmd: str, check: bool = True) -> subprocess.CompletedProcess:
 
 def main():
     print("=" * 60)
-    print("  Setup Prefect — Data Masters PoC")
+    print("  Setup Prefect — Projeto Nimbus PoC")
     print("=" * 60)
 
     # 1. Work pool
