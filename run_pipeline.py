@@ -71,7 +71,7 @@ def run_scenario(scenario: str, run_id: str, fmt: str = "csv") -> list[dict]:
             slm_result = enrich(storage, contract_filename, profiler_payload)
 
             # Promoção Bronze → Silver
-            storage.move(filename, "bronze", "silver")
+            parquet_filename = storage.promote_to_parquet(filename, "bronze", "silver")
 
         # Gold: métricas agregadas
         m = collect(run_id, val_result, profiler_payload, slm_result, METRICS_DIR)

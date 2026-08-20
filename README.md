@@ -1,143 +1,186 @@
 # Projeto Nimbus
 
-Quando times de dados passam a usar IA para acelerar o desenvolvimento, surge uma tensão nova: o código sai mais rápido, mas o entendimento sobre o dado não acompanha o ritmo. Times técnicos implementam sobre tabelas sem contexto de negócio suficiente. Times de negócio não conseguem validar o que foi entregue porque a documentação, quando existe, descreve colunas mas não explica o que elas representam no mundo real.
+Pipeline de dados bancária com arquitetura medallion, contratos de dados extensíveis e documentação semântica gerada por IA local. Construído para resolver uma dor concreta: a distância entre o time de negócio e o time técnico na hora de entender o que um dado significa.
 
-O Projeto Nimbus foi construído como resposta direta a essa dor, conectando três peças que no dia a dia ficam separadas: o contrato formal do dado, a inteligência que o documenta e o julgamento humano que valida tudo antes que chegue a produção.
+O projeto roda com um único comando e inclui tudo que precisa — pipeline, modelo de IA, storage S3-compatível e orquestração.
 
 ---
 
-## 1. A ideia central
+## 1. Por que este projeto existe
 
-O **Manifest** é um arquivo YAML versionado que vai além do schema técnico. Ele descreve de onde o dado vem, qual regulação se aplica, o que cada coluna significa no contexto do negócio bancário e exemplos concretos de como usar a tabela. É o ponto de partida para tudo o que o pipeline faz.
+Com LLMs acelerando a velocidade de escrita de código, o gargalo deixou de ser "quão rápido eu codifico" e passou a ser "quão bem eu entendo o dado antes de codificar". Times técnicos seguem implementando sobre tabelas sem contexto de negócio suficiente, e times de negócio não conseguem validar o que foi construído porque a documentação, quando existe, descreve colunas mas não explica o que elas representam no mundo real.
 
-A **SLM** (Small Language Model) roda localmente via Ollama e, depois que o dado passa pela validação e pelo profiling estatístico, lê o Manifest junto com as estatísticas reais e escreve a documentação técnica da tabela em linguagem de negócio. Ela parte sempre do que já foi declarado no contrato — não especula, não inventa, só expande o que o Data Steward definiu.
+O Nimbus resolve isso com três peças conectadas:
 
-O **Data Steward** é quem fecha o ciclo. Toda documentação gerada por IA nasce como `DRAFT` — visível, mas sinalizada como não confiável. Só depois da revisão humana ela avança para `VALIDATED` e passa a ser consumida com segurança pelo restante do pipeline e por agentes de codificação como o Devin.
+**Manifest** — um contrato YAML versionado que vai além do schema técnico. Descreve de onde o dado vem, qual regulação se aplica, o que cada coluna significa no negócio e exemplos concretos de uso. É o ponto de partida para tudo que o pipeline faz. Ver [docs/MANIFEST.md](docs/MANIFEST.md).
+
+**SLM** — um modelo de linguagem rodando localmente via Ollama que lê o Manifest e as estatísticas reais dos dados e escreve a documentação técnica da tabela em linguagem de negócio. Ela parte sempre do que o Data Steward declarou — não especula, não inventa. Ver [docs/SLM.md](docs/SLM.md).
+
+**Data Steward** — o elo humano do processo. Toda documentação gerada por IA nasce como `DRAFT`. Só depois de revisão humana ela avança para `VALIDATED` e passa a ser consumida com segurança pelo restante do pipeline e por agentes de codificação como o Devin.
 
 ```
 Dado bruto -> Extrator gera Manifest DRAFT -> Data Steward revisa -> VALIDATED
                                                                           |
-                                               SLM documenta usando o contrato validado
+                                               SLM documenta com base no contrato validado
                                                                           |
-                                               Devin codifica com contexto real do negócio
+                                               Pipeline promove para Silver em Parquet
+                                                                          |
+                                               Databricks consome via DBFS ou SQL Warehouse
 ```
-
-A documentação detalhada de cada uma dessas peças está em [docs/MANIFEST.md](docs/MANIFEST.md) e [docs/SLM.md](docs/SLM.md).
 
 ---
 
-## 2. Como o projeto está organizado
+## 2. Estrutura do projeto
 
 ```
 nimbus/
 |-- README.md                 Este arquivo
-|-- tasks.py                  Runner de comandos para Windows, Mac e Linux
+|-- tasks.py                  Runner de comandos (Windows, Mac e Linux)
 |-- Makefile                  Alternativa via make (Mac/Linux/WSL)
-|-- config.py                 Configuração central (modelos, storage, flags)
+|-- Dockerfile                Imagem Docker do pipeline
+|-- docker-compose.yml        Orquestra pipeline + Ollama + MinIO
+|-- .env.example              Template de configuração (copie para .env)
+|-- config.py                 Configuração central (lê variáveis de ambiente)
 |-- run_pipeline.py           Execução direta do pipeline
-|-- prefect_flow.py           Orquestração via Prefect, mapeada para Control-M
+|-- prefect_flow.py           Orquestração via Prefect mapeada para Control-M
 |-- show_metrics.py           Dashboard de métricas no terminal
 |-- requirements.txt
 |
-|-- docs/                     Toda a documentação técnica do projeto
-|   |-- ARCHITECTURE.md       Arquitetura detalhada, camadas e orquestração
-|   |-- MANIFEST.md           Como o contrato funciona e o papel do Data Steward
-|   |-- SLM.md                O que a IA faz, o que ela recebe e o que produz
+|-- docs/                     Documentação completa
+|   |-- ARCHITECTURE.md       Arquitetura técnica, camadas e decisões de design
+|   |-- MANIFEST.md           Estrutura do contrato e papel do Data Steward
+|   |-- SLM.md                Como o modelo de IA se encaixa no fluxo
 |   |-- TESTING.md            Cobertura de testes e critérios de aceite
 |   |-- CHANGELOG.md          Histórico de evolução do projeto
-|   |-- NEXT_STEPS.md         O que ficou pendente e o que está planejado
+|   |-- NEXT_STEPS.md         Pendências e planejamento
 |   `-- MIGRATION_PLAN.md     Plano de migração para Azure Databricks
 |
+|-- scripts/
+|   `-- entrypoint.sh         Orquestra a inicialização do container
+|
 |-- src/
-|   |-- generators/           Geração de dados fictícios em CSV, JSON e Fixed-Width
-|   |-- ingestion/            Normalização de encoding antes da ingestão
+|   |-- generators/           Geração de dados fictícios (CSV, JSON, Fixed-Width)
+|   |-- ingestion/            Normalização de encoding
 |   |-- manifest/             Extratores automáticos e validação HITL
-|   |-- storage/              Abstração medallion — LocalStorage ou MinIO
-|   |-- validation/           Contratos de dados e detecção de schema evolution
+|   |-- storage/              Abstração medallion com suporte a Parquet
+|   |-- validation/           Contratos de dados e schema evolution
 |   |-- profiler/             Profiling estatístico via DuckDB
 |   |-- slm/                  Integração com Ollama
-|   `-- metrics/              Coleta de métricas e geração de relatórios
+|   |-- metrics/              Coleta de métricas e relatórios
+|   `-- connectors/           Integração com sistemas externos (Databricks)
 |
-|-- tests/                    148 testes unitários sem dependências externas
-`-- data/                     Camadas medallion em disco (landing, processed, etc.)
+|-- tests/                    175 testes unitários
+`-- data/                     Camadas medallion (persistem no host via Docker volume)
 ```
 
-O fluxo de dados segue a arquitetura medallion: o arquivo bruto entra no Bronze, passa pela validação de contrato, pelo profiling e segue para o Silver. Arquivos com quebras de contrato são isolados em quarentena sem interromper o restante. A SLM documenta o que passou e as métricas consolidam tudo em um relatório por execução.
+O fluxo de dados segue a arquitetura medallion: o arquivo bruto entra no Bronze no formato original, passa pela validação de contrato e pelo profiling DuckDB, e é promovido para o Silver já em formato Parquet com compressão Snappy. O Bronze preserva o original em `_archive/` para rastreabilidade. Arquivos com quebra de contrato são isolados na quarentena sem interromper o restante.
 
 ```
 Arquivo bruto (CSV / JSON / Fixed-Width / SAS7BDAT)
         |
   Normaliza encoding (UTF-8, LF)
         |
-   [ BRONZE ]  dado bruto recebido
+   [ BRONZE ]  formato original preservado
         |
-  Validação de contrato ---- breaking change ----> QUARENTENA
+  Validação de contrato ---- breaking change ----> [ QUARENTENA ]
         |
   Profiling (DuckDB)
         |
-   [ SILVER ]  dado validado
+   [ SILVER ]  Parquet com compressão Snappy
         |
-  SLM documenta (Manifest + estatísticas)
+  SLM documenta (Manifest + estatísticas)       [ BRONZE/_archive/ ]  original arquivado
         |
   Métricas + Relatório consolidado
+        |
+  Upload para Databricks DBFS (opcional)
 ```
 
-O detalhamento técnico de cada componente está em [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Detalhamento técnico em [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---
 
-## 3. Rodando pela primeira vez
+## 3. Início rápido
 
-O único pré-requisito obrigatório é Python 3.11 ou superior. O Ollama (para documentação semântica) e o Docker (para o backend MinIO) são opcionais — sem eles o pipeline funciona normalmente, apenas sem essas funcionalidades ativas.
- 
-Obs.: Instalação do Docker e Ollama deve ser feita através dos sites de cada empresa, segue link de referência:
- 
-Docker: https://docs.docker.com/desktop/setup/install/windows-install
- 
-Ollama: https://ollama.com/download/windows
+### Com Docker (recomendado — one-click)
+
+Requer Docker Desktop instalado. Tudo mais é automático.
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+Na primeira execução o Docker faz o build da imagem, o MinIO e o Ollama sobem, o modelo configurado em `.env` é baixado automaticamente, o Prefect inicia com os deployments registrados e o pipeline roda. Nas execuções seguintes, `docker compose up` é suficiente.
+
+Após subir, a Prefect UI fica disponível em `http://localhost:4200` e o console do MinIO em `http://localhost:9001` (usuário e senha: `minioadmin`).
+
+Para rodar comandos enquanto o container está em execução:
+
+```bash
+docker compose exec nimbus python tasks.py metrics
+docker compose exec nimbus python tasks.py baseline
+docker compose exec nimbus python tasks.py upload-silver
+```
+
+### Sem Docker (ambiente local)
 
 ```bash
 pip install -r requirements.txt
+python tasks.py baseline
+python tasks.py metrics
 ```
 
-Com isso, três comandos são suficientes para ver o projeto funcionando:
-
-```bash
-python tasks.py baseline   # gera dados fictícios e roda o pipeline completo
-python tasks.py metrics    # mostra o resultado da execução
-python tasks.py breaking   # simula uma quebra de contrato e testa o isolamento em quarentena
-```
-
-No Windows, use sempre `python tasks.py` — funciona nativamente sem precisar instalar nada adicional. No Mac e Linux, o `make` também funciona como atalho. Para ver todos os comandos disponíveis, `python tasks.py help`.
-
-Para ativar a documentação semântica via SLM, basta ter o Ollama rodando em segundo plano:
+Para ativar a SLM, o Ollama precisa estar rodando em segundo plano:
 
 ```bash
 ollama serve
 ollama pull phi3.5
 ```
 
-Sem isso, o enriquecimento fica marcado como `SKIPPED` e o pipeline segue normalmente. Para ativar o backend MinIO em vez de disco local, `docker compose up -d` e mude `USE_MINIO = True` em `config.py`.
+---
 
-É possível utilizar quaisquer modelos de SLM que desejar, apenas realizando o download local via Ollama e alterando o nome no em `config.py`.
+## 4. Configuração
 
-A referência completa de comandos está na tabela abaixo:
+O único arquivo que o usuário precisa editar é o `.env`. O `config.py` lê automaticamente todas as variáveis de ambiente — em Docker elas vêm do `docker-compose.yml`, localmente vêm do `.env`.
+
+| Variável | Padrão | O que controla |
+|---|---|---|
+| `DEFAULT_SCENARIO` | `baseline` | Cenário executado ao subir o container |
+| `DEFAULT_FORMAT` | `all` | Formato dos dados — csv, json, fixed ou all |
+| `OLLAMA_MODEL` | `phi3.5` | Modelo baixado automaticamente no primeiro boot |
+| `SKIP_SLM` | `false` | Desativa o enriquecimento semântico |
+| `MINIO_ACCESS_KEY` | `minioadmin` | Credencial do MinIO |
+| `DATABRICKS_HOST` | (vazio) | URL do workspace Databricks |
+| `DATABRICKS_TOKEN` | (vazio) | Token de acesso pessoal |
+| `DATABRICKS_AUTO_UPLOAD` | `false` | Upload automático após cada promoção Silver |
+
+**GPU NVIDIA:** descomente o bloco `deploy.resources` no `docker-compose.yml`.
+
+**GPU AMD/ROCm:** descomente o bloco de devices no `docker-compose.yml` e adicione `AMD_GFX_VERSION=11.0.0` no `.env`.
+
+**Modelos alternativos:** troque `OLLAMA_MODEL` no `.env` por qualquer modelo disponível no Ollama — `phi4`, `qwen2.5-coder:7b`, `llama3.2`. O download acontece automaticamente no próximo boot.
+
+---
+
+## 5. Comandos disponíveis
 
 | Comando | O que faz |
 |---|---|
-| `python tasks.py run` | Executa todos os cenários nos três formatos de arquivo |
+| `python tasks.py run` | Executa todos os cenários nos três formatos |
 | `python tasks.py baseline` | Cenário com dados válidos, todos os formatos |
 | `python tasks.py breaking` | Simula quebra de contrato e testa o DLQ |
 | `python tasks.py metrics` | Resumo do último run |
-| `python tasks.py issues` | Mostra apenas registros com problema |
-| `python tasks.py test` | Roda a suite de 148 testes unitários |
-| `python tasks.py check-manifest --file <path>` | Verifica pendências antes de validar |
+| `python tasks.py issues` | Lista apenas registros com problema |
+| `python tasks.py test` | Roda os 175 testes unitários |
+| `python tasks.py upload-silver` | Envia Parquet do Silver para o Databricks DBFS |
+| `python tasks.py test-databricks` | Verifica conectividade com o workspace |
+| `python tasks.py check-manifest --file <path>` | Verifica pendências de um manifest |
 | `python tasks.py validate-manifest --file <path> --steward "Nome"` | Promove DRAFT para VALIDATED |
 | `python tasks.py help` | Lista todos os comandos |
 
 ---
 
-## 4. Onde encontrar mais
+## 6. Onde encontrar mais
 
 | Para entender... | Consulte |
 |---|---|

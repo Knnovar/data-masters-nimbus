@@ -247,7 +247,7 @@ def task_profile(validated):
         storage  = get_storage()
         csv_path = storage.read_path("bronze", validated["filename"])
         payload  = profile(csv_path)
-        storage.move(validated["filename"], "bronze", "silver")
+        parquet_filename = storage.promote_to_parquet(validated["filename"], "bronze", "silver")
         _log("JOB-DM-003", "PROFILE/{}".format(table), "ENDED_OK",
              "rows={} ms={} promoted=bronze->silver".format(
                  payload["rows"], payload["profiling_ms"]))

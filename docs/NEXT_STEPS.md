@@ -2,29 +2,27 @@
 
 > Este arquivo é substituído a cada sessão de desenvolvimento, não acumula histórico. Para ver o que já foi feito, consulte o [CHANGELOG.md](CHANGELOG.md).
 
-Última atualização: reestruturação de documentação e rebrand para Projeto Nimbus.
+Última atualização: deploy Docker one-click com suporte a Parquet e integração Databricks.
 
 ---
 
 ## Pendente da última sessão
 
-Nada ficou aberto. A reestruturação de documentação foi concluída integralmente: pasta `docs/` criada, `tasks.py` entregue, README reescrito, todos os arquivos `.md` revisados com linguagem natural, rebrand aplicado em código e documentação.
+Nada ficou aberto. O deploy Docker foi concluído com os três serviços (nimbus, ollama, minio), o `entrypoint.sh` com a sequência completa de inicialização, o `.env.example` e a atualização do `config.py` para ler variáveis de ambiente.
 
 ---
 
 ## Planejado
 
-Nenhuma priorização formal foi feita ainda. Os itens abaixo foram identificados ao longo do desenvolvimento como candidatos naturais para a próxima sprint.
+**Sprint C — Terraform.** Com o ambiente Docker funcionando e a integração Databricks implementada, o próximo passo natural é codificar a infraestrutura como código. O provider `databricks` do Terraform funciona com Community Edition — provisionar o workspace, configurar o MinIO como external location, criar os schemas no metastore e definir permissões de acesso às tabelas Delta. O `terraform.tfstate` fica local para a PoC e migra para backend remoto quando o projeto evoluir para ambiente compartilhado.
 
-**CLI unificada para extração de Manifest.** Hoje cada extrator tem seu próprio módulo com interface ligeiramente diferente. Uma interface única com detecção automática de formato simplificaria o uso: `python -m src.manifest.extract --file X` detectaria se é SAS7BDAT, CSV, JSON ou Fixed-Width e rotearia para o extrator correto. O parâmetro `--format auto` também seria útil no `tasks.py`.
+**Delta Lake no Silver.** O Parquet puro no Silver funciona bem, mas o Delta Lake adiciona versionamento nativo — cada execução do Nimbus criaria uma nova versão da tabela, permitindo `DESCRIBE HISTORY` no Databricks para ver todas as execuções anteriores. A evolução de Parquet para Delta é uma extensão pequena: a biblioteca `deltalake` (Python puro, sem Spark) escreve tabelas Delta em qualquer storage S3-compatível, incluindo o MinIO já presente no stack.
 
-**Série histórica de quality score.** As métricas de qualidade ficam em JSON por execução, o que permite consultar um run específico mas dificulta ver a tendência de uma tabela ao longo do tempo. Uma tabela Gold consolidando o histórico de scores por tabela tornaria o `show_metrics.py` mais útil para acompanhamento contínuo.
+**CLI unificada para extração de Manifest.** O `src/manifest/extract.py` foi criado como roteador mas ainda não está exposto no `tasks.py` de forma unificada. O comando `python tasks.py extract --file <path> --table <nome>` com detecção automática de formato tornaria o fluxo de onboarding de novas tabelas mais simples.
 
-**Parâmetro `auto_extract` no Prefect.** A task `JOB-DM-000-EXTRACT` existe e funciona, mas precisa ser disparada manualmente. Adicionar `auto_extract: true` no `prefect.yaml` permitiria que deployments agendados gerassem o Manifest automaticamente quando um arquivo novo chegar sem contrato associado.
+**Série histórica de quality score.** As métricas ficam em JSON por execução, o que dificulta ver a tendência de uma tabela ao longo do tempo. Uma tabela Gold consolidando o histórico de scores tornaria o `show_metrics.py` mais útil para acompanhamento contínuo.
 
-**Validação do backend MinIO end-to-end.** O `MinIOStorage` está implementado e testado unitariamente, mas nunca foi validado em um fluxo completo com o Docker rodando. Quando houver um ambiente com Docker disponível, esse teste precisa ser feito antes de qualquer apresentação que use o MinIO como argumento.
-
-**Cobertura de testes para integração com Prefect.** Os testes do `prefect_flow.py` usam `--no-prefect`, o que valida a lógica mas não a integração real com o servidor. Um conjunto de testes de integração que suba um servidor Prefect local para o teste completaria a cobertura.
+**Testes de integração Docker.** Hoje os testes unitários cobrem a lógica de negócio, mas não validam o stack Docker completo. Um teste de smoke que sobe o `docker-compose.yml` em CI e verifica que o pipeline conclui com sucesso completaria a cobertura.
 
 ---
 

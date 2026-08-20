@@ -169,3 +169,83 @@ class TestValidatorIntegration(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ═══════════════════════ TestParquet ══════════════════════════════════════════
+class TestParquet(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.s   = make_storage(self.tmp)
+
+    def test_write_parquet_creates_file(self):
+        name = self.s.write_parquet("silver", "tb.csv", SAMPLE)
+        self.assertEqual(name, "tb.parquet")
+        self.assertTrue(self.s.exists("silver", "tb.parquet"))
+
+    def test_write_parquet_extension_always_parquet(self):
+        name = self.s.write_parquet("silver", "tb.json", SAMPLE)
+        self.assertEqual(name, "tb.parquet")
+
+    def test_read_parquet_roundtrip(self):
+        self.s.write_parquet("silver", "tb.csv", SAMPLE)
+        loaded = self.s.read("silver", "tb.parquet")
+        self.assertEqual(list(loaded.columns), list(SAMPLE.columns))
+        self.assertEqual(len(loaded), len(SAMPLE))
+
+    def test_parquet_preserves_numeric_types(self):
+        self.s.write_parquet("silver", "tb.csv", SAMPLE)
+        loaded = self.s.read("silver", "tb.parquet")
+        dtype = str(loaded["valor"].dtype)
+        self.assertTrue(dtype.startswith("float") or dtype.startswith("int"),
+            "Esperado tipo numerico, got: {}".format(dtype))
+
+    def test_promote_creates_parquet_in_silver(self):
+        self.s.write("bronze", "tb.csv", SAMPLE)
+        name = self.s.promote_to_parquet("tb.csv", "bronze", "silver")
+        self.assertEqual(name, "tb.parquet")
+        self.assertTrue(self.s.exists("silver", "tb.parquet"))
+
+    def test_promote_archives_original(self):
+        self.s.write("bronze", "tb.csv", SAMPLE)
+        self.s.promote_to_parquet("tb.csv", "bronze", "silver")
+        self.assertFalse(self.s.exists("bronze", "tb.csv"))
+        archive = self.tmp / "bronze" / "_archive" / "tb.csv"
+        self.assertTrue(archive.exists(), "Original deve estar em _archive/")
+
+    def test_promote_data_integrity(self):
+        self.s.write("bronze", "tb.csv", SAMPLE)
+        name   = self.s.promote_to_parquet("tb.csv", "bronze", "silver")
+        loaded = self.s.read("silver", name)
+        self.assertEqual(len(loaded), len(SAMPLE))
+        self.assertEqual(set(loaded.columns), set(SAMPLE.columns))
+
+    def test_parquet_smaller_than_csv_large_dataset(self):
+        import pandas as pd
+        big = pd.DataFrame({
+            "id"  : ["C{:04d}".format(i) for i in range(500)],
+            "nome": ["Cliente {}".format(i % 50) for i in range(500)],
+            "seg" : ["PRIME" if i % 3 == 0 else "VAREJO" for i in range(500)],
+            "val" : [round(1000 + i * 10.5, 2) for i in range(500)],
+        })
+        self.s.write("bronze", "big.csv", big)
+        csv_size = (self.tmp / "bronze" / "big.csv").stat().st_size
+        self.s.write_parquet("silver", "big.csv", big)
+        pq_size  = (self.tmp / "silver" / "big.parquet").stat().st_size
+        self.assertLess(pq_size, csv_size,
+            "Parquet ({}) deve ser menor que CSV ({})".format(pq_size, csv_size))
+
+    def test_list_includes_parquet(self):
+        self.s.write_parquet("silver", "tb.csv", SAMPLE)
+        self.assertIn("tb.parquet", self.s.list("silver"))
+
+    def test_promote_json_to_parquet(self):
+        import json
+        p = self.tmp / "bronze" / "tb.json"
+        p.write_text(json.dumps({"data": SAMPLE.to_dict(orient="records")}))
+        name = self.s.promote_to_parquet("tb.json", "bronze", "silver")
+        self.assertTrue(self.s.exists("silver", name))
+
+
+if __name__ == "__main__":
+    unittest.main()

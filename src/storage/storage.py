@@ -1,219 +1,168 @@
 """
-src/storage/storage.py — Camada de abstração de storage
+src/storage/storage.py — Camada de abstração de storage com suporte a Parquet.
 
-Implementa o padrão de arquitetura medallion (Bronze → Silver → Gold)
-com dois backends intercambiáveis:
-
-  LocalStorage  → disco local (padrão, sem dependências externas)
-  MinIOStorage  → MinIO/S3 (requer docker-compose up -d)
-
-A escolha do backend é feita em config.py via USE_MINIO.
-O restante do pipeline não sabe qual backend está em uso.
-
-Mapeamento de camadas:
-  bronze     → dado bruto recebido (landing)
-  silver     → dado validado e processado
-  gold       → dado agregado, pronto para consumo analítico
-  quarantine → arquivos com breaking change (DLQ)
-
-Uso:
-    from src.storage.storage import get_storage
-    storage = get_storage()
-
-    storage.write("bronze", "tb_clientes.csv", df)
-    df = storage.read("bronze", "tb_clientes.csv")
-    storage.move("tb_clientes.csv", "bronze", "silver")
-    files = storage.list("silver")
+Estratégia de formato por camada:
+  Bronze     → formato original preservado (CSV, JSON, TXT…)
+  Silver     → Parquet via promote_to_parquet() após validação
+  Gold       → Parquet
+  Quarantine → formato original (cópia fiel do arquivo rejeitado)
+  Contracts / Metrics / Reports → texto (YAML, JSON, MD)
 """
 
-import io
-import shutil
+import io, json, shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
 
 import pandas as pd
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Interface base
-# ─────────────────────────────────────────────────────────────────────────────
-
 class StorageBase(ABC):
-    """Interface comum para todos os backends de storage."""
-
     @abstractmethod
-    def write(self, layer: str, filename: str, df: pd.DataFrame) -> None:
-        """Persiste um DataFrame como CSV na camada indicada."""
-
+    def write(self, layer, filename, df): pass
     @abstractmethod
-    def read(self, layer: str, filename: str) -> pd.DataFrame:
-        """Lê um arquivo da camada indicada e retorna um DataFrame."""
-
+    def write_parquet(self, layer, filename, df): pass
     @abstractmethod
-    def move(self, filename: str, from_layer: str, to_layer: str) -> None:
-        """Promove um arquivo entre camadas (ex: bronze → silver)."""
-
+    def read(self, layer, filename): pass
     @abstractmethod
-    def list(self, layer: str) -> list[str]:
-        """Lista os arquivos disponíveis em uma camada."""
-
+    def move(self, filename, from_layer, to_layer): pass
     @abstractmethod
-    def exists(self, layer: str, filename: str) -> bool:
-        """Verifica se um arquivo existe em uma camada."""
-
+    def promote_to_parquet(self, filename, from_layer, to_layer): pass
     @abstractmethod
-    def write_text(self, layer: str, filename: str, content: str) -> None:
-        """Persiste conteúdo texto (YAML, MD, JSON) na camada indicada."""
-
+    def list(self, layer): pass
     @abstractmethod
-    def read_path(self, layer: str, filename: str) -> Path:
-        """
-        Retorna um Path local para o arquivo — necessário para módulos
-        que recebem Path diretamente (DuckDB, pandas read_csv).
-        No MinIOStorage, faz download temporário para disco.
-        """
+    def exists(self, layer, filename): pass
+    @abstractmethod
+    def write_text(self, layer, filename, content): pass
+    @abstractmethod
+    def read_path(self, layer, filename): pass
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Backend local
-# ─────────────────────────────────────────────────────────────────────────────
+def _parquet_name(filename):
+    return Path(filename).stem + ".parquet"
+
+
+def _read_file(path):
+    ext = path.suffix.lower()
+    if ext == ".parquet":
+        return pd.read_parquet(path)
+    if ext == ".json":
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            for v in data.values():
+                if isinstance(v, list): data = v; break
+        if not isinstance(data, list): data = [data]
+        return pd.json_normalize(data, max_level=5).astype(str)
+    if ext in (".jsonl", ".ndjson"):
+        records = []
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try: records.append(json.loads(line))
+                    except json.JSONDecodeError: continue
+        return pd.json_normalize(records, max_level=5).astype(str)
+    if ext in (".txt", ".dat", ".pos", ".fix"):
+        sidecar = path.parent / (path.name + ".layout")
+        if sidecar.exists():
+            spec = json.loads(sidecar.read_text(encoding="utf-8"))
+            return pd.read_fwf(path, colspecs=[tuple(c) for c in spec["colspecs"]],
+                               names=spec["names"], dtype=str)
+        try: return pd.read_fwf(path, dtype=str)
+        except: return pd.read_csv(path, sep=r"\s+", dtype=str,
+                                   on_bad_lines="skip", engine="python")
+    sep = "\t" if ext == ".tsv" else ","
+    return pd.read_csv(path, low_memory=False, dtype=str, sep=sep)
+
 
 class LocalStorage(StorageBase):
-    """
-    Backend de disco local.
-
-    Cada camada vira um subdiretório de data/:
-        bronze     → data/landing/
-        silver     → data/processed/
-        gold       → data/gold/
-        quarantine → data/quarantine/
-        contracts  → data/contracts/
-        metrics    → data/metrics/
-        reports    → data/reports/
-    """
-
-    def __init__(self, layer_map: dict[str, Path]):
+    def __init__(self, layer_map):
         self._layers = layer_map
         for path in layer_map.values():
             path.mkdir(parents=True, exist_ok=True)
 
-    def _path(self, layer: str, filename: str) -> Path:
+    def _path(self, layer, filename):
         if layer not in self._layers:
-            raise ValueError(f"Camada desconhecida: '{layer}'. Disponíveis: {list(self._layers)}")
+            raise ValueError("Camada desconhecida: '{}'. Disponiveis: {}".format(
+                layer, list(self._layers)))
         return self._layers[layer] / filename
 
-    def write(self, layer: str, filename: str, df: pd.DataFrame) -> None:
+    def write(self, layer, filename, df):
         path = self._path(layer, filename)
-        df.to_csv(path, index=False)
-        print(f"   [WRITE] [{layer.upper()}] {filename} gravado ({len(df)} linhas)")
+        df.to_csv(path, index=False, lineterminator="\n")
+        print("   [WRITE] [{}] {} gravado ({} linhas)".format(layer.upper(), filename, len(df)))
 
-    def read(self, layer: str, filename: str) -> pd.DataFrame:
-        """
-        Le um arquivo da camada e retorna DataFrame.
-        Detecta o formato pelo sufixo do arquivo:
-          .csv / .tsv  -> pd.read_csv
-          .json        -> pd.json_normalize (aceita lista ou {root_key: [...]} )
-          .txt / .dat  -> pd.read_fwf (melhor esforco para fixed-width)
-        """
-        path = self._path(layer, filename)
-        ext  = path.suffix.lower()
+    def write_parquet(self, layer, filename, df):
+        pq = _parquet_name(filename)
+        path = self._path(layer, pq)
+        df.to_parquet(path, index=False, engine="pyarrow", compression="snappy")
+        size_kb = path.stat().st_size / 1024
+        print("   [PARQUET] [{}] {} ({} linhas, {:.1f} KB)".format(
+            layer.upper(), pq, len(df), size_kb))
+        return pq
 
-        if ext == ".json":
-            import json
-            with open(path, encoding="utf-8") as f:
-                data = json.load(f)
-            # Resolve root key automaticamente
-            if isinstance(data, dict):
-                for v in data.values():
-                    if isinstance(v, list):
-                        data = v
-                        break
-            if not isinstance(data, list):
-                data = [data]
-            return pd.json_normalize(data, max_level=5).astype(str)
+    def write_text(self, layer, filename, content):
+        self._path(layer, filename).write_text(content, encoding="utf-8")
 
-        if ext in (".txt", ".dat", ".pos", ".fix"):
-            # Tenta carregar sidecar de colspecs gerado pelo FixedWidthWriter
-            import json as _json
-            sidecar = path.parent / (path.name + ".layout")
-            if sidecar.exists():
-                spec     = _json.loads(sidecar.read_text(encoding="utf-8"))
-                colspecs = [tuple(cs) for cs in spec["colspecs"]]
-                return pd.read_fwf(path, colspecs=colspecs,
-                                   names=spec["names"], dtype=str)
-            # Sem sidecar: melhor esforco via pandas whitespace detection
-            try:
-                return pd.read_fwf(path, dtype=str)
-            except Exception:
-                return pd.read_csv(path, sep="\s+", dtype=str,
-                                   on_bad_lines="skip", engine="python")
+    def read(self, layer, filename):
+        return _read_file(self._path(layer, filename))
 
-        # Default: CSV (inclui .tsv com sep auto)
-        sep = "\t" if ext == ".tsv" else ","
-        return pd.read_csv(path, low_memory=False, dtype=str, sep=sep)
-
-    def move(self, filename: str, from_layer: str, to_layer: str) -> None:
-        src = self._path(from_layer, filename)
-        dst = self._path(to_layer, filename)
-        if dst.exists():
-            dst.unlink()
-        shutil.move(str(src), str(dst))
-        print(f"   [MOVE] {filename}: {from_layer.upper()} -> {to_layer.upper()}")
-
-    def list(self, layer: str) -> list[str]:
-        return [f.name for f in self._layers[layer].glob("*.csv")]
-
-    def exists(self, layer: str, filename: str) -> bool:
-        return self._path(layer, filename).exists()
-
-    def write_text(self, layer: str, filename: str, content: str) -> None:
-        path = self._path(layer, filename)
-        path.write_text(content, encoding="utf-8")
-
-    def read_path(self, layer: str, filename: str) -> Path:
+    def read_path(self, layer, filename):
         return self._path(layer, filename)
 
+    def move(self, filename, from_layer, to_layer):
+        src = self._path(from_layer, filename)
+        dst = self._path(to_layer, filename)
+        if dst.exists(): dst.unlink()
+        shutil.move(str(src), str(dst))
+        print("   [MOVE] {}: {} -> {}".format(filename, from_layer.upper(), to_layer.upper()))
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Backend MinIO
-# ─────────────────────────────────────────────────────────────────────────────
+    def promote_to_parquet(self, filename, from_layer, to_layer):
+        src = self._path(from_layer, filename)
+        df  = _read_file(src)
+        pq  = self.write_parquet(to_layer, filename, df)
+
+        # Arquiva o original em bronze/_archive/ para rastreabilidade
+        archive_dir = src.parent / "_archive"
+        archive_dir.mkdir(exist_ok=True)
+        archived = archive_dir / src.name
+        if archived.exists(): archived.unlink()
+        shutil.move(str(src), str(archived))
+
+        sidecar = src.parent / (src.name + ".layout")
+        if sidecar.exists():
+            shutil.move(str(sidecar), str(archive_dir / sidecar.name))
+
+        print("   [PROMOTE] {} -> {}/{} (snappy) | original em {}/_archive/".format(
+            filename, to_layer.upper(), pq, from_layer))
+
+        # Upload opcional para Databricks
+        if to_layer == "silver":
+            try:
+                from src.connectors.databricks_uploader import upload_silver_table
+                upload_silver_table(self._path(to_layer, pq), table_name=Path(filename).stem)
+            except Exception as e:
+                print("   [DATABRICKS] Upload ignorado: {}".format(e))
+
+        return pq
+
+    def list(self, layer):
+        exts = {".csv", ".parquet", ".json", ".jsonl", ".txt", ".dat"}
+        return [f.name for f in self._layers[layer].iterdir()
+                if f.suffix.lower() in exts]
+
+    def exists(self, layer, filename):
+        return self._path(layer, filename).exists()
+
 
 class MinIOStorage(StorageBase):
-    """
-    Backend MinIO/S3 — requer docker-compose up -d e pip install minio.
-
-    Cada camada vira um bucket:
-        bronze     → data-masters-bronze
-        silver     → data-masters-silver
-        gold       → data-masters-gold
-        quarantine → data-masters-quarantine
-        contracts  → data-masters-contracts
-        metrics    → data-masters-metrics
-        reports    → data-masters-reports
-
-    Em produção Azure, troque o endpoint e credenciais por:
-        endpoint   → <storage-account>.blob.core.windows.net
-        access_key → via Azure Key Vault / dbutils.secrets
-    """
-
-    def __init__(
-        self,
-        endpoint: str,
-        access_key: str,
-        secret_key: str,
-        layer_map: dict[str, str],
-        tmp_dir: Path,
-    ):
+    def __init__(self, endpoint, access_key, secret_key, layer_map, tmp_dir):
         try:
             from minio import Minio
             from minio.error import S3Error
             self._S3Error = S3Error
         except ImportError:
-            raise ImportError(
-                "MinIO não instalado. Execute: pip install minio\n"
-                "Ou use USE_MINIO=False em config.py para rodar com disco local."
-            )
-
+            raise ImportError("Execute: pip install minio")
         from minio import Minio
         self._client = Minio(endpoint, access_key=access_key, secret_key=secret_key, secure=False)
         self._layers = layer_map
@@ -221,80 +170,94 @@ class MinIOStorage(StorageBase):
         self._tmp.mkdir(parents=True, exist_ok=True)
         self._ensure_buckets()
 
-    def _ensure_buckets(self) -> None:
+    def _ensure_buckets(self):
         for bucket in self._layers.values():
             if not self._client.bucket_exists(bucket):
                 self._client.make_bucket(bucket)
 
-    def _bucket(self, layer: str) -> str:
+    def _bucket(self, layer):
         if layer not in self._layers:
-            raise ValueError(f"Camada desconhecida: '{layer}'")
+            raise ValueError("Camada desconhecida: '{}'".format(layer))
         return self._layers[layer]
 
-    def write(self, layer: str, filename: str, df: pd.DataFrame) -> None:
-        buf = io.BytesIO(df.to_csv(index=False).encode("utf-8"))
-        self._client.put_object(
-            self._bucket(layer), filename, buf, length=buf.getbuffer().nbytes,
-            content_type="text/csv"
-        )
-        print(f"   [WRITE] [{layer.upper()}] {filename} -> MinIO ({len(df)} linhas)")
+    def write(self, layer, filename, df):
+        buf = io.BytesIO(df.to_csv(index=False, lineterminator="\n").encode("utf-8"))
+        self._client.put_object(self._bucket(layer), filename, buf,
+            length=buf.getbuffer().nbytes, content_type="text/csv")
+        print("   [WRITE] [{}] {} -> MinIO ({} linhas)".format(layer.upper(), filename, len(df)))
 
-    def read(self, layer: str, filename: str) -> pd.DataFrame:
+    def write_parquet(self, layer, filename, df):
+        import tempfile, os
+        pq  = _parquet_name(filename)
+        tmp = self._tmp / pq
+        df.to_parquet(tmp, index=False, engine="pyarrow", compression="snappy")
+        data = tmp.read_bytes()
+        self._client.put_object(self._bucket(layer), pq, io.BytesIO(data),
+            length=len(data), content_type="application/octet-stream")
+        print("   [PARQUET] [{}] {} -> MinIO ({} linhas, {:.1f} KB)".format(
+            layer.upper(), pq, len(df), len(data)/1024))
+        return pq
+
+    def write_text(self, layer, filename, content):
+        buf = io.BytesIO(content.encode("utf-8"))
+        self._client.put_object(self._bucket(layer), filename, buf,
+            length=buf.getbuffer().nbytes, content_type="text/plain")
+
+    def read(self, layer, filename):
+        ext = Path(filename).suffix.lower()
+        if ext == ".parquet":
+            tmp = self._tmp / filename
+            self._client.fget_object(self._bucket(layer), filename, str(tmp))
+            return pd.read_parquet(tmp)
         response = self._client.get_object(self._bucket(layer), filename)
         return pd.read_csv(io.BytesIO(response.read()), low_memory=False, dtype=str)
 
-    def move(self, filename: str, from_layer: str, to_layer: str) -> None:
+    def read_path(self, layer, filename):
+        tmp = self._tmp / filename
+        self._client.fget_object(self._bucket(layer), filename, str(tmp))
+        return tmp
+
+    def move(self, filename, from_layer, to_layer):
         from minio.commonconfig import CopySource
-        src_bucket = self._bucket(from_layer)
-        dst_bucket = self._bucket(to_layer)
-        # CopySource obrigatório a partir do minio-py 7.x
-        self._client.copy_object(dst_bucket, filename, CopySource(src_bucket, filename))
-        self._client.remove_object(src_bucket, filename)
-        print(f"   [MOVE] {filename}: {from_layer.upper()} -> {to_layer.upper()} (MinIO)")
+        self._client.copy_object(self._bucket(to_layer), filename,
+                                 CopySource(self._bucket(from_layer), filename))
+        self._client.remove_object(self._bucket(from_layer), filename)
+        print("   [MOVE] {}: {} -> {} (MinIO)".format(
+            filename, from_layer.upper(), to_layer.upper()))
 
-    def list(self, layer: str) -> list[str]:
+    def promote_to_parquet(self, filename, from_layer, to_layer):
+        tmp = self._tmp / filename
+        self._client.fget_object(self._bucket(from_layer), filename, str(tmp))
+        df  = _read_file(tmp)
+        pq  = self.write_parquet(to_layer, filename, df)
+        self._client.remove_object(self._bucket(from_layer), filename)
+        print("   [PROMOTE] {} -> {}/{} (MinIO Parquet)".format(
+            filename, to_layer.upper(), pq))
+        if to_layer == "silver":
+            try:
+                from src.connectors.databricks_uploader import upload_silver_table
+                upload_silver_table(self._tmp / pq, table_name=Path(filename).stem)
+            except Exception as e:
+                print("   [DATABRICKS] Upload ignorado: {}".format(e))
+        return pq
+
+    def list(self, layer):
         objects = self._client.list_objects(self._bucket(layer))
-        return [obj.object_name for obj in objects if obj.object_name.endswith(".csv")]
+        return [o.object_name for o in objects
+                if o.object_name.endswith((".csv", ".parquet", ".json"))]
 
-    def exists(self, layer: str, filename: str) -> bool:
+    def exists(self, layer, filename):
         try:
             self._client.stat_object(self._bucket(layer), filename)
             return True
         except self._S3Error:
             return False
 
-    def write_text(self, layer: str, filename: str, content: str) -> None:
-        buf = io.BytesIO(content.encode("utf-8"))
-        self._client.put_object(
-            self._bucket(layer), filename, buf, length=buf.getbuffer().nbytes,
-            content_type="text/plain"
-        )
 
-    def read_path(self, layer: str, filename: str) -> Path:
-        """Faz download temporário para que DuckDB e pandas possam ler por path."""
-        tmp_path = self._tmp / filename
-        self._client.fget_object(self._bucket(layer), filename, str(tmp_path))
-        return tmp_path
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Factory — ponto de entrada único para o restante do código
-# ─────────────────────────────────────────────────────────────────────────────
-
-def get_storage() -> StorageBase:
-    """
-    Retorna o backend correto conforme config.py.
-
-    USE_MINIO = False → LocalStorage (padrão, sem dependências externas)
-    USE_MINIO = True  → MinIOStorage (requer docker-compose up -d)
-    """
+def get_storage():
     import config as cfg
-
-    # Camadas comuns a ambos os backends
-    LAYER_NAMES = ["bronze", "silver", "gold", "quarantine", "contracts", "metrics", "reports"]
-
+    LAYERS = ["bronze","silver","gold","quarantine","contracts","metrics","reports"]
     if not getattr(cfg, "USE_MINIO", False):
-        # Mapeia cada camada para um diretório local
         local_map = {
             "bronze"    : cfg.DATA_DIR / "landing",
             "silver"    : cfg.DATA_DIR / "processed",
@@ -305,9 +268,7 @@ def get_storage() -> StorageBase:
             "reports"   : cfg.DATA_DIR / "reports",
         }
         return LocalStorage(local_map)
-
-    # MinIO
-    minio_map = {layer: f"data-masters-{layer}" for layer in LAYER_NAMES}
+    minio_map = {l: "nimbus-{}".format(l) for l in LAYERS}
     return MinIOStorage(
         endpoint   = getattr(cfg, "MINIO_ENDPOINT",   "localhost:9000"),
         access_key = getattr(cfg, "MINIO_ACCESS_KEY", "minioadmin"),
