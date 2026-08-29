@@ -70,8 +70,22 @@ def run_scenario(scenario: str, run_id: str, fmt: str = "csv") -> list[dict]:
             # Enriquecimento SLM
             slm_result = enrich(storage, contract_filename, profiler_payload)
 
-            # Promoção Bronze → Silver
-            parquet_filename = storage.promote_to_parquet(filename, "bronze", "silver")
+            # Carrega contrato para tipagem governada no Silver
+            contract = None
+            if contract_filename and storage.exists("contracts", contract_filename):
+                try:
+                    import yaml
+                    from src.validation.contracts import DataContract
+                    cp = storage.read_path("contracts", contract_filename)
+                    with open(cp, encoding="utf-8") as f:
+                        contract = DataContract.from_dict(yaml.safe_load(f))
+                except Exception as ce:
+                    print(f"   [SCHEMA] Contrato nao carregado, usando inferencia: {ce}")
+
+            # Promoção Bronze → Silver com tipagem do Manifest
+            parquet_filename = storage.promote_to_parquet(
+                filename, "bronze", "silver", contract=contract
+            )
 
         # Gold: métricas agregadas
         m = collect(run_id, val_result, profiler_payload, slm_result, METRICS_DIR)

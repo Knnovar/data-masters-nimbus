@@ -28,7 +28,8 @@ python tests/run_tests.py test_databricks
 | `test_sprint2.py` | 39 | `normalizer`, `extractor_csv`, `extractor_fixed`, `extractor_json` |
 | `test_writers.py` | 44 | `CSVWriter`, `JSONWriter`, `FixedWidthWriter`, `WriterFactory`, `generate_all` |
 | `test_databricks.py` | 17 | `DatabricksUploader`, upload, registro de tabela, conectividade |
-| **Total** | **175** | |
+| `test_schema_utils.py` | 46 | Mapeamento de tipos, cast por categoria, casos de borda, metadata Parquet |
+| **Total** | **231** | |
 
 ---
 
@@ -43,6 +44,8 @@ Além de confirmar que o código roda, os testes garantem comportamentos de neg�
 **Manifest e governança.** Um Manifest com campos `# TODO` pendentes não pode ser promovido para VALIDATED. Um Manifest VALIDATED nunca é sobrescrito — o writer cria um `_draft.yaml` paralelo.
 
 **Writers multi-formato.** O arquivo Fixed-Width respeita exatamente a contagem de bytes do leiaute, incluindo padding e truncamento. JSON com aninhamento produz estrutura válida sem dicts não-serializáveis. Formato inválido levanta `ValueError` com mensagem clara.
+
+**Tipagem governada pelo Manifest.** Uma coluna declarada como `boolean` com domínio `S/N` chega ao Silver como `pa.bool_()` — o PyArrow jamais inferiria isso sozinho. Uma coluna declarada como `date` com formato `%d/%m/%Y` chega como `pa.date32()`. Quando o cast falha em mais de 5% dos valores, a coluna é mantida como string e o evento é registrado — nunca silencioso. O metadata do Parquet reflete se o schema veio de um Manifest `VALIDATED` ou `DRAFT`. Colunas extras no dado (NON_BREAKING) entram no Silver como `pa.string()` sem bloquear a promoção.
 
 **Databricks uploader.** Credenciais vazias levantam `ValueError` antes de qualquer chamada de rede. O upload envia os dados em blocos base64 válidos via as três etapas da DBFS API (create, add-block, close). O registro de tabela inclui `CREATE SCHEMA`, `CREATE OR REPLACE TABLE` e `LOCATION` apontando para o Parquet. Falha no upload não propaga exceção — o pipeline continua normalmente.
 

@@ -125,6 +125,45 @@ Em ambiente Docker, o Prefect server, os deployments e o worker sobem automatica
 
 ---
 
+## Tipagem governada pelo Manifest
+
+O Silver não apenas armazena dados em Parquet — armazena dados com os tipos que o Data Steward declarou no Manifest, não com os tipos que o PyArrow inferiria sozinho.
+
+O módulo `src/storage/schema_utils.py` é responsável por essa conversão. Ele mapeia os tipos semânticos do Manifest para tipos físicos PyArrow:
+
+| Tipo no Manifest | Tipo PyArrow | Comportamento especial |
+|---|---|---|
+| `string` | `pa.string()` | Sem transformação |
+| `integer` | `pa.int64()` | Int64 nullable — preserva NaN sem virar float |
+| `float` | `pa.float64()` | `pd.to_numeric` com coerção |
+| `boolean` | `pa.bool_()` | Reconhece S/N, 0/1, SIM/NÃO, TRUE/FALSE |
+| `date` | `pa.date32()` | Tenta formato declarado, faz fallback para formatos BR |
+| `datetime` | `pa.timestamp('us')` | Inferência automática se nenhum formato funcionar |
+
+O cast é não-destrutivo: se mais de 5% dos valores de uma coluna não puderem ser convertidos, ela é mantida como string e o evento é registrado como WARNING — nunca silencioso, nunca fatal. Isso protege contra contratos incorretos sem travar o pipeline.
+
+Todo Parquet gerado carrega metadata rastreável no footer:
+
+```
+nimbus.schema_source    : manifest_validated | manifest_draft
+nimbus.manifest_version : 1.0.0
+nimbus.table            : tb_clientes
+nimbus.generated_at     : 2025-08-20T14:32:00
+nimbus.warnings_count   : 0
+```
+
+Para inspecionar o schema de um Parquet do Silver:
+
+```python
+import pyarrow.parquet as pq
+meta = pq.read_metadata("data/processed/tb_clientes.parquet")
+schema = pq.read_schema("data/processed/tb_clientes.parquet")
+# meta.metadata contém os campos nimbus.*
+# schema lista cada coluna com seu tipo PyArrow
+```
+
+---
+
 ## Métricas e quality score
 
 A cada execução, `metrics_collector.py` calcula um score de 0 a 100 por tabela combinando quatro dimensões: status da validação (40 pontos), taxa de nulos em colunas obrigatórias (30 pontos), taxa de duplicatas (20 pontos) e cobertura de descrições no schema (10 pontos). Scores ficam em JSON em `data/metrics/` e são consultáveis via `python show_metrics.py`.

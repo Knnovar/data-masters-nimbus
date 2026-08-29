@@ -1,7 +1,7 @@
 FROM python:3.11-slim
 
 LABEL maintainer="Projeto Nimbus" \
-      description="Pipeline de dados bancaria, baseada em Data Contracts, com arquitetura medallion"
+      description="Pipeline de dados bancaria com arquitetura medallion"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

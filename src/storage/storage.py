@@ -12,8 +12,10 @@ Estratégia de formato por camada:
 import io, json, shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
+import pyarrow as pa
 
 
 class StorageBase(ABC):
@@ -26,7 +28,7 @@ class StorageBase(ABC):
     @abstractmethod
     def move(self, filename, from_layer, to_layer): pass
     @abstractmethod
-    def promote_to_parquet(self, filename, from_layer, to_layer): pass
+    def promote_to_parquet(self, filename, from_layer, to_layer, contract=None): pass
     @abstractmethod
     def list(self, layer): pass
     @abstractmethod
@@ -93,13 +95,9 @@ class LocalStorage(StorageBase):
         print("   [WRITE] [{}] {} gravado ({} linhas)".format(layer.upper(), filename, len(df)))
 
     def write_parquet(self, layer, filename, df):
-        pq = _parquet_name(filename)
-        path = self._path(layer, pq)
-        df.to_parquet(path, index=False, engine="pyarrow", compression="snappy")
-        size_kb = path.stat().st_size / 1024
-        print("   [PARQUET] [{}] {} ({} linhas, {:.1f} KB)".format(
-            layer.upper(), pq, len(df), size_kb))
-        return pq
+        """Grava Parquet simples (sem schema do Manifest). Usado por testes e MinIO."""""
+        return self._write_parquet_with_schema(layer, filename, df,
+                                               arrow_schema=None, metadata=None)
 
     def write_text(self, layer, filename, content):
         self._path(layer, filename).write_text(content, encoding="utf-8")
@@ -117,10 +115,33 @@ class LocalStorage(StorageBase):
         shutil.move(str(src), str(dst))
         print("   [MOVE] {}: {} -> {}".format(filename, from_layer.upper(), to_layer.upper()))
 
-    def promote_to_parquet(self, filename, from_layer, to_layer):
+    def promote_to_parquet(self, filename, from_layer, to_layer, contract=None):
+        from src.storage.schema_utils import (
+            apply_manifest_schema, manifest_to_arrow_schema, build_parquet_metadata
+        )
         src = self._path(from_layer, filename)
         df  = _read_file(src)
-        pq  = self.write_parquet(to_layer, filename, df)
+
+        schema_meta = None
+        if contract is not None:
+            # Identifica colunas extras (NON_BREAKING) presentes no dado mas nao no Manifest
+            manifest_cols = {c.name.lower() for c in contract.schema}
+            extra_cols    = [c for c in df.columns if c.lower() not in manifest_cols]
+
+            df, cast_warnings = apply_manifest_schema(df, contract)
+            arrow_schema      = manifest_to_arrow_schema(contract, extra_columns=extra_cols)
+            schema_meta       = build_parquet_metadata(contract, cast_warnings)
+
+            if cast_warnings:
+                for w in cast_warnings:
+                    print("   [SCHEMA] [{}] {}".format(filename, w))
+        else:
+            arrow_schema = None
+            schema_meta  = None
+
+        pq = self._write_parquet_with_schema(
+            to_layer, filename, df, arrow_schema, schema_meta
+        )
 
         # Arquiva o original em bronze/_archive/ para rastreabilidade
         archive_dir = src.parent / "_archive"
@@ -145,6 +166,32 @@ class LocalStorage(StorageBase):
                 print("   [DATABRICKS] Upload ignorado: {}".format(e))
 
         return pq
+
+    def _write_parquet_with_schema(self, layer, filename, df, arrow_schema, metadata):
+        """Grava Parquet com schema e metadata opcionais do Manifest."""
+        import pyarrow as pa
+        import pyarrow.parquet as pq_mod
+
+        pq_filename = _parquet_name(filename)
+        path        = self._path(layer, pq_filename)
+
+        try:
+            table = pa.Table.from_pandas(df, schema=arrow_schema, safe=False)
+        except Exception:
+            # Fallback: deixa o pyarrow inferir se o schema declarado falhar
+            print("   [SCHEMA] Schema do Manifest falhou, usando inferencia.")
+            table = pa.Table.from_pandas(df)
+
+        if metadata:
+            existing_meta = table.schema.metadata or {}
+            table = table.replace_schema_metadata({**existing_meta, **metadata})
+
+        pq_mod.write_table(table, path, compression="snappy")
+        size_kb = path.stat().st_size / 1024
+        source  = "manifest" if arrow_schema else "inferido"
+        print("   [PARQUET] [{}] {} ({} linhas, {:.1f} KB, schema={})".format(
+            layer.upper(), pq_filename, len(df), size_kb, source))
+        return pq_filename
 
     def list(self, layer):
         exts = {".csv", ".parquet", ".json", ".jsonl", ".txt", ".dat"}
@@ -225,7 +272,7 @@ class MinIOStorage(StorageBase):
         print("   [MOVE] {}: {} -> {} (MinIO)".format(
             filename, from_layer.upper(), to_layer.upper()))
 
-    def promote_to_parquet(self, filename, from_layer, to_layer):
+    def promote_to_parquet(self, filename, from_layer, to_layer, contract=None):
         tmp = self._tmp / filename
         self._client.fget_object(self._bucket(from_layer), filename, str(tmp))
         df  = _read_file(tmp)

@@ -59,3 +59,35 @@ A sprint encerrou com 175 testes passando.
 O projeto foi empacotado em um stack Docker com três serviços orquestrados pelo `docker-compose.yml`: o pipeline Nimbus, o Ollama e o MinIO. O `scripts/entrypoint.sh` coordena a sequência completa de inicialização — aguarda os serviços ficarem saudáveis, baixa o modelo via `ollama pull` se necessário, inicia o Prefect server, registra os deployments, sobe o worker e executa o pipeline automaticamente.
 
 O `config.py` foi reescrito para ler todas as configurações via variáveis de ambiente, tornando o comportamento local e em Docker idênticos em termos de código. O único arquivo que o usuário precisa editar é o `.env`. GPU NVIDIA e AMD/ROCm são suportadas via configuração comentada no `docker-compose.yml`. O modelo Ollama é configurável via `OLLAMA_MODEL` no `.env` e baixado automaticamente — a imagem Docker não embute o modelo para manter o tamanho controlado e permitir customização.
+
+---
+
+## Sprint Parquet v2 — Tipagem governada pelo Manifest
+
+O Parquet no Silver passou a respeitar os tipos declarados no Manifest em vez de inferi-los pelo PyArrow. Essa mudança fecha uma contradição arquitetural identificada: o Manifest era a fonte de verdade sobre o schema, mas o Silver tinha tipos decididos pelo PyArrow na hora da serialização — sem relação com o que o Data Steward havia validado.
+
+**O problema que foi resolvido.** O fluxo anterior gerava um Silver não-determinístico: uma coluna `fl_ativo` declarada como `boolean` no Manifest chegava ao Silver como `string` porque o PyArrow não sabia que `"S"/"N"` representava booleano. Uma coluna `dt_nascimento` declarada como `date` podia virar `string` ou `timestamp` dependendo dos dados da execução. O Databricks recebia tipos imprevisíveis.
+
+**O que foi implementado.**
+
+`src/storage/schema_utils.py` é um módulo novo de responsabilidade única: converte tipos semânticos do Manifest (`string`, `integer`, `float`, `boolean`, `date`, `datetime`) para tipos físicos PyArrow, aplica o cast coluna a coluna e embute metadata de rastreabilidade no footer do Parquet.
+
+O cast é não-destrutivo: se mais de 5% dos valores de uma coluna não puderem ser convertidos para o tipo declarado, a coluna é mantida como string e o evento é registrado como WARNING — nunca silencioso, nunca fatal. Booleanos reconhecem os domínios bancários comuns (`S/N`, `0/1`, `SIM/NÃO`, `TRUE/FALSE`). Datas tentam o formato declarado no `business_rules` do Manifest e fazem fallback para os formatos brasileiros conhecidos.
+
+`promote_to_parquet()` passou a aceitar `contract=None` como parâmetro opcional. Quando o contrato é passado, aplica o schema declarado. Quando não é, mantém o comportamento anterior por inferência. A mudança é aditiva e backward-compatible.
+
+`prefect_flow.py` e `run_pipeline.py` foram atualizados para carregar o contrato antes da promoção e passá-lo ao `promote_to_parquet()`. O log passou a indicar `schema=manifest` ou `schema=inferido` em cada promoção.
+
+Todo Parquet gerado agora carrega metadata rastreável no footer do arquivo:
+
+```
+nimbus.schema_source    : manifest_validated | manifest_draft | inferred
+nimbus.manifest_version : 1.0.0
+nimbus.table            : tb_clientes
+nimbus.generated_at     : 2025-08-20T14:32:00
+nimbus.warnings_count   : 0
+```
+
+Isso torna o Silver auto-documentado: qualquer ferramenta que leia o Parquet sabe se os tipos foram governados pelo Data Steward ou inferidos automaticamente.
+
+A sprint encerrou com 231 testes passando (46 novos em `test_schema_utils.py` e 10 novos em `test_storage.py`).

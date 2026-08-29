@@ -73,7 +73,7 @@ nimbus/
 `-- data/                     Camadas medallion (persistem no host via Docker volume)
 ```
 
-O fluxo de dados segue a arquitetura medallion: o arquivo bruto entra no Bronze no formato original, passa pela validação de contrato e pelo profiling DuckDB, e é promovido para o Silver já em formato Parquet com compressão Snappy. O Bronze preserva o original em `_archive/` para rastreabilidade. Arquivos com quebra de contrato são isolados na quarentena sem interromper o restante.
+O fluxo de dados segue a arquitetura medallion: o arquivo bruto entra no Bronze no formato original, passa pela validação de contrato e pelo profiling DuckDB, e é promovido para o Silver em formato Parquet com compressão Snappy. A promoção usa os tipos declarados no Manifest — não os inferidos pelo PyArrow — garantindo que o Silver reflita o que o Data Steward validou. O Bronze preserva o original em `_archive/` para rastreabilidade. Arquivos com quebra de contrato são isolados na quarentena sem interromper o restante.
 
 ```
 Arquivo bruto (CSV / JSON / Fixed-Width / SAS7BDAT)
@@ -171,7 +171,7 @@ O único arquivo que o usuário precisa editar é o `.env`. O `config.py` lê au
 | `python tasks.py breaking` | Simula quebra de contrato e testa o DLQ |
 | `python tasks.py metrics` | Resumo do último run |
 | `python tasks.py issues` | Lista apenas registros com problema |
-| `python tasks.py test` | Roda os 175 testes unitários |
+| `python tasks.py test` | Roda os 231 testes unitários |
 | `python tasks.py upload-silver` | Envia Parquet do Silver para o Databricks DBFS |
 | `python tasks.py test-databricks` | Verifica conectividade com o workspace |
 | `python tasks.py check-manifest --file <path>` | Verifica pendências de um manifest |

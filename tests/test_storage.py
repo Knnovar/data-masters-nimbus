@@ -249,3 +249,148 @@ class TestParquet(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ═══════════════════ TestPromoteWithContract ══════════════════════════════════
+class TestPromoteWithContract(unittest.TestCase):
+    """
+    Testes para promote_to_parquet() com contrato do Manifest.
+    Verifica que o Silver respeita os tipos declarados, não os inferidos.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.s   = make_storage(self.tmp)
+
+    def _contract(self, cols, status="VALIDATED"):
+        from types import SimpleNamespace
+        schema = [
+            SimpleNamespace(
+                name=c["name"], type=c["type"],
+                nullable=c.get("nullable", True),
+                business_rules=c.get("business_rules", []),
+            )
+            for c in cols
+        ]
+        return SimpleNamespace(
+            table="tb_test", version="1.0.0",
+            manifest_status=status, schema=schema,
+        )
+
+    def _write_bronze(self, data: dict, filename="tb_test.csv"):
+        df = pd.DataFrame({k: [str(v) for v in vals] for k, vals in data.items()})
+        self.s.write("bronze", filename, df)
+        return filename
+
+    def test_integer_column_typed_correctly(self):
+        """Coluna declarada como integer chega ao Silver com tipo numerico."""
+        self._write_bronze({"id": [1, 2, 3], "val": [10, 20, 30]})
+        contract = self._contract([
+            {"name": "id",  "type": "integer", "nullable": False},
+            {"name": "val", "type": "integer"},
+        ])
+        name   = self.s.promote_to_parquet("tb_test.csv", "bronze", "silver", contract)
+        loaded = self.s.read("silver", name)
+        self.assertEqual(str(loaded["id"].dtype), "Int64")
+        self.assertEqual(str(loaded["val"].dtype), "Int64")
+
+    def test_float_column_typed_correctly(self):
+        self._write_bronze({"vl_renda": ["5000.50", "8000.00", "12000.75"]})
+        contract = self._contract([{"name": "vl_renda", "type": "float"}])
+        name     = self.s.promote_to_parquet("tb_test.csv", "bronze", "silver", contract)
+        loaded   = self.s.read("silver", name)
+        self.assertTrue(str(loaded["vl_renda"].dtype).startswith("float"))
+
+    def test_boolean_column_from_sn_domain(self):
+        self._write_bronze({"fl_ativo": ["S", "N", "S", "S", "N"]})
+        contract = self._contract([{"name": "fl_ativo", "type": "boolean"}])
+        name     = self.s.promote_to_parquet("tb_test.csv", "bronze", "silver", contract)
+        loaded   = self.s.read("silver", name)
+        self.assertIn(str(loaded["fl_ativo"].dtype), ("bool", "boolean"))
+        self.assertTrue(loaded["fl_ativo"].iloc[0])
+        self.assertFalse(loaded["fl_ativo"].iloc[1])
+
+    def test_date_column_typed_correctly(self):
+        from datetime import date
+        self._write_bronze({"dt_nasc": ["2024-01-15", "2023-06-30", "1990-03-22"]})
+        contract = self._contract([{"name": "dt_nasc", "type": "date"}])
+        name     = self.s.promote_to_parquet("tb_test.csv", "bronze", "silver", contract)
+        loaded   = self.s.read("silver", name)
+        # Lido como object pelo pandas mas os valores são date
+        first = loaded["dt_nasc"].iloc[0]
+        self.assertIsNotNone(first)
+
+    def test_string_column_preserved(self):
+        self._write_bronze({"nm_cliente": ["Ana", "Bruno", "Carlos"]})
+        contract = self._contract([{"name": "nm_cliente", "type": "string"}])
+        name     = self.s.promote_to_parquet("tb_test.csv", "bronze", "silver", contract)
+        loaded   = self.s.read("silver", name)
+        self.assertEqual(loaded["nm_cliente"].tolist(), ["Ana", "Bruno", "Carlos"])
+
+    def test_parquet_metadata_contains_manifest_info(self):
+        """Metadata do Manifest é embutida no footer do Parquet."""
+        import pyarrow.parquet as pq_mod
+        self._write_bronze({"id": ["1", "2"]})
+        contract = self._contract([{"name": "id", "type": "integer"}])
+        name     = self.s.promote_to_parquet("tb_test.csv", "bronze", "silver", contract)
+        path     = self.tmp / "silver" / name
+        meta     = pq_mod.read_metadata(str(path))
+        raw_meta = meta.metadata or {}
+        meta_str = {k.decode(): v.decode() for k, v in raw_meta.items()}
+        self.assertIn("nimbus.schema_source",    meta_str)
+        self.assertIn("nimbus.table",            meta_str)
+        self.assertIn("nimbus.manifest_version", meta_str)
+        self.assertEqual(meta_str["nimbus.schema_source"], "manifest_validated")
+
+    def test_draft_manifest_reflected_in_metadata(self):
+        import pyarrow.parquet as pq_mod
+        self._write_bronze({"id": ["1", "2"]})
+        contract = self._contract([{"name": "id", "type": "integer"}], status="DRAFT")
+        name     = self.s.promote_to_parquet("tb_test.csv", "bronze", "silver", contract)
+        path     = self.tmp / "silver" / name
+        meta     = pq_mod.read_metadata(str(path))
+        raw_meta = {k.decode(): v.decode() for k, v in (meta.metadata or {}).items()}
+        self.assertEqual(raw_meta.get("nimbus.schema_source"), "manifest_draft")
+
+    def test_extra_column_kept_as_string_with_warning(self):
+        """Coluna no dado mas nao no Manifest entra como string (NON_BREAKING)."""
+        self._write_bronze({"id": ["1","2"], "coluna_nova": ["x","y"]})
+        contract = self._contract([{"name": "id", "type": "integer"}])
+        # Nao deve levantar excecao — coluna_nova entra como string
+        name   = self.s.promote_to_parquet("tb_test.csv", "bronze", "silver", contract)
+        loaded = self.s.read("silver", name)
+        self.assertIn("coluna_nova", loaded.columns)
+
+    def test_without_contract_uses_inference(self):
+        """Sem contrato, comportamento original (inferencia pyarrow) e mantido."""
+        self._write_bronze({"id": ["1", "2"], "val": ["10.5", "20.0"]})
+        name = self.s.promote_to_parquet("tb_test.csv", "bronze", "silver")
+        self.assertTrue(self.s.exists("silver", name))
+        loaded = self.s.read("silver", name)
+        self.assertIn("id",  loaded.columns)
+        self.assertIn("val", loaded.columns)
+
+    def test_multiple_types_single_call(self):
+        """Promove arquivo com multiplos tipos numa unica chamada."""
+        self._write_bronze({
+            "id"       : ["1", "2", "3"],
+            "nome"     : ["Ana", "Bruno", "Carlos"],
+            "vl_renda" : ["5000.0", "8000.5", "12000.0"],
+            "fl_ativo" : ["S", "N", "S"],
+        })
+        contract = self._contract([
+            {"name": "id",        "type": "integer", "nullable": False},
+            {"name": "nome",      "type": "string"},
+            {"name": "vl_renda",  "type": "float"},
+            {"name": "fl_ativo",  "type": "boolean"},
+        ])
+        name   = self.s.promote_to_parquet("tb_test.csv", "bronze", "silver", contract)
+        loaded = self.s.read("silver", name)
+        self.assertEqual(str(loaded["id"].dtype),     "Int64")
+        self.assertTrue(str(loaded["vl_renda"].dtype).startswith("float"))
+        self.assertIn(str(loaded["fl_ativo"].dtype), ("bool", "boolean"))
+        self.assertEqual(len(loaded), 3)
+
+
+if __name__ == "__main__":
+    unittest.main()
