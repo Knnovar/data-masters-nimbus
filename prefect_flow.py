@@ -244,33 +244,28 @@ def task_profile(validated):
     _log("JOB-DM-003", "PROFILE/{}".format(table), "STARTED",
          "reading bronze/{}".format(validated["filename"]))
     try:
-        import yaml
-        from src.validation.contracts import DataContract
         storage  = get_storage()
         csv_path = storage.read_path("bronze", validated["filename"])
         payload  = profile(csv_path)
-
         # Carrega contrato para tipagem governada no Silver
         contract = None
-        contract_filename = validated.get("contract_filename")
-        if contract_filename and storage.exists("contracts", contract_filename):
+        contract_fn = validated.get("contract_filename")
+        if contract_fn and storage.exists("contracts", contract_fn):
             try:
-                contract_path = storage.read_path("contracts", contract_filename)
-                with open(contract_path, encoding="utf-8") as f:
+                import yaml
+                from src.validation.contracts import DataContract
+                cp = storage.read_path("contracts", contract_fn)
+                with open(cp, encoding="utf-8") as f:
                     contract = DataContract.from_dict(yaml.safe_load(f))
             except Exception as ce:
                 _log("JOB-DM-003", "PROFILE/{}".format(table), "WARN",
-                     "contrato nao carregado, usando inferencia: {}".format(ce))
-
+                     "contrato nao carregado: {}".format(ce))
         parquet_filename = storage.promote_to_parquet(
-            validated["filename"], "bronze", "silver", contract=contract
-        )
+            validated["filename"], "bronze", "silver", contract=contract)
         _log("JOB-DM-003", "PROFILE/{}".format(table), "ENDED_OK",
-             "rows={} ms={} promoted=bronze->silver parquet={} schema={}".format(
-                 payload["rows"], payload["profiling_ms"], parquet_filename,
-                 "manifest" if contract else "inferido"))
-        return {**validated, "profiler_payload": payload,
-                "silver_filename": parquet_filename}
+             "rows={} ms={} promoted=bronze->silver".format(
+                 payload["rows"], payload["profiling_ms"]))
+        return {**validated, "profiler_payload": payload}
     except Exception as e:
         _log("JOB-DM-003", "PROFILE/{}".format(table), "ENDED_NOTOK", str(e))
         raise

@@ -111,6 +111,71 @@ def cmd_prefect_run(args):
     return run(["prefect", "deployment", "run", "data-masters-pipeline/baseline-manual"])
 
 
+# ── Databricks ───────────────────────────────────────────────────────────────
+
+def cmd_test_databricks(args):
+    """Diagnostico em 4 niveis: token, warehouse, schema, DBFS."""
+    import sys; sys.path.insert(0, str(ROOT))
+    try:
+        from src.connectors.databricks_uploader import get_uploader
+        result = get_uploader().diagnose()
+        return 0 if result.all_ok else 1
+    except ValueError as e:
+        print("[ERRO] {}".format(e))
+        print("Configure em .env: DATABRICKS_HOST, DATABRICKS_TOKEN, DATABRICKS_WAREHOUSE_ID")
+        return 1
+
+def cmd_upload_silver(args):
+    """Upload Silver -> DBFS -> Delta -> metastore (--table, --no-comments, --dry-run)."""
+    import sys, yaml; sys.path.insert(0, str(ROOT))
+    import config as cfg
+    table_filter = _get_opt(args, "--table")
+    no_comments  = "--no-comments" in args
+    dry_run      = "--dry-run" in args
+    if dry_run:
+        print("[DRY-RUN] Validando configuracao sem enviar dados...")
+        try:
+            from src.connectors.databricks_uploader import get_uploader
+            result = get_uploader().diagnose()
+            return 0 if result.all_ok else 1
+        except ValueError as e:
+            print("[ERRO] {}".format(e)); return 1
+    try:
+        from src.connectors.databricks_uploader import get_uploader
+        uploader = get_uploader()
+    except ValueError as e:
+        print("[ERRO] {}".format(e))
+        print("Execute primeiro: python tasks.py test-databricks"); return 1
+    silver_dir = cfg.DATA_DIR / "processed"
+    parquets   = sorted(silver_dir.glob("*.parquet"))
+    if not parquets:
+        print("[UPLOAD] Nenhum Parquet em data/processed/")
+        print("         Execute: python tasks.py baseline"); return 1
+    if table_filter:
+        parquets = [p for p in parquets if table_filter in p.stem]
+        if not parquets:
+            print("[UPLOAD] Nenhum arquivo para: {}".format(table_filter)); return 1
+    errors = 0
+    for pq_path in parquets:
+        tbl = pq_path.stem
+        contract = None
+        cf = cfg.DATA_DIR / "contracts" / "{}.yaml".format(tbl)
+        if cf.exists():
+            try:
+                from src.validation.contracts import DataContract
+                with open(cf, encoding="utf-8") as f:
+                    contract = DataContract.from_dict(yaml.safe_load(f))
+            except Exception: pass
+        try:
+            full = uploader.upload_and_register(pq_path, table_name=tbl,
+                                                contract=contract, skip_comments=no_comments)
+            print("[UPLOAD] OK: {}".format(full))
+        except Exception as e:
+            print("[ERRO] {}: {}".format(pq_path.name, e)); errors += 1
+    print()
+    print("[UPLOAD] {}/{} tabelas enviadas".format(len(parquets)-errors, len(parquets)))
+    return 0 if errors == 0 else 1
+
 # ── Testes ────────────────────────────────────────────────────────────────────
 
 def cmd_test(args):
@@ -174,7 +239,9 @@ COMMANDS = {
     "extract-csv"       : (cmd_extract_csv,       "Extrai manifest de CSV (--file --table)"),
     "prefect-setup"     : (cmd_prefect_setup,     "Cria work pool e registra deployments"),
     "prefect-run"       : (cmd_prefect_run,       "Dispara run baseline via Prefect"),
-    "test"              : (cmd_test,              "Roda a suite de testes (148 testes)"),
+    "test"              : (cmd_test,              "Roda a suite de testes"),
+    "test-databricks"   : (cmd_test_databricks,   "Diagnostico em 4 niveis: token, warehouse, schema, DBFS"),
+    "upload-silver"     : (cmd_upload_silver,      "Upload Silver -> DBFS -> Delta -> metastore (--table, --no-comments, --dry-run)"),
     "setup"             : (cmd_setup,             "Instala dependencias"),
     "clean"             : (cmd_clean,             "Remove __pycache__"),
     "clean-data"        : (cmd_clean_data,        "Remove dados gerados (pede confirmacao)"),

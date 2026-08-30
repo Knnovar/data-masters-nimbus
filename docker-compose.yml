@@ -1,5 +1,4 @@
 services:
-
   minio:
     image: minio/minio:latest
     container_name: nimbus-minio
@@ -78,12 +77,13 @@ services:
       OLLAMA_MODEL:     ${OLLAMA_MODEL:-phi3.5}
       SKIP_SLM:         ${SKIP_SLM:-false}
       PREFECT_API_URL:  http://127.0.0.1:4200/api
-      DATABRICKS_HOST:        ${DATABRICKS_HOST:-}
-      DATABRICKS_TOKEN:       ${DATABRICKS_TOKEN:-}
-      DATABRICKS_AUTO_UPLOAD: ${DATABRICKS_AUTO_UPLOAD:-false}
-      DATABRICKS_DBFS_BASE:   ${DATABRICKS_DBFS_BASE:-/nimbus/silver}
-      DATABRICKS_CATALOG:     ${DATABRICKS_CATALOG:-hive_metastore}
-      DATABRICKS_SCHEMA:      ${DATABRICKS_SCHEMA:-nimbus}
+      DATABRICKS_HOST:         ${DATABRICKS_HOST:-}
+      DATABRICKS_TOKEN:        ${DATABRICKS_TOKEN:-}
+      DATABRICKS_WAREHOUSE_ID: ${DATABRICKS_WAREHOUSE_ID:-}
+      DATABRICKS_AUTO_UPLOAD:  ${DATABRICKS_AUTO_UPLOAD:-false}
+      DATABRICKS_DBFS_BASE:    ${DATABRICKS_DBFS_BASE:-/nimbus/silver}
+      DATABRICKS_CATALOG:      ${DATABRICKS_CATALOG:-hive_metastore}
+      DATABRICKS_SCHEMA:       ${DATABRICKS_SCHEMA:-nimbus}
     ports:
       - "4200:4200"
     volumes:

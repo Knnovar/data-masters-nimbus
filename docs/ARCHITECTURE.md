@@ -1,115 +1,86 @@
 # Arquitetura — Projeto Nimbus
 
-Este documento descreve a estrutura técnica do pipeline, as decisões de design que moldaram cada componente e como eles se conectam. Para uma visão geral e instruções de uso, consulte o [README](../README.md).
+Este documento descreve a estrutura técnica do pipeline, as decisões de design que moldaram cada componente e como eles se conectam. Para uma visão geral do projeto e instruções de uso, consulte o [README](../README.md).
 
 ---
 
 ## O fluxo de dados de ponta a ponta
 
-O dado chega na landing zone no formato que o sistema de origem produz — CSV, JSON, Fixed-Width ou SAS7BDAT. Um módulo de normalização garante que o arquivo está em UTF-8 com terminadores LF antes de qualquer processamento. Arquivos em EBCDIC são detectados e sinalizados para tratamento manual sem travar o pipeline.
+O dado chega na landing zone no formato que o sistema de origem produz — pode ser CSV, JSON, Fixed-Width ou SAS7BDAT. Antes de qualquer processamento, um módulo de normalização garante que o arquivo está em UTF-8 com terminadores de linha LF, independentemente do sistema operacional que gerou o arquivo. Arquivos em EBCDIC são detectados e sinalizados para tratamento manual, sem que o pipeline trave.
 
-A partir daí, o arquivo entra na camada Bronze e passa pela validação de contrato. Quebras de schema isolam o arquivo na quarentena sem interromper as demais tabelas. Tabelas que passam seguem para o profiling via DuckDB, são promovidas para o Silver já em formato Parquet com compressão Snappy, e têm sua documentação gerada pela SLM. O arquivo original permanece em `bronze/_archive/` para rastreabilidade. Por fim, o upload opcional para o Databricks envia o Parquet para o DBFS e registra a tabela no metastore.
+A partir daí, o arquivo entra na camada Bronze e passa pela validação de contrato. Se o schema não bate com o que foi declarado no Manifest — uma coluna obrigatória removida, por exemplo — o arquivo é isolado na quarentena sem interromper o processamento das demais tabelas. Se a mudança é não-quebradora, como uma coluna nova adicionada pela origem, o pipeline avança com um aviso registrado.
+
+As tabelas que passam pela validação seguem para o profiling via DuckDB, são promovidas para Silver e têm sua documentação gerada pela SLM. Por fim, métricas de qualidade são calculadas e consolidadas em um relatório por execução.
 
 ```
 Arquivo bruto
      |
  Normalização de encoding
      |
-  [ BRONZE ]  formato original
+  [ BRONZE ]
      |
   Validação de contrato ------ breaking change ------> [ QUARENTENA ]
      |
   Profiling (DuckDB)
      |
-  [ SILVER ]  Parquet / Snappy          [ BRONZE/_archive/ ]  original preservado
+  [ SILVER ]
      |
   SLM documenta
      |
   Métricas + Relatório
-     |
-  Upload Databricks DBFS (opcional)
 ```
 
 ---
 
 ## Arquitetura Medallion
 
-| Camada | Diretório | Formato | Papel |
-|---|---|---|---|
-| Bronze | `data/landing/` | Original (CSV, JSON, TXT…) | Dado bruto como chegou |
-| Bronze Archive | `data/landing/_archive/` | Original | Cópia preservada após promoção |
-| Silver | `data/processed/` | Parquet (Snappy) | Dado validado e tipado |
-| Gold | `data/gold/` | Parquet | Métricas agregadas (Sprint futura) |
-| Quarantine | `data/quarantine/` | Original | Breaking changes isolados |
-| Contracts | `data/contracts/` | YAML | Manifests de contrato |
-| Metrics | `data/metrics/` | JSON | Métricas por execução |
-| Reports | `data/reports/` | Markdown | Documentação SLM + relatório |
+O projeto segue a arquitetura medallion com sete camadas mapeadas em diretórios locais ou buckets S3 quando o backend é MinIO:
+
+O **Bronze** é a landing zone — o dado bruto exatamente como chegou. O **Silver** é onde vão os arquivos que passaram pela validação e pelo profiling. O **Gold** está reservado para métricas agregadas em futuras iterações. A **Quarentena** isola arquivos com breaking changes sem descartá-los — eles ficam disponíveis para análise. Os **Contracts** armazenam os Manifests YAML. As **Metrics** guardam os JSONs de métricas por execução. Os **Reports** reúnem a documentação gerada pela SLM e o relatório consolidado da execução.
 
 ---
 
-## Storage e Parquet
+## A camada de Storage
 
-`src/storage/storage.py` abstrai onde os dados fisicamente residem. Todos os módulos usam a mesma interface sem saber se estão em disco local ou MinIO.
+`src/storage/storage.py` é a abstração que impede que o restante do pipeline saiba onde os dados fisicamente residem. Todos os módulos interagem com a mesma interface — `read()`, `write()`, `move()`, `write_text()` — sem importar se estão trabalhando com disco local ou um bucket MinIO.
 
-A interface expõe dois métodos de gravação distintos para Bronze e Silver. O `write()` grava CSV — usado para o dado bruto na landing zone. O `write_parquet()` serializa um DataFrame com `pyarrow` em formato Parquet com compressão Snappy — usado pelo `promote_to_parquet()` ao mover dado validado para o Silver.
+O `LocalStorage` é o backend padrão, sem nenhuma dependência externa. O `MinIOStorage` é ativado com `USE_MINIO = True` em `config.py` e requer `docker compose up -d`. A troca é transparente para o pipeline inteiro.
 
-O `promote_to_parquet()` é o método central da promoção Bronze → Silver. Ele lê o arquivo no formato original, converte para Parquet, grava no Silver e move o original para `_archive/`. Se `DATABRICKS_AUTO_UPLOAD=true` estiver configurado, dispara o upload para o DBFS na sequência — sem bloquear o pipeline em caso de falha.
+Uma decisão importante: o método `read()` detecta o formato pelo sufixo do arquivo e usa o parser correto automaticamente. Um `.json` é lido via `json_normalize`, um `.txt` é lido via `read_fwf` usando os colspecs gravados em um arquivo sidecar `.layout` gerado no momento da escrita. Isso garante que cada formato pode percorrer o pipeline sem tratamento especial nos módulos downstream.
 
-O `read()` detecta o formato pela extensão e usa o parser correto: `.parquet` via `pd.read_parquet`, `.json` via `json_normalize`, `.txt` via `read_fwf` com colspecs do sidecar `.layout`, `.csv` via `pd.read_csv`.
-
-Dois backends disponíveis, intercambiáveis sem mudança de código:
-
-`LocalStorage` é o padrão — disco local, sem dependências. `MinIOStorage` é ativado com `USE_MINIO=true` e aponta para o container MinIO do `docker-compose.yml` em ambiente Docker.
-
----
-
-## Deploy com Docker
-
-O projeto inclui um stack Docker completo com três serviços na mesma rede interna:
-
-**`nimbus`** — o pipeline em si. Constrói a partir do `Dockerfile`, monta `data/` como volume bind-mount para que os arquivos Parquet persistam no host e fiquem visíveis fora do container.
-
-**`ollama`** — serve o modelo de linguagem. O modelo configurado em `OLLAMA_MODEL` é baixado automaticamente no primeiro boot via `ollama pull`. Volumes nomeados persistem os modelos entre reinicializações. GPU NVIDIA e AMD/ROCm são suportadas via configuração comentada no `docker-compose.yml`.
-
-**`minio`** — storage S3-compatível. Buckets são criados automaticamente no startup. Console web disponível em `http://localhost:9001`.
-
-O `scripts/entrypoint.sh` coordena a sequência de inicialização: aguarda MinIO e Ollama ficarem saudáveis via healthcheck, baixa o modelo se necessário, inicia o servidor Prefect, registra os deployments, sobe o worker e então executa o pipeline com o cenário configurado em `.env`. Após a execução, o container permanece vivo para comandos manuais.
+Essa abstração foi projetada para ser o primeiro passo da migração para ADLS Gen2 — uma nova implementação de `StorageBase` é suficiente para trocar o backend sem tocar em nenhum outro módulo. O plano detalhado está em [MIGRATION_PLAN.md](MIGRATION_PLAN.md).
 
 ---
 
 ## Suporte multi-formato
 
-O projeto trata dados bancários como eles realmente chegam — em formatos heterogêneos de sistemas distintos.
+O projeto trata dados bancários como eles realmente chegam — em formatos heterogêneos de sistemas distintos. CSV com semicolon de sistemas Windows, JSON aninhado de APIs, arquivos posicionais de mainframe, SAS7BDAT do sistema de crédito.
 
-Para a geração de dados fictícios da PoC, o projeto usa o padrão Strategy: `CSVWriter`, `JSONWriter` e `FixedWidthWriter` recebem um DataFrame em memória e devolvem `(filename, content)`. O gerador de domínio nunca sabe em qual formato o resultado será gravado. O `FixedWidthWriter` gera também um sidecar `.layout` com os colspecs exatos, que o `LocalStorage.read()` usa para garantir a leitura correta.
+Para a geração dos dados fictícios da PoC, o projeto usa o padrão Strategy: cada formato tem um Writer (`CSVWriter`, `JSONWriter`, `FixedWidthWriter`) que recebe um DataFrame em memória e devolve `(filename, content)`. A lógica de domínio que gera os dados nunca sabe em qual formato o resultado será gravado.
+
+O `FixedWidthWriter` tem um comportamento específico: ao serializar, gera também um arquivo sidecar `.layout` com os colspecs exatos de cada campo. Esse arquivo é lido pelo `LocalStorage.read()` para garantir que a leitura posterior usa as posições corretas — sem esse sidecar, `read_fwf` precisaria inferir as colunas por análise heurística, o que introduziria erros.
 
 ---
 
-## Validação e schema evolution
+## Validação e detecção de schema evolution
 
-O `validator.py` classifica cada arquivo em três resultados. `PASS` ou `WARNING` quando os dados são conformes ao contrato, com eventuais anomalias dentro da tolerância configurada. `DLQ` quando há uma quebra de schema — coluna obrigatória ausente ou tipo incompatível — e o arquivo vai para quarentena. `WARNING NON_BREAKING` quando uma coluna nova é adicionada pela origem, e o pipeline avança normalmente.
+O `validator.py` compara o arquivo recebido com o contrato declarado no Manifest e classifica o resultado em três categorias. O cenário feliz retorna `PASS` ou `WARNING` — quando há nulos acima da tolerância ou duplicatas dentro de limites aceitáveis. Um breaking change, como uma coluna obrigatória removida ou um tipo incompatível, retorna `DLQ` e move o arquivo para quarentena. Uma mudança não-quebradora, como uma coluna nova adicionada pela origem, retorna `WARNING` com o tipo de evolução registrado.
+
+O Manifest em status `DRAFT` não bloqueia o pipeline, mas gera um aviso em todas as execuções enquanto não for promovido para `VALIDATED`.
 
 ---
 
 ## Profiling
 
-O profiler usa DuckDB como engine principal pela velocidade, sem servidor nem overhead. Para formatos não suportados diretamente pelo DuckDB — JSON e Fixed-Width — o fallback é Pandas com a mesma lógica de extração de estatísticas. O profiler gera por coluna: percentual de nulos, contagem de valores únicos, min/max para numéricos e os cinco valores mais frequentes para categóricos. Essas estatísticas são o que a SLM recebe junto com o Manifest.
+O profiler usa DuckDB como engine principal pela velocidade — sem servidor, sem overhead. Para arquivos em formatos não suportados diretamente pelo DuckDB (JSON, Fixed-Width) ou quando o DuckDB não está disponível no ambiente, o fallback é Pandas com a mesma lógica de extração de estatísticas.
 
----
-
-## Integração com Databricks
-
-`src/connectors/databricks_uploader.py` integra o pipeline com o Databricks via REST API, sem necessidade de cluster Spark — compatível com Databricks for Students (Community Edition) que disponibiliza apenas SQL Warehouse.
-
-O upload usa a DBFS API em três etapas: abre um handle de escrita, envia o arquivo em blocos de 1MB em base64 e fecha o handle. Após o upload, a tabela é registrada no metastore via Statement Execution API, tornando-a consultável diretamente no SQL Editor com `SELECT * FROM nimbus.tb_clientes LIMIT 100`.
-
-A integração é configurada em `config.py` via variáveis de ambiente e nunca bloqueia o pipeline — falhas no upload são logadas e ignoradas.
+O profiler gera por coluna: percentual de nulos, contagem de valores únicos, min, max e média para numéricos, e os cinco valores mais frequentes para categóricos. Essas estatísticas são o que a SLM recebe junto com o Manifest.
 
 ---
 
 ## Orquestração
 
-Dois modos de execução com a mesma lógica de negócio. O `run_pipeline.py` é execução direta, sem dependência de orquestrador. O `prefect_flow.py` é a mesma pipeline decorada com `@task` e `@flow` do Prefect 2.x, com cada task mapeada para um job Control-M com exit codes padronizados.
+O projeto oferece dois modos de execução com a mesma lógica de negócio. O `run_pipeline.py` é execução direta, sem dependência de orquestrador — adequado para desenvolvimento e para integração com scripts externos. O `prefect_flow.py` é a mesma pipeline decorada com `@task` e `@flow` do Prefect 2.x, com cada task mapeada para um job Control-M com exit codes padronizados.
 
 | Task Prefect | Job Control-M | Exit codes |
 |---|---|---|
@@ -121,49 +92,14 @@ Dois modos de execução com a mesma lógica de negócio. O `run_pipeline.py` é
 | `task_collect_metrics` | JOB-DM-005-METRICS | 0=OK |
 | `task_report` | JOB-DM-006-REPORT | 0=OK |
 
-Em ambiente Docker, o Prefect server, os deployments e o worker sobem automaticamente via `entrypoint.sh`. O modo `--no-prefect` executa o fluxo sem registrar nada no servidor, útil para integração direta com Control-M.
+O modo `--no-prefect` executa o mesmo fluxo sem registrar nada no servidor Prefect, o que torna a integração com Control-M simples:
 
----
-
-## Tipagem governada pelo Manifest
-
-O Silver não apenas armazena dados em Parquet — armazena dados com os tipos que o Data Steward declarou no Manifest, não com os tipos que o PyArrow inferiria sozinho.
-
-O módulo `src/storage/schema_utils.py` é responsável por essa conversão. Ele mapeia os tipos semânticos do Manifest para tipos físicos PyArrow:
-
-| Tipo no Manifest | Tipo PyArrow | Comportamento especial |
-|---|---|---|
-| `string` | `pa.string()` | Sem transformação |
-| `integer` | `pa.int64()` | Int64 nullable — preserva NaN sem virar float |
-| `float` | `pa.float64()` | `pd.to_numeric` com coerção |
-| `boolean` | `pa.bool_()` | Reconhece S/N, 0/1, SIM/NÃO, TRUE/FALSE |
-| `date` | `pa.date32()` | Tenta formato declarado, faz fallback para formatos BR |
-| `datetime` | `pa.timestamp('us')` | Inferência automática se nenhum formato funcionar |
-
-O cast é não-destrutivo: se mais de 5% dos valores de uma coluna não puderem ser convertidos, ela é mantida como string e o evento é registrado como WARNING — nunca silencioso, nunca fatal. Isso protege contra contratos incorretos sem travar o pipeline.
-
-Todo Parquet gerado carrega metadata rastreável no footer:
-
-```
-nimbus.schema_source    : manifest_validated | manifest_draft
-nimbus.manifest_version : 1.0.0
-nimbus.table            : tb_clientes
-nimbus.generated_at     : 2025-08-20T14:32:00
-nimbus.warnings_count   : 0
-```
-
-Para inspecionar o schema de um Parquet do Silver:
-
-```python
-import pyarrow.parquet as pq
-meta = pq.read_metadata("data/processed/tb_clientes.parquet")
-schema = pq.read_schema("data/processed/tb_clientes.parquet")
-# meta.metadata contém os campos nimbus.*
-# schema lista cada coluna com seu tipo PyArrow
+```bash
+python prefect_flow.py --no-prefect --scenario baseline --run-id %%JOBRUNID%%
 ```
 
 ---
 
 ## Métricas e quality score
 
-A cada execução, `metrics_collector.py` calcula um score de 0 a 100 por tabela combinando quatro dimensões: status da validação (40 pontos), taxa de nulos em colunas obrigatórias (30 pontos), taxa de duplicatas (20 pontos) e cobertura de descrições no schema (10 pontos). Scores ficam em JSON em `data/metrics/` e são consultáveis via `python show_metrics.py`.
+A cada execução, `metrics_collector.py` calcula um score de 0 a 100 por tabela combinando quatro dimensões: o status da validação (40 pontos), a taxa de nulos em colunas obrigatórias (30 pontos), a taxa de duplicatas (20 pontos) e a cobertura de descrições no schema (10 pontos). Esses scores ficam em JSON em `data/metrics/` e são consultáveis via `python show_metrics.py`.
