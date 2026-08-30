@@ -1,3 +1,6 @@
-Erro na inferencia SLM: HTTPConnectionPool(host='localhost', port=11434): Read timed out. (read timeout=600)
+## Dicionário Técnico: Tabela `tb_clientes`
 
+| Campo          | Propósito                                                                                 | Tipo         | Comportamento Esperado                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                
+
+---
 > **[AI_METADATA_STATUS: DRAFT]**

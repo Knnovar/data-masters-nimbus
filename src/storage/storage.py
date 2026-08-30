@@ -159,11 +159,13 @@ class LocalStorage(StorageBase):
 
         # Upload opcional para Databricks
         if to_layer == "silver":
-            try:
-                from src.connectors.databricks_uploader import upload_silver_table
-                upload_silver_table(self._path(to_layer, pq), table_name=Path(filename).stem)
-            except Exception as e:
-                print("   [DATABRICKS] Upload ignorado: {}".format(e))
+            from src.connectors.databricks_uploader import upload_silver_table
+            upload_silver_table(self._path(to_layer, pq), table_name=Path(filename).stem)
+            # try:
+            #     from src.connectors.databricks_uploader import upload_silver_table
+            #     upload_silver_table(self._path(to_layer, pq), table_name=Path(filename).stem)
+            # except Exception as e:
+            #     print("   [DATABRICKS] Upload ignorado: {}".format(e))
 
         return pq
 
