@@ -98,6 +98,8 @@ class DatabricksUploader:
         if not resp.ok: raise RuntimeError(f"SQL erro {resp.status_code}: {resp.text[:300]}\nStmt: {stmt[:200]}")
         result = resp.json()
         state  = result.get("status", {}).get("state", "UNKNOWN")
+        if wait and state != "SUCCEEDED":
+            raise RuntimeError(("SQL nao concluido (state={}): {}".format(state, stmt[:200])))
         if state == "FAILED":
             raise RuntimeError("SQL falhou: {}".format(result.get("status",{}).get("error",{}).get("message","sem detalhe")))
         return result
@@ -202,7 +204,7 @@ class DatabricksUploader:
             except Exception as e:
                 print(f"[DATABRICKS]   [WARN] Comentario de '{field.name}' falhou: {e}")
         try:
-            self._sql(f"ALTER TABLE {full} ALTER COLUMN `{self.PARTITION_COLUMN}`"
+            self._sql(f"ALTER TABLE {full} ALTER COLUMN `{self.PARTITION_COLUMN}` "
                         f"COMMENT '{self._esc(self.PARTITION_COMMENT)}'")
             count += 1
         except Exception as e:
