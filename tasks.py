@@ -114,7 +114,7 @@ def cmd_prefect_run(args):
 # ── Databricks ───────────────────────────────────────────────────────────────
 
 def cmd_test_databricks(args):
-    """Diagnostico em 4 niveis: token, warehouse, schema, DBFS."""
+    """Diagnostico em 4 niveis: token, warehouse, schema, Volumes."""
     import sys; sys.path.insert(0, str(ROOT))
     try:
         from src.connectors.databricks_uploader import get_uploader
@@ -126,7 +126,7 @@ def cmd_test_databricks(args):
         return 1
 
 def cmd_upload_silver(args):
-    """Upload Silver -> DBFS -> Delta -> metastore (--table, --no-comments, --dry-run)."""
+    """Upload Silver -> Volumes -> Delta -> metastore (--table, --no-comments, --dry-run)."""
     import sys, yaml; sys.path.insert(0, str(ROOT))
     import config as cfg
     table_filter = _get_opt(args, "--table")
@@ -240,8 +240,8 @@ COMMANDS = {
     "prefect-setup"     : (cmd_prefect_setup,     "Cria work pool e registra deployments"),
     "prefect-run"       : (cmd_prefect_run,       "Dispara run baseline via Prefect"),
     "test"              : (cmd_test,              "Roda a suite de testes"),
-    "test-databricks"   : (cmd_test_databricks,   "Diagnostico em 4 niveis: token, warehouse, schema, DBFS"),
-    "upload-silver"     : (cmd_upload_silver,      "Upload Silver -> DBFS -> Delta -> metastore (--table, --no-comments, --dry-run)"),
+    "test-databricks"   : (cmd_test_databricks,   "Diagnostico em 4 niveis: token, warehouse, schema, Volumes"),
+    "upload-silver"     : (cmd_upload_silver,      "Upload Silver -> Volumes -> Delta -> metastore (--table, --no-comments, --dry-run)"),
     "setup"             : (cmd_setup,             "Instala dependencias"),
     "clean"             : (cmd_clean,             "Remove __pycache__"),
     "clean-data"        : (cmd_clean_data,        "Remove dados gerados (pede confirmacao)"),

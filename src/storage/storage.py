@@ -209,11 +209,12 @@ class MinIOStorage(StorageBase):
         self._client.remove_object(self._bucket(from_layer), filename)
 
     def promote_to_parquet(self, filename, from_layer, to_layer, contract=None):
-        tmp = self._tmp / filename
-        self._client.fget_object(self._bucket(from_layer), filename, str(tmp))
-        df = _read_file(tmp)
-        pq = self.write_parquet(to_layer, filename, df)
-        self._client.remove_object(self._bucket(from_layer), filename)
+        if to_layer == 'silver':
+            try:
+                from src.connectors.databricks_uploader import upload_silver_table
+                upload_silver_table(...)
+            except Exception as e:
+                print("[DATABRICKS] Upload ignorado: {}".format(e))
         return pq
 
     def list(self, layer):

@@ -1,40 +1,60 @@
-## Dicionário Técnico: Tb_contratos_credito
+# Dicionário Técnico: tb_contratos_credito
 
-**Business Context:**
-Contratos de produtos de crédito ativos e encerrados, que integram todos os produtos ofertados pelo banco. Esses contratos são essenciais para a preparação mensal do Sistema de Crédito (SCR).
+## Visão Geral
 
-**Dados de Contrato:**
+A tabela `tb_contratos_credito` armazena dados sobre contratos de produtos de crédito ativos e encerrados. Ela é gerida pela equipe `squad-credito` e está em versão `3.0.0`. Os dados são extraídos diariamente do sistema `SISTEMA_CREDITO_SAS` em formato `sas7bdat` e codificados em `latin-1`. A tabela alimenta o SCR mensalmente e é classificada como restrita, com uma retenção de 10 anos. As tags regulatórias incluem SCR, BACEN_4658 e LGPD.
 
-1. `cd_cliente`: Código do cliente, referência ao cliente no sistema `tb_clientes`. Propósito: Identificar o cliente associado a cada contrato.
-2. `dt_contrato`: Data de abertura do contrato. Propósito: Registrar quando o contrato foi estabelecido.
-3. `vl_limite`: Limite de crédito aprovado, em BRL. Propósito: Determinar o valor máximo disponível para o produto de crédito.
-4. `vl_utilizado`: Saldo utilizado atual, em BRL. Propósito: Monitorar o valor atualmente emprestado pelo cliente.
-5. `tp_produto`: Tipo do produto de crédito (Carta, Cheque Especial, Crédito Pessoal, Financiamento Veículo, Consignado). Propósito: Classificar o tipo de produto de crédito.
-6. `cd_status`: Status do contrato (Ativo, Encerrado, Em Atras, Renegociado). Propósito: Acompanhar o estado atual do contrato.
-7. `dt_vencimento`: Data de vencimento da última parcela ou do contrato. Propósito: Estabelecer o prazo para o pagamento ou renegociação.
-8. `nr_parcelas`: Número total de parcelas do contrato (1 para crédito rotativo). Propósito: Determinar o número de pagamentos a serem feitos.
-9. `tx_juros_am`: Taxa de juros ao mês, em percentual. Propósito: Calcular os juros mensais a serem pagos pelo cliente.
+## Colunas
 
-**Regulatory Tags:**
-- SCR
-- BACEN 4658
-- LGPD
+### id_contrato
+- **Tipo**: string
+- **Nullable**: false
+- **Descrição**: Identificador único do contrato gerado pelo sistema de crédito.
+- **SAS Label**: ID CONTRATO CREDITO
+- **Propósito de Negócio**: Serve como chave primária para identificar exclusivamente cada contrato.
+- **Comportamento Esperado**: Deve ser único e não nulo para cada registro.
+- **Anomalias**: Nenhuma anomalia observada; 100% de unicidade.
 
-**Data Classifications:**
-- Restrito: Os dados são considerados sensíveis e devem ser tratados de acordo com as regulamentações de privacidade e seguroptionais.
+### cd_cliente
+- **Tipo**: string
+- **Nullable**: false
+- **Descrição**: Referência ao cliente em `tb_clientes`.
+- **SAS Label**: CODIGO CLIENTE
+- **Propósito de Negócio**: Liga o contrato ao cliente correspondente.
+- **Comportamento Esperado**: Deve ser não nulo e corresponder a um cliente válido na tabela `tb_clientes`.
+- **Anomalias**: Nenhuma anomalia observada; 100% de unicidade.
 
-**Retention Years:**
-- 10 anos: Os dados devem ser mantidos por um período de dez anos, conforme regulamentação.
+### dt_contrato
+- **Tipo**: date
+- **Nullable**: false
+- **Descrição**: Data de abertura do contrato.
+- **SAS Label**: DATA ABERTURA CONTRATO
+- **Propósito de Negócio**: Indica quando o contrato foi inicialmente estabelecido.
+- **Comportamento Esperado**: Deve ser uma data válida e não nula.
+- **Anomalias**: Nenhuma anomalia observada; 282 valores únicos.
 
-**Business Rules:**
-- Para produtos com Cheque Especial, o valor utilizado pode exceder até 15% do limite aprovado.
-- Quando o status do contrato é EM_ATRASO, uma cobrança automática é disparada após o primeiro dia de atraso.
+### vl_limite
+- **Tipo**: float
+- **Nullable**: false
+- **Descrição**: Limite de crédito aprovado em BRL.
+- **SAS Label**: VALOR LIMITE APROVADO
+- **Propósito de Negócio**: Define o máximo que pode ser utilizado pelo cliente.
+- **Comportamento Esperado**: Deve ser não nulo e positivo.
+- **Anomalias**: Nenhuma anomalia observada; valores variam de 1065.12 a 99779.85 BRL.
 
-**Statistics from Data Profiler:**
+### vl_utilizado
+- **Tipo**: float
+- **Nullable**: false
+- **Descrição**: Saldo utilizado atual em BRL. Pode exceder `vl_limite` em produtos com tolerância.
+- **SAS Label**: VALOR UTILIZADO ATUAL
+- **Propósito de Negócio**: Mostra o valor atualmente utilizado do limite de crédito.
+- **Comportamento Esperado**: Deve ser não nulo e pode exceder `vl_limite` em até 15% para produtos como cheque especial.
+- **Anomalias**: Nenhuma anomalia observada; valores variam de 1065.12 a 99779.85 BRL.
 
-1. `cd_cliente`: Tipo VARCHAR, 0% de valores nulos, 299 identificadores únicos únicos.
-2. `dt_contrato`: Tipo DATE, 0% de valores nulos, data única.
-3. `vl_limite`: Tipo FLOAT, 0% de valores nulos, mínimo: 1065.12, má
+### tp_produto
+- **Tipo**: string
+- **Nullable**: false
+- **Descrição**: Tipo do produto de crédito. Domínio: CARTAO_CREDITO, CHEQUE_ESPECIAL,
 
 ---
 > **[AI_METADATA_STATUS: DRAFT]**

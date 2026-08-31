@@ -1,7 +1,9 @@
 """src/connectors/databricks_uploader.py — Nimbus -> Databricks via REST API (Delta Lake)."""
 from __future__ import annotations
 import json
+import re
 from pathlib import Path
+from datetime import datetime,timezone
 from typing import Optional
 import requests
 
@@ -37,6 +39,8 @@ class DatabricksUploader:
         if not host.startswith(("http://","https://")): raise ValueError("DATABRICKS_HOST deve comecar com http:// ou https://")
         if not warehouse_id:
             raise ValueError("DATABRICKS_WAREHOUSE_ID nao configurado. SQL Editor > nome do warehouse > copy ID")
+        if not volume:
+            raise ValueError("DATABRICKS_VOLUME nao configurado (ex: landing)")
         self._host = host.rstrip("/"); self._token = token
         self._warehouse_id = warehouse_id; self._volume = volume.rstrip("/")
         self._catalog = catalog; self._schema = schema
@@ -50,8 +54,23 @@ class DatabricksUploader:
         resp = self._session.post(self._url(ep), json=payload, timeout=30)
         if not resp.ok: raise RuntimeError(f"API erro {resp.status_code} em {ep}: {resp.text[:300]}")
         return resp.json() if resp.text else {}
+    _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
     def _volume_dir(self, table_name):
+        """Raiz da tabela no Volume - e o que o CTAS le."""
+        if not self._IDENT.match(table_name):
+            raise ValueError(f"Nome de tabela invalido para SQL/Volume: {table_name!r}")
         return f"/Volumes/{self._catalog}/{self._schema}/{self._volume}/{table_name}"
+
+    @staticmethod
+    def _dat_ref(dat_ref=None):
+        d = dat_ref or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", d): raise ValueError(f"dat_ref deve ser YYYY-MM-DD: {d!r}")
+        return d
+
+    def _partition_dir(self, table_name, dat_ref=None):
+        """Particao Hive da carga: <tabela>/dat_ref=YYYY-MM-DD."""
+        return f"{self._volume_dir(table_name)}/dat_ref={self._dat_ref(dat_ref)}"
 
     def _sql(self, stmt, wait=True):
         payload = {"statement": stmt, "warehouse_id": self._warehouse_id,
@@ -108,14 +127,19 @@ class DatabricksUploader:
         r.print_report()
         return r
 
-    def upload_parquet_to_folder(self, local_path, table_name=None):
-        """Envia o Parquet para o Volume do UC (PUT unico de bytes crus) e devolve a pasta"""
+    def upload_parquet_to_folder(self, local_path, table_name=None, dat_ref=None, run_id=None):
+        """Envia o Parquet para <tabela>/dat_ref=<data>/part-<data>.parquet e devolve a raiz da tabela.
+        
+        Um arquivo por dat_ref: reprocessar a mesma data sobrescreve a carga (idempotente),
+        datas diferentes convivem como particoes.
+        """
         if not Path(local_path).exists(): raise FileNotFoundError(f"Nao encontrado: {local_path}")
         tbl = table_name or Path(local_path).stem
         folder = self._volume_dir(tbl)
         target = f"{folder}/{Path(local_path).name}"
+        d = self._dat_ref(dat_ref)
         data = Path(local_path).read_bytes()
-        print(f"[DATABRICKS] Upload: {Path(local_path).name} -> dbfs:{target}")
+        print(f"[DATABRICKS] Upload: {Path(local_path).name} -> {target}" + f" (run_id={run_id})" if run_id else "")
         resp = self._session.put(f"{self._host}/api/2.0/fs/files{target}", params={"overwrite": "true"}, data=data, headers={"Content-Type": "application/octet-stream"}, timeout=50)
         if not resp.ok: raise RuntimeError(f"Files API erro {resp.status_code}: {resp.text[:300]}")
         print(f"[DATABRICKS] Upload OK: {target} ({len(data)/1024:.1f} KB)")
@@ -126,7 +150,8 @@ class DatabricksUploader:
         full = f"{self._catalog}.{self._schema}.{table_name}"
         self._sql(f"CREATE SCHEMA IF NOT EXISTS {self._catalog}.{self._schema}")
         self._sql(f"CREATE OR REPLACE TABLE {full} AS "
-                  f"SELECT * FROM read_files('{volume_folder}', format => 'parquet')")
+                  f"SELECT * FROM read_files('{volume_folder}', format => 'parquet', "
+                  f"schemaEvolutionMode => 'none', mergeSchema => true)")
         print(f"[DATABRICKS] Tabela registrada: {full} <- {volume_folder}")
         print(f"[DATABRICKS] SQL Editor: SELECT * FROM {full} LIMIT 100;")
         return full
@@ -161,9 +186,9 @@ class DatabricksUploader:
         print(f"[DATABRICKS] {count}/{len(list(schema))} colunas comentadas em {full}")
         return count
 
-    def upload_and_register(self, local_path, table_name=None, contract=None, skip_comments=False):
+    def upload_and_register(self, local_path, table_name=None, contract=None, skip_comments=False, dat_ref=None, run_id=None):
         tbl    = table_name or Path(local_path).stem
-        folder = self.upload_parquet_to_folder(local_path, table_name=tbl)
+        folder = self.upload_parquet_to_folder(local_path, table_name=tbl, dat_ref=dat_ref, run_id=run_id)
         full = self.register_or_refresh(tbl, folder)
         if not skip_comments:
             self.populate_column_comments(tbl, local_path, contract=contract)
@@ -183,27 +208,54 @@ def get_uploader():
         host         = getattr(cfg, "DATABRICKS_HOST",         ""),
         token        = getattr(cfg, "DATABRICKS_TOKEN",        ""),
         warehouse_id = getattr(cfg, "DATABRICKS_WAREHOUSE_ID", ""),
-        volume      = getattr(cfg, "DATABRICKS_VOLUME",      "nimbus"),
+        volume      = getattr(cfg, "DATABRICKS_VOLUME",      "landing"),
         catalog      = getattr(cfg, "DATABRICKS_CATALOG",      "workspace"),
         schema       = getattr(cfg, "DATABRICKS_SCHEMA",       "nimbus"),
     )
 
-def upload_silver_table(silver_path, table_name=None, contract=None):
+def publish_table(silver_path, table_name, contract=None, run_id=None, dat_ref=None):
+    """Publica uma tabela no Databricks e devolve o status - nunca levanta.
+    
+    status: OK (tabela registrada), DISABLED (DATABRICKS_AUTO__UPLOAD=False),
+    ERROR (falha real, que o chamador deve refletir no exit code).
+    """
+    import config as cfg
+    if not getattr(cfg, "DATABRICKS_AUTO_UPLOAD", False):
+        return {"table": table_name, "status": "DISABLED", "target": None, "error": None}
+    try:
+        full = upload_silver_table(silver_path, table_name=table_name, contract=contract, dat_ref=dat_ref, run_id=run_id)
+
+        if full is None:
+            return {"table": table_name, "status": "ERROR", "target": None, "error": "configuracao incompleta (host/warehouse)"}
+        return{"table": table_name, "status": "OK", "target": full, "error": None}
+    except Exception as e:
+        print("[DATABRICKS] Publicacao FALHOU em {}: {}").format(table_name, e)
+    return {"table": table_name, "status": "ERROR", "target": None, "error": str(e)}
+
+def dat_ref_from_run_id(run_id):
+    """run_YYYYMMDD_HHMMSS_xxxxx - > 'YYYY-MM-DD'. None quando nao reconhece o formato."""
+
+    m = re.match(r"^run_(\d{4})(\d{2})(\d{2})_", run_id or "")
+    return "-".join(m.groups()) if m else None
+
+def upload_silver_table(silver_path, table_name=None, contract=None, dat_ref=None, run_id=None):
     import config as cfg
     if not getattr(cfg, "DATABRICKS_AUTO_UPLOAD", False): return None
+    if dat_ref is None and run_id: dat_ref = dat_ref_from_run_id(run_id)
     host = getattr(cfg, "DATABRICKS_HOST", "")
     token = getattr(cfg, "DATABRICKS_TOKEN", "")
     wid   = getattr(cfg, "DATABRICKS_WAREHOUSE_ID", "")
+    volume = getattr(cfg, "DATABRICKS_VOLUME", "")
     missing = [k for k,v in [("DATABRICKS_HOST",host),("DATABRICKS_TOKEN",token),("DATABRICKS_WAREHOUSE_ID",wid)] if not v]
     if missing:
         print("[DATABRICKS] Upload ignorado: {} nao configurados em config.py".format(", ".join(missing)))
         return None
     try:
         u = DatabricksUploader(host=host, token=token, warehouse_id=wid,
-            dbfs_base=getattr(cfg,"DATABRICKS_VOLUME","landing"),
+            volume=getattr(cfg,"DATABRICKS_VOLUME","landing"),
             catalog=getattr(cfg,"DATABRICKS_CATALOG","workspace"),
             schema=getattr(cfg,"DATABRICKS_SCHEMA","nimbus"))
-        return u.upload_and_register(silver_path, table_name=table_name, contract=contract)
+        return u.upload_and_register(silver_path, table_name=table_name, contract=contract, dat_ref=dat_ref, run_id=run_id)
     except Exception as e:
         print(f"[DATABRICKS] Upload falhou (nao bloqueante): {e}")
         return None

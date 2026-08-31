@@ -16,6 +16,7 @@ Uso:
 import argparse
 import json
 import uuid
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -35,7 +36,7 @@ BANNER = """
 """
 
 
-def run_scenario(scenario: str, run_id: str, fmt: str = "csv") -> list[dict]:
+def run_scenario(scenario: str, run_id: str, fmt: str = "csv") -> tuple[list[dict], list[dict]]:
     """Executa um único cenário end-to-end usando a camada Storage."""
     print(f"\n{chr(9552)*66}")
     print(f"  CENARIO: {scenario.upper()}")
@@ -48,7 +49,8 @@ def run_scenario(scenario: str, run_id: str, fmt: str = "csv") -> list[dict]:
     produced = generate_all(storage, scenario=scenario, fmt=fmt)
 
     # ── 2. Loop por tabela ────────────────────────────────────────────────
-    scenario_metrics = []
+    scenario_metrics = [] 
+    publications = []
     for item in produced:
         table             = item["table"]
         filename          = item["filename"]
@@ -83,12 +85,17 @@ def run_scenario(scenario: str, run_id: str, fmt: str = "csv") -> list[dict]:
                 except Exception as ce:
                     print(f"   [SCHEMA] Contrato nao carregado: {ce}")
             parquet_filename = storage.promote_to_parquet(filename, "bronze", "silver", contract=contract)
+            from src.connectors.databricks_uploader import publish_table
+            pub = publish_table(storage.read_path("silver", parquet_filename),
+                                table_name=Path(filename).stem, contract=contract, run_id=run_id)
+            publications.append(pub)
+        
 
         # Gold: métricas agregadas
         m = collect(run_id, val_result, profiler_payload, slm_result, METRICS_DIR)
         scenario_metrics.append(m)
 
-    return scenario_metrics
+    return scenario_metrics, publications
 
 
 def print_summary(all_metrics: list[dict]) -> None:
@@ -148,10 +155,12 @@ def main():
     fmt_list = ["csv", "json", "fixed"] if args.fmt == "all" else [args.fmt]
 
     all_metrics: list[dict] = []
+    publications: list[dict] = []
     for scenario in scenarios:
         for fmt in fmt_list:
-            metrics = run_scenario(scenario, run_id, fmt=fmt)
+            metrics, pubs = run_scenario(scenario, run_id, fmt=fmt)
             all_metrics.extend(metrics)
+            publications.extend(pubs)
 
     # Relatório consolidado
     print_summary(all_metrics)
@@ -164,8 +173,18 @@ def main():
 
     print(f"  Metricas JSON : {summary_path}")
     print(f"  Relatorio MD  : {report_path}")
+    attempted = [p for p in publications if p["status"] != "DISABLED"]
+    failed = [p for p in publications if p["status"] == "ERROR"]
+    if attempted:
+        ok = sum(1 for p in attempted if p["status"] == "OK")
+        print(f"Databricks: {ok}/{len(attempted)} tabelas publicadas")
+    for p in failed:
+        print(f" [DATABRICKS] {p['table']}: {p['error']}")
     print("\n  Pipeline concluida.\n")
+
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
+    
