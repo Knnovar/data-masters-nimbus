@@ -71,6 +71,24 @@ class DatabricksUploader:
     def _partition_dir(self, table_name, dat_ref=None):
         """Particao Hive da carga: <tabela>/dat_ref=YYYY-MM-DD."""
         return f"{self._volume_dir(table_name)}/dat_ref={self._dat_ref(dat_ref)}"
+    
+    PARTITION_COLUMN = "dat_ref"
+    PARTITION_COMMENT = ("Data de referência da carga (particao Hive do volume)."
+                         "Derivada do run_id do pipeline Nimbus - nao vem do arquivo de origem.")
+    _TAG_KEY_INVALID = re.compile(r"[.,\-=/:\s]+")
+
+    @classmethod
+    def _tag_key(cls, raw):
+        """Chave de tag no formato aceito pelo UC: sem . , - = / : nem espacos, até 256 caracteres"""
+        return cls._TAG_KEY_INVALID.sub("_", str(raw).strip())[:256]
+    @staticmethod
+    def _esc(value):
+        """Valor literal para SQL, com aspas simples escapadas"""
+        return str(value).replace("'", chr(92) + "'")
+    @classmethod
+    def _tag_value(cls,value):
+        """Valor de tag: o UC aceita no maximo 256 caracteres."""
+        return cls._esc(str(value).strip()[:256])
 
     def _sql(self, stmt, wait=True):
         payload = {"statement": stmt, "warehouse_id": self._warehouse_id,
@@ -183,8 +201,73 @@ class DatabricksUploader:
                 count += 1
             except Exception as e:
                 print(f"[DATABRICKS]   [WARN] Comentario de '{field.name}' falhou: {e}")
-        print(f"[DATABRICKS] {count}/{len(list(schema))} colunas comentadas em {full}")
+            try:
+                self._sql(f"ALTER TABLE {full} ALTER COLUMN `{self.PARTITION_COLUMN}`"
+                          f"COMMENT '{self._esc(self.PARTITION_COMMENT)}'")
+                count+=1
+            except Exception as e:
+                print(f"[DATABRICKS][WARN] Comentario de '{self.PARTITION_COLUMN}' Falhou: {e}")
+        print(f"[DATABRICKS] {count}/{len(list(schema)) + 1} colunas comentadas em {full}")
         return count
+
+    def _table_tags(self, contract):
+        """Tags de tabela derivadas do Manifest"""
+        tags = {}
+        reg = getattr(contract, "regulatory", None)
+        if reg:
+            for t in reg.tags or []:
+                if str(t).startswith("# TODO"): continue
+                tags[self._tag_key(t)] = "true"
+            if reg.data_classification:tags["data_classification"] = reg.data_classification
+            if reg.retention_years: tags["retention_years"] = str(reg.retention_years)
+        if getattr(contract, "owner", None): tags["owner"] = contract.owner
+        if getattr(contract, "manifest_status", None): tags["manifest_satus"] = contract.manifest_status
+        if getattr(contract, 'version', None): tags["contract_version"] = contract.version
+        steward = getattr(contract, "steward", None)
+        if steward and steward.email: tags["steward"] = steward.email
+        source = getattr(contract, "source", None)
+        if source and source.system: tags["source_system"] = source.system
+        return tags
+
+    def apply_table_metadata(self, table_name, contract=None):
+        """COMMENT ON TABLE + SET TAGS de tabela e colunas, a partir do Manifest.
+        
+        Reaplicado a cada carga porque o CREATE OR REPLACE TABLE do CTAS descarta
+        comentarios e tags da versao anterior.
+        """
+        if contract is None: return 0
+        full = f"{self._catalog}.{self._schema}.{table_name}"
+        applied = 0
+        doc = [p for p in (getattr(contract, "description", None),
+                         getattr(contract, "business_contet", None)) if p]
+        if doc:
+            try:
+                self._sql(f"COMMENT ON TABLE {full} IS '{self._esc(' | '.join(doc))}'")
+                applied += 1
+            except Exception as e:
+                print(f"[DATABRICKS][WARN] COMMENT ON TABLE falhou: {e}")
+        tags = self._table_tags(contract)
+        if tags:
+            pairs = ", ".join(f"'{self._tag_key(k)}' = '{self._tag_value(v)}'" for k, v in tags.items())
+            try:
+                self._sql(f"ALTER TABLE {full} SET TAGS ({pairs})")
+                applied += len(tags)
+            except Exception as e:
+                print(f"[DATABRICKS][WARN] SET TAGS na tabela falhou: {e}")
+
+        for col in getattr(contract, "schema", []) or []:
+            flags = [f for f in (col.regulatory_flags or []) if not str(f).startswith("# TODO")]
+            if not flags: continue
+            pairs = ", ".join(f"'{self._tag_key(f)}' = 'true'" for f in flags)
+            try:
+                self._sql(f"ALTER TABLE {full} ALTER COLUMN `{col.name}` SET TAGS ({pairs})")
+                applied += len(flags)
+            except Exception as e:
+                print(f"[DATABRICKS][WARN] SET TAGS em `{col.name}` falhou: {e}")
+            print(f"[DATABRICKS] Metadados do contrato aplicados em {full}: {applied} itens")
+            return applied
+
+
 
     def upload_and_register(self, local_path, table_name=None, contract=None, skip_comments=False, dat_ref=None, run_id=None):
         tbl    = table_name or Path(local_path).stem
@@ -192,6 +275,7 @@ class DatabricksUploader:
         full = self.register_or_refresh(tbl, folder)
         if not skip_comments:
             self.populate_column_comments(tbl, local_path, contract=contract)
+            self.apply_table_metadata(tbl, contract=contract)
         return full
 
     def test_connection(self):
@@ -230,7 +314,7 @@ def publish_table(silver_path, table_name, contract=None, run_id=None, dat_ref=N
         return{"table": table_name, "status": "OK", "target": full, "error": None}
     except Exception as e:
         print("[DATABRICKS] Publicacao FALHOU em {}: {}".format(table_name, e))
-    return {"table": table_name, "status": "ERROR", "target": None, "error": str(e)}
+        return {"table": table_name, "status": "ERROR", "target": None, "error": str(e)}
 
 def dat_ref_from_run_id(run_id):
     """run_YYYYMMDD_HHMMSS_xxxxx - > 'YYYY-MM-DD'. None quando nao reconhece o formato."""

@@ -29,9 +29,9 @@ SKIP_SLM     = os.environ.get("SKIP_SLM", "false").lower() in ("true", "1", "yes
 NULL_TOLERANCE_PCT  = float(os.environ.get("NULL_TOLERANCE_PCT",  "30.0"))
 DUPLICATE_TOLERANCE = float(os.environ.get("DUPLICATE_TOLERANCE", "0.02"))
 
-DATABRICKS_HOST         = os.environ.get("DATABRICKS_HOST",         "https://dbc-63c6e362-54f2.cloud.databricks.com")
-DATABRICKS_TOKEN        = os.environ.get("DATABRICKS_TOKEN",        "")
-DATABRICKS_WAREHOUSE_ID = os.environ.get("DATABRICKS_WAREHOUSE_ID", "d1d694270bee33ae")
+DATABRICKS_HOST         = os.environ.get("DATABRICKS_HOST",         "")
+DATABRICKS_TOKEN        = os.environ.get("DATABRICKS_TOKEN",    "")
+DATABRICKS_WAREHOUSE_ID = os.environ.get("DATABRICKS_WAREHOUSE_ID", "")
 DATABRICKS_VOLUME       = os.environ.get("DATABRICKS_VOLUME",    "landing")
 DATABRICKS_CATALOG      = os.environ.get("DATABRICKS_CATALOG",      "workspace")
 DATABRICKS_SCHEMA       = os.environ.get("DATABRICKS_SCHEMA",       "nimbus")
