@@ -1,6 +1,6 @@
 """src/connectors/databricks_uploader.py — Nimbus -> Databricks via REST API (Delta Lake)."""
 from __future__ import annotations
-import base64, json
+import json
 from pathlib import Path
 from typing import Optional
 import requests
@@ -17,20 +17,32 @@ class DiagnoseResult:
         print("-"*50)
         print("  Tudo pronto para upload.\n" if self.all_ok else "  Corrija os itens FALHA antes de fazer upload.\n")
 
-class DatabricksUploader:
-    _BLOCK_SIZE = 1_000_000
+class _OAuthAuth(requests.auth.AuthBase):
+    """Autentica cada request pelo SDK, reaproveitamendo 'databricks auth login'"""
+    def __init__(self,host):
+            try:
+                from databricks.sdk.core import Config
+            except ImportError:
+                raise ValueError("Sem DATABRICKS_TOKEN a autenticacao usa OAuth: pip install databricks-sdk e databricks auth login --host <host>")
+            self._config = Config(host=host)
+    def __call__(self, requests):
+            requests.headers.update(self._config.authenticate())
+            return requests
 
-    def __init__(self, host, token, warehouse_id, dbfs_base="/nimbus/silver",
-                 catalog="hive_metastore", schema="nimbus"):
+class DatabricksUploader:
+    
+    def __init__(self, host, token="", warehouse_id="", volume="",
+                 catalog="workspace", schema="nimbus"):
         if not host: raise ValueError("DATABRICKS_HOST nao configurado em config.py / .env")
-        if not token: raise ValueError("DATABRICKS_TOKEN nao configurado em config.py / .env")
+        if not host.startswith(("http://","https://")): raise ValueError("DATABRICKS_HOST deve comecar com http:// ou https://")
         if not warehouse_id:
             raise ValueError("DATABRICKS_WAREHOUSE_ID nao configurado. SQL Editor > nome do warehouse > copy ID")
         self._host = host.rstrip("/"); self._token = token
-        self._warehouse_id = warehouse_id; self._dbfs_base = dbfs_base.rstrip("/")
+        self._warehouse_id = warehouse_id; self._volume = volume.rstrip("/")
         self._catalog = catalog; self._schema = schema
         self._session = requests.Session()
-        self._session.headers.update({"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+        if token: self._session.headers.update({"Authorization": f"Bearer {token}"})
+        else: self._session.auth = _OAuthAuth(self._host)
 
     def _url(self, ep): return f"{self._host}/api/2.0/{ep.lstrip('/')}"
     def _get(self, ep, **kw): return self._session.get(self._url(ep), timeout=15, **kw)
@@ -38,10 +50,12 @@ class DatabricksUploader:
         resp = self._session.post(self._url(ep), json=payload, timeout=30)
         if not resp.ok: raise RuntimeError(f"API erro {resp.status_code} em {ep}: {resp.text[:300]}")
         return resp.json() if resp.text else {}
+    def _volume_dir(self, table_name):
+        return f"/Volumes/{self._catalog}/{self._schema}/{self._volume}/{table_name}"
 
     def _sql(self, stmt, wait=True):
         payload = {"statement": stmt, "warehouse_id": self._warehouse_id,
-                   "wait_timeout": "60s" if wait else "0s",
+                   "wait_timeout": "50s" if wait else "0s",
                    "catalog": self._catalog, "schema": self._schema}
         resp = self._session.post(self._url("sql/statements"), json=payload, timeout=90)
         if not resp.ok: raise RuntimeError(f"SQL erro {resp.status_code}: {resp.text[:300]}\nStmt: {stmt[:200]}")
@@ -54,10 +68,10 @@ class DatabricksUploader:
     def diagnose(self):
         r = DiagnoseResult()
         try:
-            resp = self._get("clusters/list")
+            resp = self._session.get(f"{self._host}/api/2.1/unity-catalog/catalogs", timeout=15)
             if resp.status_code == 200: r.add("1. Token e workspace", True, f"Autenticado em {self._host}")
             elif resp.status_code == 401:
-                r.add("1. Token e workspace", False, "Token invalido. Gere um novo em User Settings > Access Tokens.")
+                r.add("1. Token e workspace", False, "Credencial invalida. Gere um PAT em Settings > Developer, ou deixe DATABRICKS_TOKKEN vazio para usar OAuth.")
                 return r
             else:
                 r.add("1. Token e workspace", False, f"HTTP {resp.status_code}")
@@ -66,10 +80,10 @@ class DatabricksUploader:
             r.add("1. Token e workspace", False, f"Nao foi possivel conectar a {self._host}")
             return r
         try:
-            resp = self._get(f"sql/warehouses/{self._warehouse_id}")
             if resp.status_code == 200:
-                d = resp.json(); state = d.get("state","?"); name = d.get("name", self._warehouse_id)
-                if state in ("RUNNING","STARTING"): r.add("2. SQL Warehouse", True, f"'{name}' esta {state}")
+                d = resp.json(); state = d.get("state"); name = d.get("name", self._warehouse_id)
+                if state is None: r.add("2. SQL Warehouse", True, f"'{name}' esta acessivel (sem campo satate na resposta)")
+                elif state in ("RUNNING","RESUMING"): r.add("2. SQL Warehouse", True, f"'{name}' esta {state}.")
                 else: r.add("2. SQL Warehouse", False, f"'{name}' esta {state}. Inicie o warehouse.")
             elif resp.status_code == 404:
                 r.add("2. SQL Warehouse", False, f"Warehouse '{self._warehouse_id}' nao encontrado.")
@@ -83,58 +97,38 @@ class DatabricksUploader:
                 self._sql(f"CREATE SCHEMA IF NOT EXISTS {self._catalog}.{self._schema}")
                 r.add("3. Schema no metastore", True, f"{self._catalog}.{self._schema} criado")
         except Exception as e: r.add("3. Schema no metastore", False, str(e))
+        vol = f"{self._catalog}.{self._schema}.{self._volume}"
         try:
-            probe = f"{self._dbfs_base}/_probe"
-            h = self._post("dbfs/create", {"path": probe, "overwrite": True})["handle"]
-            self._post("dbfs/close", {"handle": h})
-            self._post("dbfs/delete", {"path": probe, "recursive": False})
-            r.add("4. Escrita no DBFS", True, f"Permissao confirmada em {self._dbfs_base}")
-        except Exception as e: r.add("4. Escrita no DBFS", False, str(e))
+            probe = f"/Volumes/{self._catalog}/{self._schema}/{self._volume}/_probe"
+            resp = self._session.put(f"{self._host}/api/2.0/fs/files{probe}", params={"overwrite": "true"}, data=b"nimbus", headers={"Content-Type": "application/octet-stream"}, timeout=30)
+            if not resp.ok: raise RuntimeError(f"Files API {resp.status_code}: {resp.text[:200]}")
+            self._session.delete(f"{self._host}/api/2.0/fs/files{probe}", timeout=30)
+            r.add("4. Escrita no Volume", True, f"Permissao confirmada em {vol}")
+        except Exception as e: r.add("4. Escrita no Volume", False, f"{e} | crie com: CREATE VOLUME IF NOT EXISTS {vol}")
         r.print_report()
         return r
 
     def upload_parquet_to_folder(self, local_path, table_name=None):
+        """Envia o Parquet para o Volume do UC (PUT unico de bytes crus) e devolve a pasta"""
         if not Path(local_path).exists(): raise FileNotFoundError(f"Nao encontrado: {local_path}")
         tbl = table_name or Path(local_path).stem
-        folder = f"{self._dbfs_base}/{tbl}"
-        dbfs_file = f"{folder}/{Path(local_path).name}"
-        print(f"[DATABRICKS] Upload: {Path(local_path).name} -> dbfs:{dbfs_file}")
-        h = self._post("dbfs/create", {"path": dbfs_file, "overwrite": True})["handle"]
-        data = Path(local_path).read_bytes(); total = len(data); sent = 0
-        while sent < total:
-            chunk = data[sent: sent + self._BLOCK_SIZE]
-            self._post("dbfs/add-block", {"handle": h, "data": base64.b64encode(chunk).decode()})
-            sent += len(chunk)
-            print(f"[DATABRICKS]   {sent/total*100:.0f}% ({sent}/{total})", end="\r")
-        self._post("dbfs/close", {"handle": h})
-        print(f"\n[DATABRICKS] Upload OK: dbfs:{dbfs_file} ({total/1024:.1f} KB)")
+        folder = self._volume_dir(tbl)
+        target = f"{folder}/{Path(local_path).name}"
+        data = Path(local_path).read_bytes()
+        print(f"[DATABRICKS] Upload: {Path(local_path).name} -> dbfs:{target}")
+        resp = self._session.put(f"{self._host}/api/2.0/fs/files{target}", params={"overwrite": "true"}, data=data, headers={"Content-Type": "application/octet-stream"}, timeout=50)
+        if not resp.ok: raise RuntimeError(f"Files API erro {resp.status_code}: {resp.text[:300]}")
+        print(f"[DATABRICKS] Upload OK: {target} ({len(data)/1024:.1f} KB)")
         return folder
 
-    def convert_to_delta(self, dbfs_folder):
-        print(f"[DATABRICKS] CONVERT TO DELTA: dbfs:{dbfs_folder}")
-        try:
-            self._sql(f"CONVERT TO DELTA parquet.`dbfs:{dbfs_folder}`")
-            print(f"[DATABRICKS] Delta OK")
-            return True
-        except RuntimeError as e:
-            if "already" in str(e).lower() or "delta" in str(e).lower():
-                print("[DATABRICKS] Ja e Delta — sem conversao necessaria")
-                return True
-            raise
-
-    def register_or_refresh(self, table_name, dbfs_folder):
+    def register_or_refresh(self, table_name, volume_folder):
+        """Managed table (Delta) via CTAS lendo o Parquet do Volume."""
         full = f"{self._catalog}.{self._schema}.{table_name}"
-        try:
-            check  = self._sql(f"SHOW TABLES IN {self._schema} LIKE '{table_name}'")
-            exists = bool(check.get("result", {}).get("data_array", []))
-        except Exception: exists = False
-        if exists:
-            self._sql(f"REFRESH TABLE {full}")
-            print(f"[DATABRICKS] REFRESH OK — {full}")
-        else:
-            self._sql(f"CREATE TABLE IF NOT EXISTS {full} USING DELTA LOCATION 'dbfs:{dbfs_folder}'")
-            print(f"[DATABRICKS] Tabela registrada: {full}")
-            print(f"[DATABRICKS] SQL Editor: SELECT * FROM {full} LIMIT 100;")
+        self._sql(f"CREATE SCHEMA IF NOT EXISTS {self._catalog}.{self._schema}")
+        self._sql(f"CREATE OR REPLACE TABLE {full} AS "
+                  f"SELECT * FROM read_files('{volume_folder}', format => 'parquet')")
+        print(f"[DATABRICKS] Tabela registrada: {full} <- {volume_folder}")
+        print(f"[DATABRICKS] SQL Editor: SELECT * FROM {full} LIMIT 100;")
         return full
 
     def populate_column_comments(self, table_name, local_parquet_path, contract=None):
@@ -170,7 +164,6 @@ class DatabricksUploader:
     def upload_and_register(self, local_path, table_name=None, contract=None, skip_comments=False):
         tbl    = table_name or Path(local_path).stem
         folder = self.upload_parquet_to_folder(local_path, table_name=tbl)
-        self.convert_to_delta(folder)
         full = self.register_or_refresh(tbl, folder)
         if not skip_comments:
             self.populate_column_comments(tbl, local_path, contract=contract)
@@ -178,7 +171,7 @@ class DatabricksUploader:
 
     def test_connection(self):
         try:
-            resp = self._get("clusters/list")
+            resp = self._get(f"{self._host}/api/2.1/unity-catalog/catalogs", timeout=15)
             if resp.status_code == 200: print(f"[DATABRICKS] Conexao OK: {self._host}"); return True
             print(f"[DATABRICKS] Erro {resp.status_code}"); return False
         except requests.exceptions.ConnectionError:
@@ -190,8 +183,8 @@ def get_uploader():
         host         = getattr(cfg, "DATABRICKS_HOST",         ""),
         token        = getattr(cfg, "DATABRICKS_TOKEN",        ""),
         warehouse_id = getattr(cfg, "DATABRICKS_WAREHOUSE_ID", ""),
-        dbfs_base    = getattr(cfg, "DATABRICKS_DBFS_BASE",    "/nimbus/silver"),
-        catalog      = getattr(cfg, "DATABRICKS_CATALOG",      "hive_metastore"),
+        volume      = getattr(cfg, "DATABRICKS_VOLUME",      "nimbus"),
+        catalog      = getattr(cfg, "DATABRICKS_CATALOG",      "workspace"),
         schema       = getattr(cfg, "DATABRICKS_SCHEMA",       "nimbus"),
     )
 
@@ -207,8 +200,8 @@ def upload_silver_table(silver_path, table_name=None, contract=None):
         return None
     try:
         u = DatabricksUploader(host=host, token=token, warehouse_id=wid,
-            dbfs_base=getattr(cfg,"DATABRICKS_DBFS_BASE","/nimbus/silver"),
-            catalog=getattr(cfg,"DATABRICKS_CATALOG","hive_metastore"),
+            dbfs_base=getattr(cfg,"DATABRICKS_VOLUME","landing"),
+            catalog=getattr(cfg,"DATABRICKS_CATALOG","workspace"),
             schema=getattr(cfg,"DATABRICKS_SCHEMA","nimbus"))
         return u.upload_and_register(silver_path, table_name=table_name, contract=contract)
     except Exception as e:
