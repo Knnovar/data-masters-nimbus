@@ -1,72 +1,66 @@
 # Dicionário Técnico da Tabela `tb_clientes`
 
 ## Visão Geral
-
-A tabela `tb_clientes` é um cadastro mestre de clientes pessoa física e jurídica, utilizada por todos os produtos de crédito e relacionamento do banco. A segmentação dos clientes determina o produto oferecido e o gestor responsável. A tabela é atualizada diariamente pelo batch noturno do sistema CORE_BANCARIO_TOTVS.
-
-### Propriedades da Tabela
-
-- **Owner**: squad-dados-cadastrais
-- **Versão**: 1.0.0
-- **Status do Manifesto**: DRAFT
-- **Fonte**: Sistema CORE_BANCARIO_TOTVS, formato CSV, codificação UTF-8, sistema operacional Unix, atualização diária.
-- **Contato**: squad-dados-cadastrais@banco.com.br
-- **Classificação de Dados**: Confidencial
-- **Período de Retenção**: 10 anos
-- **Regulamentações**: LGPD, BACEN 4658
+A tabela `tb_clientes` é um cadastro mestre de clientes pessoa física e jurídica, utilizado por todos os produtos de crédito e relacionamento do banco. A segmentação dos clientes determina o produto oferecido e o gestor responsável. A tabela é atualizada diariamente pelo batch noturno do sistema CORE_BANCARIO_TOTVS.
 
 ## Colunas
 
-### 1. `cd_cliente`
-
-- **Tipo**: string
-- **Nullable**: false
-- **Descrição**: Código único do cliente no sistema legado, gerado sequencialmente pelo CORE_BANCARIO.
+### `cd_cliente`
+- **Tipo**: `string`
+- **Nullable**: `false`
+- **Descrição**: Código único do cliente no sistema legado. Gerado sequencialmente pelo CORE_BANCARIO.
 - **Propósito de Negócio**: Identificador único para cada cliente.
-- **Comportamento Esperado**: Não deve conter valores nulos ou duplicados.
-- **Anomalias**: Nenhuma observada; 100% de unicidade.
+- **Comportamento Esperado**: Deve ser único e não nulo.
+- **Estatísticas**: 499 valores únicos, 0% de nulos.
 
-### 2. `nr_cpf_cnpj`
-
-- **Tipo**: string
-- **Nullable**: false
+### `nr_cpf_cnpj`
+- **Tipo**: `string`
+- **Nullable**: `false`
 - **Descrição**: CPF (11 dígitos) ou CNPJ (14 dígitos) sem máscara.
 - **Propósito de Negócio**: Identificação fiscal do cliente.
-- **Comportamento Esperado**: Não deve conter valores nulos ou duplicados.
-- **Regulamentações**: Considerado sensível sob LGPD.
-- **Anomalias**: Nenhuma observada; 100% de unicidade.
+- **Comportamento Esperado**: Deve conter 11 ou 14 dígitos, não nulo.
+- **Regulatório**: SENSITIVO conforme LGPD.
+- **Anomalias**: Nenhuma anomalia observada.
 
-### 3. `nm_cliente`
-
-- **Tipo**: string
-- **Nullable**: false
+### `nm_cliente`
+- **Tipo**: `string`
+- **Nullable**: `false`
 - **Descrição**: Nome completo do cliente conforme cadastro na Receita Federal.
-- **Propósito de Negócio**: Nome do cliente para identificação e comunicação.
-- **Comportamento Esperado**: Não deve conter valores nulos.
-- **Regulamentações**: Considerado sensível sob LGPD.
-- **Anomalias**: 6 duplicatas observadas.
+- **Propósito de Negócio**: Nome do cliente para identificação.
+- **Comportamento Esperado**: Deve ser único e não nulo.
+- **Regulatório**: SENSITIVO conforme LGPD.
+- **Estatísticas**: 495 valores únicos, 0% de nulos.
+- **Anomalias**: 4 duplicatas observadas.
 
-### 4. `dt_nascimento`
-
-- **Tipo**: date
-- **Nullable**: true
+### `dt_nascimento`
+- **Tipo**: `date`
+- **Nullable**: `true`
 - **Descrição**: Data de nascimento. Nula para clientes PJ.
-- **Propósito de Negócio**: Informação demográfica para clientes PF.
-- **Comportamento Esperado**: Pode ser nulo para clientes PJ.
-- **Regulamentações**: Considerado sensível sob LGPD.
-- **Anomalias**: Nenhuma observada.
+- **Propósito de Negócio**: Informação demográfica do cliente.
+- **Comportamento Esperado**: Nulo para clientes PJ.
+- **Regulatório**: SENSITIVO conforme LGPD.
+- **Anomalias**: Nenhuma anomalia observada.
 
-### 5. `cd_segmento`
-
-- **Tipo**: string
-- **Nullable**: false
+### `cd_segmento`
+- **Tipo**: `string`
+- **Nullable**: `false`
 - **Descrição**: Segmento de relacionamento. Domínio: VAREJO, PRIME, PRIVATE, PJ_PEQUENO, PJ_MEDIO.
 - **Propósito de Negócio**: Determina o produto oferecido e o gestor responsável.
-- **Comportamento Esperado**: Não deve conter valores nulos.
-- **Regras de Negócio**:
-  - PRIME: `vl_renda_mensal >= 10000`
-  - PRIVATE: `vl_renda_mensal >= 30000`
-- **Anomalias**:
+- **Comportamento Esperado**: Deve seguir as regras de negócio associadas a cada segmento.
+- **Estatísticas**: 496 valores únicos, 0% de nulos.
+- **Anomalias**: 3 duplicatas observadas.
+
+### `cd_agencia`
+- **Tipo**: `string`
+- **Nullable**: `false`
+- **Descrição**: Código numérico de 4 dígitos da agência de relacionamento principal.
+- **Propósito de Negócio**: Identificação da agência responsável pelo cliente.
+- **Comportamento Esperado**: Deve ser um código numérico de 4 dígitos.
+- **Estatísticas**: 473 valores únicos, 0% de nulos.
+- **Anomalias**: 26 valores incomuns observados (ex: "AGENC-").
+
+### `vl_renda_mensal`
+
 
 ---
 > **[AI_METADATA_STATUS: DRAFT]**

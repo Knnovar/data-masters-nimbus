@@ -136,10 +136,10 @@ class DatabricksUploader:
         if not Path(local_path).exists(): raise FileNotFoundError(f"Nao encontrado: {local_path}")
         tbl = table_name or Path(local_path).stem
         folder = self._volume_dir(tbl)
-        target = f"{folder}/{Path(local_path).name}"
         d = self._dat_ref(dat_ref)
+        target = f"{folder}/dat_ref={d}/part-{d}.parquet"
         data = Path(local_path).read_bytes()
-        print(f"[DATABRICKS] Upload: {Path(local_path).name} -> {target}" + f" (run_id={run_id})" if run_id else "")
+        print(f"[DATABRICKS] Upload: {Path(local_path).name} -> {target}" + (f" (run_id={run_id})" if run_id else ""))
         resp = self._session.put(f"{self._host}/api/2.0/fs/files{target}", params={"overwrite": "true"}, data=data, headers={"Content-Type": "application/octet-stream"}, timeout=50)
         if not resp.ok: raise RuntimeError(f"Files API erro {resp.status_code}: {resp.text[:300]}")
         print(f"[DATABRICKS] Upload OK: {target} ({len(data)/1024:.1f} KB)")
@@ -229,7 +229,7 @@ def publish_table(silver_path, table_name, contract=None, run_id=None, dat_ref=N
             return {"table": table_name, "status": "ERROR", "target": None, "error": "configuracao incompleta (host/warehouse)"}
         return{"table": table_name, "status": "OK", "target": full, "error": None}
     except Exception as e:
-        print("[DATABRICKS] Publicacao FALHOU em {}: {}").format(table_name, e)
+        print("[DATABRICKS] Publicacao FALHOU em {}: {}".format(table_name, e))
     return {"table": table_name, "status": "ERROR", "target": None, "error": str(e)}
 
 def dat_ref_from_run_id(run_id):
@@ -246,7 +246,7 @@ def upload_silver_table(silver_path, table_name=None, contract=None, dat_ref=Non
     token = getattr(cfg, "DATABRICKS_TOKEN", "")
     wid   = getattr(cfg, "DATABRICKS_WAREHOUSE_ID", "")
     volume = getattr(cfg, "DATABRICKS_VOLUME", "")
-    missing = [k for k,v in [("DATABRICKS_HOST",host),("DATABRICKS_TOKEN",token),("DATABRICKS_WAREHOUSE_ID",wid)] if not v]
+    missing = [k for k,v in [("DATABRICKS_HOST",host),("DATABRICKS_WAREHOUSE_ID",wid)] if not v]
     if missing:
         print("[DATABRICKS] Upload ignorado: {} nao configurados em config.py".format(", ".join(missing)))
         return None
