@@ -73,7 +73,7 @@ class DatabricksUploader:
         return f"{self._volume_dir(table_name)}/dat_ref={self._dat_ref(dat_ref)}"
     
     PARTITION_COLUMN = "dat_ref"
-    PARTITION_COMMENT = ("Data de referência da carga (particao Hive do volume)."
+    PARTITION_COMMENT = ("Data de referencia da carga (particao Hive do volume). "
                          "Derivada do run_id do pipeline Nimbus - nao vem do arquivo de origem.")
     _TAG_KEY_INVALID = re.compile(r"[.,\-=/:\s]+")
 
@@ -105,7 +105,7 @@ class DatabricksUploader:
     def diagnose(self):
         r = DiagnoseResult()
         try:
-            resp = self._session.get(f"{self._host}/api/2.1/unity-catalog/catalogs", timeout=15)
+            resp = self._session.get(f"sql/warehouse/{self._warehouse_id}")
             if resp.status_code == 200: r.add("1. Token e workspace", True, f"Autenticado em {self._host}")
             elif resp.status_code == 401:
                 r.add("1. Token e workspace", False, "Credencial invalida. Gere um PAT em Settings > Developer, ou deixe DATABRICKS_TOKKEN vazio para usar OAuth.")
@@ -119,7 +119,7 @@ class DatabricksUploader:
         try:
             if resp.status_code == 200:
                 d = resp.json(); state = d.get("state"); name = d.get("name", self._warehouse_id)
-                if state is None: r.add("2. SQL Warehouse", True, f"'{name}' esta acessivel (sem campo satate na resposta)")
+                if state is None: r.add("2. SQL Warehouse", True, f"'{name}' esta acessivel (sem campo state na resposta)")
                 elif state in ("RUNNING","RESUMING"): r.add("2. SQL Warehouse", True, f"'{name}' esta {state}.")
                 else: r.add("2. SQL Warehouse", False, f"'{name}' esta {state}. Inicie o warehouse.")
             elif resp.status_code == 404:
@@ -201,11 +201,11 @@ class DatabricksUploader:
                 count += 1
             except Exception as e:
                 print(f"[DATABRICKS]   [WARN] Comentario de '{field.name}' falhou: {e}")
-            try:
-                self._sql(f"ALTER TABLE {full} ALTER COLUMN `{self.PARTITION_COLUMN}`"
-                          f"COMMENT '{self._esc(self.PARTITION_COMMENT)}'")
-                count+=1
-            except Exception as e:
+        try:
+            self._sql(f"ALTER TABLE {full} ALTER COLUMN `{self.PARTITION_COLUMN}`"
+                        f"COMMENT '{self._esc(self.PARTITION_COMMENT)}'")
+            count += 1
+        except Exception as e:
                 print(f"[DATABRICKS][WARN] Comentario de '{self.PARTITION_COLUMN}' Falhou: {e}")
         print(f"[DATABRICKS] {count}/{len(list(schema)) + 1} colunas comentadas em {full}")
         return count
@@ -221,7 +221,7 @@ class DatabricksUploader:
             if reg.data_classification:tags["data_classification"] = reg.data_classification
             if reg.retention_years: tags["retention_years"] = str(reg.retention_years)
         if getattr(contract, "owner", None): tags["owner"] = contract.owner
-        if getattr(contract, "manifest_status", None): tags["manifest_satus"] = contract.manifest_status
+        if getattr(contract, "manifest_status", None): tags["manifest_status"] = contract.manifest_status
         if getattr(contract, 'version', None): tags["contract_version"] = contract.version
         steward = getattr(contract, "steward", None)
         if steward and steward.email: tags["steward"] = steward.email
@@ -239,7 +239,7 @@ class DatabricksUploader:
         full = f"{self._catalog}.{self._schema}.{table_name}"
         applied = 0
         doc = [p for p in (getattr(contract, "description", None),
-                         getattr(contract, "business_contet", None)) if p]
+                         getattr(contract, "business_context", None)) if p]
         if doc:
             try:
                 self._sql(f"COMMENT ON TABLE {full} IS '{self._esc(' | '.join(doc))}'")
@@ -264,8 +264,8 @@ class DatabricksUploader:
                 applied += len(flags)
             except Exception as e:
                 print(f"[DATABRICKS][WARN] SET TAGS em `{col.name}` falhou: {e}")
-            print(f"[DATABRICKS] Metadados do contrato aplicados em {full}: {applied} itens")
-            return applied
+        print(f"[DATABRICKS] Metadados do contrato aplicados em {full}: {applied} itens")
+        return applied
 
 
 
@@ -280,7 +280,7 @@ class DatabricksUploader:
 
     def test_connection(self):
         try:
-            resp = self._get(f"{self._host}/api/2.1/unity-catalog/catalogs", timeout=15)
+            resp = self._session.get(f"{self._host}/api/2.1/unity-catalog/catalogs", timeout=15)
             if resp.status_code == 200: print(f"[DATABRICKS] Conexao OK: {self._host}"); return True
             print(f"[DATABRICKS] Erro {resp.status_code}"); return False
         except requests.exceptions.ConnectionError:
@@ -334,12 +334,9 @@ def upload_silver_table(silver_path, table_name=None, contract=None, dat_ref=Non
     if missing:
         print("[DATABRICKS] Upload ignorado: {} nao configurados em config.py".format(", ".join(missing)))
         return None
-    try:
-        u = DatabricksUploader(host=host, token=token, warehouse_id=wid,
-            volume=getattr(cfg,"DATABRICKS_VOLUME","landing"),
+    u = DatabricksUploader(host=host, token=token, warehouse_id=wid,
+            volume=volume or getattr(cfg,"DATABRICKS_VOLUME","landing"),
             catalog=getattr(cfg,"DATABRICKS_CATALOG","workspace"),
             schema=getattr(cfg,"DATABRICKS_SCHEMA","nimbus"))
-        return u.upload_and_register(silver_path, table_name=table_name, contract=contract, dat_ref=dat_ref, run_id=run_id)
-    except Exception as e:
-        print(f"[DATABRICKS] Upload falhou (nao bloqueante): {e}")
-        return None
+    return u.upload_and_register(silver_path, table_name=table_name, contract=contract, dat_ref=dat_ref, run_id=run_id)
+ 

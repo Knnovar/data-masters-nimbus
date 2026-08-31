@@ -1,5 +1,5 @@
 # Pipeline Projeto Nimbus - Relatorio de Execucao
-**Data:** 2026-08-31 17:01:20  |  **Run ID:** `run_20260831_165021_7cba0f`
+**Data:** 2026-08-31 18:39:41  |  **Run ID:** `run_20260831_182933_651adf`
 
 ---
 
@@ -7,15 +7,15 @@
 
 | Tabela | Cenário | Status | Linhas | Dups | Nulos (avg%) | Profiling (ms) | SLM (ms) | Score |
 |--------|---------|--------|--------|------|--------------|----------------|----------|-------|
-| `tb_clientes` | baseline | [PASS] PASS | 500 | 0 | 2.29% | 1271.5 | [OK] 33641.5 | **97.7** |
-| `tb_transacoes` | baseline | [WARN] WARNING | 2,030 | 30 | 0.81% | 4055.6 | [OK] 33635.7 | **69.4** |
-| `tb_contratos_credito` | baseline | [PASS] PASS | 300 | 0 | 0.0% | 870.0 | [OK] 34117.4 | **100.0** |
-| `tb_clientes` | baseline | [PASS] PASS | 500 | 0 | 0.0% | 10.9 | [OK] 33695.9 | **100.0** |
-| `tb_transacoes` | baseline | [WARN] WARNING | 2,030 | 30 | 0.0% | 25.1 | [OK] 33519.4 | **70.2** |
-| `tb_contratos_credito` | baseline | [PASS] PASS | 300 | 0 | 0.0% | 9.9 | [OK] 34712.3 | **100.0** |
-| `tb_clientes` | baseline | [PASS] PASS | 500 | 0 | 0.0% | 6.2 | [OK] 33963.5 | **100.0** |
-| `tb_transacoes` | baseline | [WARN] WARNING | 2,030 | 30 | 1.6% | 10.4 | [OK] 33138.2 | **68.6** |
-| `tb_contratos_credito` | baseline | [PASS] PASS | 300 | 0 | 0.0% | 7.7 | [OK] 36616.4 | **100.0** |
+| `tb_clientes` | baseline | [PASS] PASS | 500 | 0 | 2.29% | 1236.0 | [OK] 50978.0 | **97.7** |
+| `tb_transacoes` | baseline | [WARN] WARNING | 2,030 | 30 | 0.81% | 4174.6 | [OK] 33986.8 | **69.4** |
+| `tb_contratos_credito` | baseline | [PASS] PASS | 300 | 0 | 0.0% | 881.2 | [OK] 34919.3 | **100.0** |
+| `tb_clientes` | baseline | [PASS] PASS | 500 | 0 | 0.0% | 11.1 | [OK] 34771.4 | **100.0** |
+| `tb_transacoes` | baseline | [WARN] WARNING | 2,030 | 30 | 0.0% | 25.0 | [OK] 33586.5 | **70.2** |
+| `tb_contratos_credito` | baseline | [PASS] PASS | 300 | 0 | 0.0% | 9.9 | [OK] 34111.1 | **100.0** |
+| `tb_clientes` | baseline | [PASS] PASS | 500 | 0 | 0.0% | 6.2 | [OK] 33688.3 | **100.0** |
+| `tb_transacoes` | baseline | [WARN] WARNING | 2,030 | 30 | 1.6% | 10.4 | [OK] 33573.8 | **68.6** |
+| `tb_contratos_credito` | baseline | [PASS] PASS | 300 | 0 | 0.0% | 7.6 | [OK] 33876.4 | **100.0** |
 
 ---
 

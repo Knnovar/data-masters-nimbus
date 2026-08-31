@@ -2,57 +2,68 @@
 
 ## Visão Geral
 
-A tabela `tb_transacoes` registra todas as movimentações financeiras realizadas por diferentes canais de atendimento do banco. Ela é gerida pela equipe `squad-transacoes` e está atualmente em versão `2.3.1`. O sistema de origem é `SWITCH_TRANSACIONAL`, e os dados são armazenados em formato CSV com codificação UTF-8 no sistema operacional Unix. A atualização dos dados é event-driven, e o contato para questões relacionadas é `squad-transacoes@banco.com.br`.
+A tabela `tb_transacoes` registra todas as movimentações financeiras realizadas através de diferentes canais de atendimento. Ela é gerida pela equipe `squad-transacoes` e está atualmente em fase de rascunho (DRAFT). A tabela é alimentada por um sistema chamado `SWITCH_TRANSACIONAL` e é armazenada no formato CSV com codificação UTF-8 em um sistema operacional Unix. As atualizações são feitas de forma event-driven.
 
 ### Contexto de Negócio
 
-O propósito principal da tabela é registrar todas as movimentações financeiras por canal. O campo `fl_suspeita` indica se a transação está sendo analisada pelo motor antifraude. O campo `cd_estabelecimento` pode ser nulo para compras online não identificadas, o que ocorre em aproximadamente 6% dos casos.
+- **Registro de Movimentações**: A tabela captura todas as transações financeiras, incluindo compras, saques, TEDs, PIXs, pagamentos de boletos e estornos.
+- **Flag de Transações Suspeitas**: A coluna `fl_suspeita` indica se uma transação está sendo analisada pelo motor antifraude.
+- **Estabelecimento Não Identificado**: A coluna `cd_estabelecimento` pode ser nula para compras online não identificadas, o que ocorre em cerca de 6% das transações.
 
-### Classificação e Retenção de Dados
+### Considerações de Conformidade
 
-Os dados são classificados como confidenciais e devem ser retidos por 7 anos. As tags regulatórias associadas são `BACEN_4658` e `PCI_DSS`, o que implica que a tabela deve cumprir com as normas do Banco Central do Brasil e os padrões de segurança de dados do PCI DSS.
+- **Regulatory Tags**: A tabela está sujeita às normas BACEN_4658 e PCI_DSS, o que implica em requisitos rigorosos de segurança e privacidade dos dados.
+- **Classificação de Dados**: Os dados são classificados como confidenciais e devem ser retidos por 7 anos.
 
-## Esquema da Tabela
+## Colunas da Tabela
 
-### Colunas
+### `id_transacao`
 
-1. **id_transacao**
-   - **Tipo**: `string`
-   - **Nullable**: Não
-   - **Descrição**: UUID da transação, gerado pelo switch transacional no momento da operação. Serve como a chave primária da tabela.
-   - **Comportamento Esperado**: Deve ser único para cada transação.
-   - **Anomalias Observadas**: 0.5% das transações apresentam duplicatas.
+- **Tipo**: `VARCHAR`
+- **Nullable**: Não
+- **Descrição**: UUID da transação, gerado pelo switch transacional no momento da operação.
+- **Estatísticas**:
+  - **% de Nulos**: 0.0%
+  - **Contagem Única**: 1999
+  - **Duplicatas**: Algumas duplicatas observadas, o que é uma anomalia dado que `id_transacao` é a chave primária.
 
-2. **cd_cliente**
-   - **Tipo**: `string`
-   - **Nullable**: Não
-   - **Descrição**: Referência ao cliente em `tb_clientes`.
-   - **Comportamento Esperado**: Deve corresponder a um cliente existente na tabela `tb_clientes`.
+### `cd_cliente`
 
-3. **dt_transacao**
-   - **Tipo**: `date`
-   - **Nullable**: Não
-   - **Descrição**: Data da transação no fuso horário America/Sao_Paulo.
-   - **Comportamento Esperado**: Deve estar no formato correto e dentro do intervalo de datas esperado.
+- **Tipo**: `VARCHAR`
+- **Nullable**: Não
+- **Descrição**: Referência ao cliente na tabela `tb_clientes`.
+- **Estatísticas**: Não fornecidas no perfil de dados.
 
-4. **vl_transacao**
-   - **Tipo**: `float`
-   - **Nullable**: Não
-   - **Descrição**: Valor em BRL. Positivo para débitos, negativo para estornos.
-   - **Comportamento Esperado**: Deve ser um número válido e refletir o valor correto da transação.
-   - **Anomalias Observadas**: Nenhuma anomalia significativa observada.
+### `dt_transacao`
 
-5. **tp_transacao**
-   - **Tipo**: `string`
-   - **Nullable**: Não
-   - **Descrição**: Tipo da operação. Dominio: COMPRA, SAQUE, TED, PIX, PAGAMENTO_BOLETO, ESTORNO.
-   - **Comportamento Esperado**: Deve corresponder a um dos tipos de operação definidos no domínio.
+- **Tipo**: `DATE`
+- **Nullable**: Não
+- **Descrição**: Data da transação no fuso horário America/Sao_Paulo.
+- **Estatísticas**: Não fornecidas no perfil de dados.
 
-6. **cd_estabelecimento**
-   - **Tipo**: `string`
-   - **Nullable**: Sim
-   - **Descrição**: CNPJ do estabelecimento. Nulo para compras online não identificadas (~6%).
-   - **Comportamento Esperado**: Deve ser um CNPJ válido
+### `vl_transacao`
+
+- **Tipo**: `FLOAT`
+- **Nullable**: Não
+- **Descrição**: Valor em BRL. Positivo para débitos, negativo para estornos.
+- **Estatísticas**: Não fornecidas no perfil de dados.
+
+### `tp_transacao`
+
+- **Tipo**: `VARCHAR`
+- **Nullable**: Não
+- **Descrição**: Tipo da operação. Domínio: COMPRA, SAQUE, TED, PIX, PAGAMENTO_BOLETO, ESTORNO.
+- **Estatísticas**:
+  - **% de Nulos**: 0.0%
+  - **Contagem Única**: 1999
+  - **Valores Comuns**: COMPRA, PAGAMENTO_BOLETO, SAQUE (cada um com 2 ocorrências).
+
+### `cd_estabelecimento`
+
+- **Tipo**: `VARCHAR`
+- **Nullable**: Sim
+- **Descrição**: CNPJ do estabelecimento. Pode ser nulo para compras online não identificadas (~6%).
+- **Estat
 
 ---
 > **[AI_METADATA_STATUS: DRAFT]**
