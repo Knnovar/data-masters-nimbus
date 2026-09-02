@@ -61,3 +61,33 @@ O módulo de integração foi refatorado completamente para resolver três probl
 O fluxo por execução agora tem quatro etapas: upload em pasta por tabela (`/nimbus/silver/<tabela>/`), conversão para Delta via `CONVERT TO DELTA` (idempotente), registro com `CREATE TABLE USING DELTA` na primeira vez e `REFRESH TABLE` nas seguintes, e população automática de comentários de colunas a partir do Manifest.
 
 `DATABRICKS_WAREHOUSE_ID` foi adicionado como variável obrigatória. O `diagnose()` valida a conectividade em quatro níveis sequenciais com mensagens de erro específicas. O `upload-silver` ganhou `--dry-run`, `--no-comments` e `--table`. 242 testes unitários.
+
+---
+
+## Sprint Databricks v3 — Volumes (Unity Catalog) e Files API
+
+A integração com o Databricks foi refatorada para abandonar o DBFS em favor dos Volumes do Unity Catalog. A mudança foi motivada pelo erro `PERMISSION_DENIED: Public DBFS root is disabled` — workspaces Databricks novos bloqueiam o root do DBFS por padrão, e a direção da plataforma é descontinuá-lo em favor de Volumes gerenciados pelo Unity Catalog.
+
+**O que mudou no upload.** A DBFS API (create → add-block → close com blocos base64) foi substituída pela Files API: um único `PUT /api/2.0/fs/files/<volume-path>?overwrite=true` com o binário do arquivo no corpo da requisição. O path segue o padrão de Volumes do Unity Catalog: `/Volumes/<catalog>/<schema>/<volume>/<tabela>/dat_ref=YYYY-MM-DD/`. O particionamento por data (`dat_ref`) foi introduzido nesta versão — cada execução do Nimbus adiciona uma partição ao Volume, permitindo rastrear histórico sem depender do Delta `_delta_log/`.
+
+**O que mudou no registro de tabela.** O fluxo anterior usava `CONVERT TO DELTA` seguido de `CREATE TABLE USING DELTA LOCATION`. O novo usa `CREATE OR REPLACE TABLE ... AS SELECT * FROM read_files('<volume-path>', format => 'parquet')` — um CTAS direto que registra a tabela como managed Delta table lendo o Volume como fonte. Isso elimina a necessidade de conversão explícita e funciona com Unity Catalog sem configurações extras de external location.
+
+**Metadata de tabela via tags.** O método `apply_table_metadata()` novo usa `COMMENT ON TABLE` para a descrição do `business_context` e `ALTER TABLE SET TAGS` / `ALTER COLUMN SET TAGS` para as `regulatory_flags` do Manifest. As tags aparecem no Unity Catalog como metadados pesquisáveis — um analista pode buscar todas as tabelas com a tag `LGPD_SENSITIVE` sem abrir nenhum arquivo.
+
+**`publish_table()` substitui `upload_silver_table()` como interface principal.** Retorna sempre um dict `{table, status, target, error}` — nunca levanta exceção. O `run_pipeline.py` chama `publish_table()` explicitamente após `promote_to_parquet()` e coleta os resultados para reportar no resumo final.
+
+**Suporte a OAuth.** Quando `DATABRICKS_TOKEN` está vazio, o uploader tenta OAuth via `databricks-sdk` (se instalado). Isso permite autenticação via browser em workspaces corporativos sem precisar gerar um PAT.
+
+**Novos parâmetros de configuração:** `DATABRICKS_VOLUME` (nome do Volume UC onde os Parquets vão), `DATABRICKS_CATALOG` mudou default de `hive_metastore` para `workspace` (catalog padrão do CE com Unity Catalog habilitado).
+
+**Passos para usar:**
+```sql
+-- No SQL Editor do Databricks, antes do primeiro upload:
+CREATE SCHEMA IF NOT EXISTS workspace.nimbus;
+CREATE VOLUME IF NOT EXISTS workspace.nimbus.landing;
+```
+```bash
+python tasks.py test-databricks    # diagnóstico em 4 níveis
+python tasks.py upload-silver --dry-run
+python tasks.py upload-silver
+```

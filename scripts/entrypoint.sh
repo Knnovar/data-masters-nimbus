@@ -21,14 +21,17 @@ until curl -sf "${OLLAMA_HOST}/api/tags" > /dev/null 2>&1; do echo -n "."; sleep
 ok "Ollama pronto"
 
 log "Verificando modelo: ${OLLAMA_MODEL}"
-if curl -sf "${OLLAMA_HOST}/api/tags" | grep -q "\"${OLLAMA_MODEL}\""; then
+if curl -sf "${OLLAMA_HOST}/api/tags" | grep -q "\"${OLLAMA_MODEL%%:*}"; then
     ok "Modelo ${OLLAMA_MODEL} ja disponivel"
 else
     log "Baixando ${OLLAMA_MODEL} (primeira execucao — pode demorar)..."
-    curl -sf "${OLLAMA_HOST}/api/pull" \
+    if curl -sf --max-time 1800 "${OLLAMA_HOST}/api/pull" \
         -d "{\"name\": \"${OLLAMA_MODEL}\", \"stream\": false}" \
-        -H "Content-Type: application/json" > /dev/null
+        -H "Content-Type: application/json" > /dev/null; then
     ok "Modelo ${OLLAMA_MODEL} pronto"
+    else
+        warn "Pull de ${OLLAMA_MODEL} falhou - seguindo com SKIP_SLM=true"
+        export SKIP_SLM=true
 fi
 
 log "Iniciando servidor Prefect..."
@@ -50,8 +53,8 @@ sleep 5
 log "=============================================="
 log " Pipeline: cenario=${SCENARIO} | formato=${FORMAT}"
 log "=============================================="
-python run_pipeline.py --scenario "${SCENARIO}" --format "${FORMAT}"
-EXIT=$?
+EXIT=0
+python run_pipeline.py --scenario "${SCENARIO}" --format "${FORMAT}" || EXIT=$?
 [ $EXIT -eq 0 ] && ok "Pipeline concluida" || warn "Pipeline com exit code ${EXIT}"
 
 log "Container pronto para comandos:"

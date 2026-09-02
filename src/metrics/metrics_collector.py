@@ -46,7 +46,31 @@ def _compute_quality_score(val_result: ValidationResult, profiler_payload: dict)
 
     return round(min(score, 100), 1)
 
-
+def _slm_metrics(slm_result: dict) -> dict:
+    """Achata perf/output do enriquecimento para comparar modelos entre runs.
+    
+    Campos planos (nao aninhados) porque o show_metrics.py e o export CSV
+    consomem o registro como uma linha"""
+    perf = slm_result.get("perf") or {}
+    out = slm_result.get("output") or {}
+    return {
+        "slm_model"             : slm_result.get("model"),
+        "slm_num_predict"       : slm_result.get("num_predict"),
+        "slm_total_ms"          : slm_result.get("total_ms"),
+        "slm_prompt_tokens"        : perf.get("prompt_tokens"),
+        "slm_prompt_eval_ms"     : perf.get("prompt_eval_ms"),
+        "slm_output_tokens"        : perf.get("output_tokens"),
+        "slm_eval_ms"           : perf.get("eval_ms"),
+        "slm_tokens_per_s"          : perf.get("token_per_s"),
+        "slm_truncated"         : perf.get("truncated"),
+        "slm_output_chars"        : out.get("chars"),
+        "slm_output_words"        : out.get("words"),
+        "slm_column_coverage_pct" : out.get("column_coverage_pct"),
+        "slm_columns_missing"       : out.get("columns_missing"),
+        "slm_has_pontos_atencao"      : out.get("has_pontos_atencao"),
+        "slm_has_draft_tag"         : out.get("has_draft_tag"),
+    }
+    
 def collect(
     run_id          : str,
     val_result      : ValidationResult,
@@ -81,6 +105,9 @@ def collect(
         "quality_score"      : quality_score,
         "issues"             : val_result.issues,
         "warnings"           : val_result.warnings,
+        "slm_status"         : slm_result.get("status"),
+        "slm_inference_ms"   : slm_result.get("inference_ms", 0),
+        **_slm_metrics(slm_result),
     }
 
     # Persiste JSON por run
@@ -126,9 +153,35 @@ def generate_report(all_metrics: list[dict], reports_dir: Path) -> Path:
         f"- **Com WARNING:** {sum(1 for m in all_metrics if m['validation_status'] == 'WARNING')}",
         f"- **Documentadas por SLM:** {sum(1 for m in all_metrics if m['slm_status'] == 'SUCCESS')}",
         "\n---\n",
+        "## Desempenho da SLM\n",
+    ]
+    slm_rows = [m for m in all_metrics if m["slm_status"] == "SUCCESS" and m.get("slm_model")]
+    if slm_rows:
+        lines += [
+            "| Tabela | Modelo | Num Predict | Inference (ms) | Prompt Tokens | Output Tokens | Token/s | Cobertura Colunas (%) |",
+            "|--------|--------|-------------|----------------|---------------|---------------|---------|----------------------|",
+        ]
+        for m in slm_rows:
+            lines.append(
+                f"| `{m['table']}` | {m['slm_model']} | {m['slm_inference_ms']:,.0f} "
+                f"| {m['slm_load_ms'] or 0:,.0f} "
+                f"| {m['slm_prompt_tokens'] or 0}/{m.get('slm_prompt_eval_ms') or 0:,.0f} "
+                f"| {m['slm_output_tokens'] or 0}/{m.get('slm_eval_ms') or 0:,.0f} "
+                f"| **{m.get('slm_tokens_per_s') or 0:,.1f}** "
+                f"| {m.get('slm_column_coverage_pct') or 0}% "
+                f"| {'sim' if m.get('slm_truncated') else 'nao'} |"
+            )
+        lines.appen(
+            "\n> Compare modelos com `python show_metrics.py --models` "
+            "(agrega todas as runs por `slm_model`)."
+        )
+    else:
+        lines.appen("Nenhuma inferencia bem-sucedida nesta execucao. \n")
+    lines += [
+        "\n---\n",
         "## Detalhes por Tabela\n",
     ]
-
+    
     for m in all_metrics:
         lines.append(f"### `{m['table']}`")
         if m["issues"]:
