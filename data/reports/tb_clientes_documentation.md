@@ -1,70 +1,65 @@
-# Dicionário Técnico da Tabela `tb_clientes`
+## Dicionário Técnico do Contrato de Dados: Tabela `tb_clientes`
 
-## Visão Geral
+**Contexto do Negócio:**
+A tabela `tb_clientes` serve como o mestre de cadastro para clientes, tanto pessoa física (PF) quanto jurídica (JF), dentro do banco. Esta tabela é essencial para o gerenciamento de relacionamentos e para a definição de produtos de crédito ofertados, com base no segmento do cliente (`cd_segmento`).
 
-A tabela `tb_clientes` é um cadastro mestre de clientes pessoa física e jurídica, utilizado por todos os produtos de crédito e relacionamento do banco. A segmentação dos clientes determina o produto oferecido e o gestor responsável. A tabela é atualizada diariamente pelo batch noturno do sistema CORE_BANCARIO_TOTVS.
+**Dados Steward:**
+- **Nome:** Data Steward Cadastral
+- **Contato:** [squad-dados-cadastrais@banco.com.br](mailto:squad-dados-cadastrais@banco.com.br)
 
-### Propriedades da Tabela
-
-- **Owner**: squad-dados-cadastrais
-- **Versão**: 1.0.0
-- **Status do Manifesto**: DRAFT
-- **Fonte**: Sistema CORE_BANCARIO_TOTVS, formato CSV, codificação UTF-8, sistema operacional Unix, atualização diária.
-- **Contato**: squad-dados-cadastrais@banco.com.br
-- **Classificação de Dados**: Confidencial
-- **Período de Retenção**: 10 anos
-- **Tags Regulatórias**: LGPD, BACEN_4658
-
-## Colunas
-
-### `cd_cliente`
-- **Tipo**: VARCHAR
-- **Nullable**: Não
-- **Descrição**: Código único do cliente no sistema legado, gerado sequencialmente pelo CORE_BANCARIO.
-- **Propósito de Negócio**: Identificador único para cada cliente.
-- **Comportamento Esperado**: Sem valores nulos, 500 valores únicos.
-- **Anomalias**: Nenhuma.
-
-### `nr_cpf_cnpj`
-- **Tipo**: VARCHAR
-- **Nullable**: Não
-- **Descrição**: CPF (11 dígitos) ou CNPJ (14 dígitos) sem máscara.
-- **Propósito de Negócio**: Identificação fiscal do cliente.
-- **Comportamento Esperado**: Sem valores nulos, 500 valores únicos.
-- **Regulatório**: Sensível conforme LGPD.
-- **Anomalias**: Nenhuma.
-
-### `nm_cliente`
-- **Tipo**: VARCHAR
-- **Nullable**: Não
-- **Descrição**: Nome completo do cliente conforme cadastro na Receita Federal.
-- **Propósito de Negócio**: Nome do cliente para identificação.
-- **Comportamento Esperado**: Sem valores nulos, 498 valores únicos.
-- **Regulatório**: Sensível conforme LGPD.
-- **Anomalias**: 2 duplicatas identificadas.
-
-### `dt_nascimento`
-- **Tipo**: VARCHAR
-- **Nullable**: Sim
-- **Descrição**: Data de nascimento. Nula para clientes PJ.
-- **Propósito de Negócio**: Informação demográfica do cliente.
-- **Comportamento Esperado**: Pode ser nulo, 495 valores únicos.
-- **Regulatório**: Sensível conforme LGPD.
-- **Anomalias**: Nenhuma.
-
-### `cd_segmento`
-- **Tipo**: VARCHAR
-- **Nullable**: Não
-- **Descrição**: Segmento de relacionamento. Domínio: VAREJO, PRIME, PRIVATE, PJ_PEQUENO, PJ_MEDIO.
-- **Propósito de Negócio**: Determina o produto oferecido e o gestor responsável.
-- **Comportamento Esperado**: Sem valores nulos, 5 valores únicos.
-- **Regras de Negócio**:
-  - PRIME: `vl_renda_mensal >= 10000`
-  - PRIVATE: `vl_renda_mensal >= 30000`
-- **Anomalias**: Verificar se `vl_renda_mensal` está nulo para `PJ_PEQUENO` e `PJ_MEDIO`.
-
-### `cd_agencia`
-- **Tipo**: VARCHAR
+**Manifesto:**
+```yaml
+table: tb_clientes
+description: Cadastro mestre de clientes pessoa física e jurídica.
+owner: squad-dados-cadastrais
+version: 1.0.0
+manifest_status: DRAFT
+source:
+  system: CORE_BANCARIO_TOTVS
+  format: csv
+  encoding: utf-8
+  os: unix
+  update_frequency: daily
+  contact: squad-dados-cadastrais@banco.com.br
+regulatory:
+  tags:
+  - LGPD
+  - BACEN_4658
+  data_classification: confidential
+  retention_years: 10
+steward:
+  name: Data Steward Cadastral
+  email: steward-cadastral@banco.com.br
+business_context: Tabela mestre de clientes utilizada por todos os produtos de credito
+  e relacionamento. A segmentacao (cd_segmento) determina o produto ofertado e o gestor
+  responsavel. Atualizada diariamente pelo batch noturno do CORE_BANCARIO_TOTVS.
+tolerance:
+  max_null_pct: 25
+  allow_duplicates: false
+dependencies:
+- tb_agencias
+- tb0_segmentos
+sample_queries:
+- description: Distribuicao por segmento
+  sql: SELECT cd_segmento, COUNT(*) as qtd FROM tb_clientes WHERE fl_ativo = true
+    GROUP BY cd_segmento
+- description: Clientes ativos com renda acima de 10k
+  sql: SELECT cd_cliente, nm_cliente, vl_renda_mensal FROM tb_clientes WHERE fl_ativo
+    = true AND vl extrato_renda_mensal > 10000
+schema:
+- name: cd_cliente
+  type: string
+  nullable: false
+  primary_key: true
+  description: Codigo unico do cliente no sistema legado. Gerado sequencialmente pelo
+    CORE_BANCARIO.
+- name: nr_cpf_cnpj
+  type: string
+  nullable: false
+  description: CPF (11 digitos) ou CNPJ (14 digitos) sem mascara.
+  regulatory_flags:
+  - LGPD_SENSITIVE
+- name: nm_client
 
 ---
 > **[AI_METADATA_STATUS: DRAFT]**

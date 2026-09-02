@@ -56,12 +56,13 @@ def _slm_metrics(slm_result: dict) -> dict:
     return {
         "slm_model"             : slm_result.get("model"),
         "slm_num_predict"       : slm_result.get("num_predict"),
-        "slm_total_ms"          : slm_result.get("total_ms"),
+        "slm_total_ms"          : perf.get("total_ms"),
+        "slm_load_ms"           : perf.get("load_ms"),
         "slm_prompt_tokens"        : perf.get("prompt_tokens"),
         "slm_prompt_eval_ms"     : perf.get("prompt_eval_ms"),
         "slm_output_tokens"        : perf.get("output_tokens"),
         "slm_eval_ms"           : perf.get("eval_ms"),
-        "slm_tokens_per_s"          : perf.get("token_per_s"),
+        "slm_tokens_per_s"          : perf.get("tokens_per_s"),
         "slm_truncated"         : perf.get("truncated"),
         "slm_output_chars"        : out.get("chars"),
         "slm_output_words"        : out.get("words"),
@@ -100,8 +101,6 @@ def collect(
         "null_violations"    : val_result.null_violations,
         "avg_null_pct"       : avg_null,
         "profiling_ms"       : profiler_payload.get("profiling_ms", 0),
-        "slm_status"         : slm_result.get("status"),
-        "slm_inference_ms"   : slm_result.get("inference_ms", 0),
         "quality_score"      : quality_score,
         "issues"             : val_result.issues,
         "warnings"           : val_result.warnings,
@@ -155,33 +154,33 @@ def generate_report(all_metrics: list[dict], reports_dir: Path) -> Path:
         "\n---\n",
         "## Desempenho da SLM\n",
     ]
-    slm_rows = [m for m in all_metrics if m["slm_status"] == "SUCCESS" and m.get("slm_model")]
+    slm_rows = [m for m in all_metrics if m.get("slm_status") == "SUCCESS" and m.get("slm_model")]
     if slm_rows:
         lines += [
-            "| Tabela | Modelo | Num Predict | Inference (ms) | Prompt Tokens | Output Tokens | Token/s | Cobertura Colunas (%) |",
-            "|--------|--------|-------------|----------------|---------------|---------------|---------|----------------------|",
+            "| Tabela | Modelo | Wall (ms) | Carga (ms) | Prompt (Tok/ms) | Saida (tok/ms) | Tok/s | Cobertura | Truncado |",
+            "|--------|--------|-----------|------------|-----------------|----------------|-------|-----------|----------|",
         ]
         for m in slm_rows:
             lines.append(
                 f"| `{m['table']}` | {m['slm_model']} | {m['slm_inference_ms']:,.0f} "
-                f"| {m['slm_load_ms'] or 0:,.0f} "
+                f"| {m.get('slm_load_ms') or 0:,.0f} "
                 f"| {m['slm_prompt_tokens'] or 0}/{m.get('slm_prompt_eval_ms') or 0:,.0f} "
                 f"| {m['slm_output_tokens'] or 0}/{m.get('slm_eval_ms') or 0:,.0f} "
                 f"| **{m.get('slm_tokens_per_s') or 0:,.1f}** "
                 f"| {m.get('slm_column_coverage_pct') or 0}% "
                 f"| {'sim' if m.get('slm_truncated') else 'nao'} |"
             )
-        lines.appen(
+        lines.append(
             "\n> Compare modelos com `python show_metrics.py --models` "
             "(agrega todas as runs por `slm_model`)."
         )
     else:
-        lines.appen("Nenhuma inferencia bem-sucedida nesta execucao. \n")
+        lines.append("Nenhuma inferencia bem-sucedida nesta execucao. \n")
     lines += [
         "\n---\n",
         "## Detalhes por Tabela\n",
     ]
-    
+
     for m in all_metrics:
         lines.append(f"### `{m['table']}`")
         if m["issues"]:

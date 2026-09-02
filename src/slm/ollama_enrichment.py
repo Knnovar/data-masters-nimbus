@@ -143,7 +143,7 @@ def enrich(storage, contract_filename: str, profiler_payload: dict) -> dict:
     if status == "SUCCESS":
         tokens = (f"{perf['output_tokens']} tok" if perf["output_tokens"] is not None 
                   else f"~{out['output_tokens_est']} tok (est)")
-        speed = f"{perf['token_per_s']} tok/s" if perf["token_per_s"] else "tok/s n/d"
+        speed = f"{perf['tokens_per_s']} tok/s" if perf["tokens_per_s"] else "tok/s n/d"
         trunc = "| TRUNCADO" if perf["truncated"] else ""
         print(f"   [SLM] [{table}] {OLLAMA_MODEL}: {elapsed_ms} ms | {tokens} | {speed} | "
               f"cobertura {out['column_coverage_pct']}%{trunc} -> reports/{report_filename}")
@@ -179,17 +179,18 @@ def _perf_metrics(payload: dict, wall_ms: float) -> dict:
     def _ms(key):
         v=payload.get(key)
         return round(v / 1_000_000, 1) if isinstance(v, (int, float)) else None
-    eval_ms = _ms("eval_ns")
+    eval_ms = _ms("eval_duration")
     out_tokens = payload.get("eval_count")
     tokens_per_s = None
     if isinstance(out_tokens, int) and eval_ms:
         tokens_per_s = round(out_tokens / (eval_ms / 1000), 1)
     return {
         "wall_ms"      : wall_ms,
-        "total_ms"     : _ms("total_diuration"),
+        "total_ms"     : _ms("total_duration"),
         "load_ms"      : _ms("load_duration"),
         "prompt_tokens"  : payload.get("prompt_eval_count"),
         "prompt_eval_ms" : _ms("prompt_eval_duration"),
+        "output_tokens"  : out_tokens,
         "eval_ms"      : eval_ms,
         "tokens_per_s"  : tokens_per_s,
         "done_reason"    : payload.get("done_reason"),
@@ -222,7 +223,7 @@ def _output_metrics(doc: str, yaml_content: str) -> dict:
         "columns_cited"          : len(cited),
         "column_coverage_pct"    : round(len(cited) / len(columns) * 100, 1) if columns else 0.0,
         "columns_missing"          : [c for c in columns if c not in doc],
-        "has_pontos_atencao"          : "Pontos de Atencao" in doc.lower(),
+        "has_pontos_atencao"          : "pontos de aten" in doc.lower(),
         "has_draft_tag"          : "[AI_METADATA_STATUS: DRAFT]" in doc,
     }
 

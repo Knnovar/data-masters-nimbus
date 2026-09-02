@@ -220,7 +220,7 @@ def view_slm(records: list[dict]) -> None:
         trunc = " *" if r.get("slm_truncated") else ""
         print(f"  {table:<30} {scenario:<14} {tag:<7} {ms_str:>15} "
               f"{model:<14} {(f'{tps:,.1f}' if tps else '-'):>7} " 
-              f"{(f'{cov:,.1f}%' if cov else '-'):>10}{trunc}')")
+              f"{(f'{cov:,.1f}%' if cov else '-'):>10}{trunc}")
 
     if any(r.get("slm_truncated") for r in seen.values()):
         print(" (*) resposta truncada pelo num_predict (SLM_NUM_PREDICT)")
@@ -300,7 +300,7 @@ def export_csv(records: list[dict], output_path: Path) -> None:
         "avg_null_pct", "profiling_ms",
         "slm_status", "slm_inference_ms", "quality_score",
         "slm_model", "slm_num_predict", "slm_load_ms", "slm_prompt_eval_ms", 
-        "slm_prompt_eval_ms", "slm_output_tokens", "slm_eval_ms",
+        "slm_prompt_tokens", "slm_output_words", "slm_output_tokens", "slm_eval_ms",
         "slm_tokens_per_s", "slm_column_coverage_pct", "slm_truncated",
         "slm_output_chars",
     ]
@@ -326,13 +326,17 @@ def main():
     parser.add_argument("--slm",      action="store_true", help="Exibe status do enriquecimento SLM")
     parser.add_argument("--csv",      default=None,        help="Exporta para CSV (ex: --csv metricas.csv)")
     parser.add_argument( "--models",  action="store_true", help = "Compara desempenho de modelos SLM (ex: phi3.5 x phi4)")
-    if args.models:
-        view_models(filter_records(records, table=args.table, scenario=args.scenario, last_only = False))
-    elif args.issues:
-        args = parser.parse_args()
     args = parser.parse_args()
 
     records = load_all_metrics(METRICS_DIR)
+
+    if args.models:
+            view_models(filter_records(records, table=args.table, scenario=args.scenario, last_only = False))
+    elif args.issues:
+        view_issues(filter_records(records, table=args.table, scenario=args.scenario))
+    elif args.slm:
+        view_slm(filtered)
+        
 
     if not records:
         print("[INFO] Nenhuma metrica encontrada. Execute o pipeline primeiro:")

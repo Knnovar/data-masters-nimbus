@@ -1,55 +1,27 @@
-# Dicionário Técnico da Tabela `tb_contratos_credito`
+```markdown
+# Dicionário Técnico do Contrato de Dados: tb_contratos_credito
 
-## Visão Geral
+## Informações do Contrato
+- **Nome do Contrato:** Contratos de produtos de crédito ativos e encerrados.
+- **Proprietário:** Squad Credito
+- **Versão:** 3.0.0
+- **Status:** DRAFT
+- **Fonte:** Sistema de Crédito SAS (SISTEMA_CREDITO_SAS), formato sas7bdat, codificação latin-1, sistema Unix, atualização diária.
+- **Contato:** squad-credito@banco.com.br
 
-A tabela `tb_contratos_credito` armazena informações sobre contratos de produtos de crédito ativos e encerrados. Ela é gerida pela equipe `squad-credito` e está em versão `3.0.0`. O sistema de origem é o `SISTEMA_CREDITO_SAS`, e os dados são atualizados diariamente. A tabela é classificada como restrita e deve ser retenida por 10 anos, conforme as regulamentações `SCR`, `BACEN_4658` e `LGPD`.
+## Business Context
+- Os dados representam contratos de crédito para todos os produtos ofertados pelo banco.
+- Os dados são utilizados mensalmente para o Sistema de Controle de Crédito (SCR).
 
-## Colunas
+## Colunas e Descrições
 
-### `id_contrato`
-- **Tipo**: `string`
-- **Nullable**: `false`
-- **Descrição**: Identificador único do contrato gerado pelo sistema de crédito.
-- **Propósito de Negócio**: Serve como chave primária para identificar cada contrato de forma única.
-- **Comportamento Esperado**: Não deve conter valores nulos, garantindo a unicidade em todas as entradas.
-- **Anomalias**: Nenhuma anomalia observada, já que `null_pct` é 0.0 e `unique_count` é 299.
+1. **id_contrato (cd_id_contrato):** Identificador único do contrato gerado pelo sistema de crédito.
+   - **Propósito:** Identificação exclusiva para cada contrato.
+   - **Tipo:** STRING
+   - **Comportamento esperado:** Único para cada contrato.
 
-### `cd_cliente`
-- **Tipo**: `string`
-- **Nullable**: `false`
-- **Descrição**: Referência ao cliente em `tb_clientes`.
-- **Propósito de Negócio**: Liga o contrato ao cliente correspondente.
-- **Comportamento Esperado**: Não deve conter valores nulos, garantindo a integridade referencial com `tb_clientes`.
-- **Anomalias**: Nenhuma anomalia observada, já que `null_pct` é 0.0 e `unique_count` é 299.
-
-### `dt_contrato`
-- **Tipo**: `date`
-- **Nullable**: `false`
-- **Descrição**: Data de abertura do contrato.
-- **Propósito de Negócio**: Registra o início do contrato.
-- **Comportamento Esperado**: Não deve conter valores nulos, refletindo a data exata de abertura.
-- **Anomalias**: Nenhuma anomalia observada, já que `null_pct` é 0.0 e `unique_count` é 282.
-
-### `vl_limite`
-- **Tipo**: `float`
-- **Nullable**: `false`
-- **Descrição**: Limite de crédito aprovado em BRL.
-- **Propósito de Negócio**: Define o valor máximo que pode ser utilizado pelo cliente.
-- **Comportamento Esperado**: Não deve conter valores nulos, refletindo o limite aprovado.
-- **Anomalias**: Nenhuma anomalia observada, já que `null_pct` é 0.0. Valores variam de 1065.12 a 99779.85 BRL.
-
-### `vl_utilizado`
-- **Tipo**: `float`
-- **Nullable**: `false`
-- **Descrição**: Saldo utilizado atual em BRL. Pode exceder `vl_limite` em produtos com tolerância.
-- **Propósito de Negócio**: Monitora o uso atual do crédito pelo cliente.
-- **Comportamento Esperado**: Não deve conter valores nulos, refletindo o saldo utilizado.
-- **Anomalias**: Nenhuma anomalia observada, já que `null_pct` é 0.0. Valores variam de 92797.21 a 3817.24 BRL.
-
-### `tp_produto`
-- **Tipo**: `string`
-- **Nullable**: `false`
-- **Descrição**: Tipo do produto de crédito. Domínio: `CART
+2. **cd_cliente:** Referência ao cliente em tb_clientes.
+   - **Propósito:0000000000000000000000000000000
 
 ---
 > **[AI_METADATA_STATUS: DRAFT]**
