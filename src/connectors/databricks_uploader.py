@@ -97,12 +97,40 @@ class DatabricksUploader:
         resp = self._session.post(self._url("sql/statements"), json=payload, timeout=90)
         if not resp.ok: raise RuntimeError(f"SQL erro {resp.status_code}: {resp.text[:300]}\nStmt: {stmt[:200]}")
         result = resp.json()
-        state  = result.get("status", {}).get("state", "UNKNOWN")
-        if wait and state != "SUCCEEDED":
-            raise RuntimeError(("SQL nao concluido (state={}): {}".format(state, stmt[:200])))
-        if state == "FAILED":
-            raise RuntimeError("SQL falhou: {}".format(result.get("status",{}).get("error",{}).get("message","sem detalhe")))
-        return result
+        if not wait:
+            return result
+        return self._await_statement(result, stmt)
+    
+    SQL_POOL_TIMEOUT_S = 600
+    SQL_POOL_INTERVAL_S = 5
+    _SQL_PENDING = ("PENDING", "RUNNING")
+
+    def _await_statement(self, result, stmt):
+        import time
+        deadline = time.time() + self.SQL_POOL_TIMEOUT_S
+        state= result.get("status", {}).get(state, "UNKNOWN")
+        sid = result.get("statement_id")
+
+        while state in self._SQL_PENDING and sid and time.time() < deadline:
+            time.sleep(self.SQL_POOL_INTERVAL_S)
+            poll = self._get("sql/statements/{}".format(sid))
+            if not poll.ok:
+                raise RuntimeError("SQL erro ao consultar statement {}: {} {}").format(sid, poll.status_code, poll.text[:300])
+            result = poll.json()
+            state = result.get("status", {}).get("state", "UNKNOWN")
+
+        if state == "SUCCEEDED":
+            return result
+
+        detail = (result.get("status", {}).get("error", {}) or {}).get("message", "")
+        if state in ("FAILED", "CANCELED", "CLOSED"):
+            raise RuntimeError("SQL {} : {} \nStmt: {}".format(
+                state, detail or "sem detalhe na resposta", stmt[:300]
+            ))
+        raise RuntimeError("SQL nao concluido em {}s (state={}): {}\nStmt: {}".format(
+            self.SQL_POOL_INTERVAL_S, state, detail or "sem detalhe", stmt[:300]
+        ))
+
 
     def diagnose(self):
         r = DiagnoseResult()
@@ -296,7 +324,7 @@ def get_uploader():
         warehouse_id = getattr(cfg, "DATABRICKS_WAREHOUSE_ID", ""),
         volume      = getattr(cfg, "DATABRICKS_VOLUME",      "landing"),
         catalog      = getattr(cfg, "DATABRICKS_CATALOG",      "nimbus"),
-        schema       = getattr(cfg, "DATABRICKS_SCHEMA",      getattr(cfg, "DATABRICKS_SCHEMA", "silver")),
+        schema       = getattr(cfg, "DATABRICKS_SILVER_SCHEMA",      getattr(cfg, "DATABRICKS_SCHEMA", "silver")),
     )
 
 def publish_table(silver_path, table_name, contract=None, run_id=None, dat_ref=None):
@@ -339,6 +367,6 @@ def upload_silver_table(silver_path, table_name=None, contract=None, dat_ref=Non
     u = DatabricksUploader(host=host, token=token, warehouse_id=wid,
             volume=volume or getattr(cfg,"DATABRICKS_VOLUME","landing"),
             catalog=getattr(cfg,"DATABRICKS_CATALOG","nimbus"),
-            schema=getattr(cfg,"DATABRICKS_SCHEMA",getattr(cfg, "DATABRICKS_SILVER_SCHEMA", getattr(cfg, "DATABRICKS_SCHEMA", "silver"))))
+            schema=getattr(cfg,"DATABRICKS_SILVER_SCHEMA", getattr(cfg, "DATABRICKS_SCHEMA", "silver")))
     return u.upload_and_register(silver_path, table_name=table_name, contract=contract, dat_ref=dat_ref, run_id=run_id)
  

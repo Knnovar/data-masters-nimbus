@@ -127,7 +127,7 @@ def get_bronze_uploader():
             warehouse_id = getattr(cfg, "DATABRICKS_WAREHOUSE_ID",  ""),
             volume       = getattr(cfg, "DATABRICKS_BRONZE_VOLUME", "landing"),
             catalog      = getattr(cfg, "DATABRICKS_CATALOG",       "nimbus"),
-            schema       = getattr(cfg, "DATABRICKS_SCHEMA",        "bronze"), 
+            schema       = getattr(cfg, "DATABRICKS_BRONZE_SCHEMA",        "bronze"), 
         )
 
 def publish_bronze(local_path, table_name, run_id=None, dat_ref=None):
