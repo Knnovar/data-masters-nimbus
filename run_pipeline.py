@@ -58,6 +58,10 @@ def run_scenario(scenario: str, run_id: str, fmt: str = "csv") -> tuple[list[dic
 
         print(f"\n  -- {table} --")
 
+        from src.connectors.bronze_uploader import publish_bronze
+        publications.append(publish_bronze(storage.read_path("bronze", filename),
+                                           table_name=Path(filename).stem, run_id=run_id))
+
         # Silver: validação (DLQ → quarantine, OK → permanece no bronze)
         val_result = validate(storage, filename, contract_filename, scenario=scenario)
 
@@ -174,10 +178,13 @@ def main():
     attempted = [p for p in publications if p["status"] != "DISABLED"]
     failed = [p for p in publications if p["status"] == "ERROR"]
     if attempted:
-        ok = sum(1 for p in attempted if p["status"] == "OK")
-        print(f"Databricks: {ok}/{len(attempted)} tabelas publicadas")
+        for layer in ("bronze", "silver"):
+          rows = [p for p in attempted if p.get("layer", "silver") == layer]
+          if rows:  
+            ok = sum(1 for p in attempted if p["status"] == "OK")
+            print(f"Databricks: {ok}/{len(attempted)} tabelas publicadas")
     for p in failed:
-        print(f" [DATABRICKS] {p['table']}: {p['error']}")
+        print(f" [DATABRICKS] {p.get('layer', 'silver')}/{['table']}: {p['error']}")
     print("\n  Pipeline concluida.\n")
 
     return 1 if failed else 0
