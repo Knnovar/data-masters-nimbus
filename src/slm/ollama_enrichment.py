@@ -15,7 +15,7 @@ import time
 import requests
 import yaml
 
-from config import OLLAMA_HOST, OLLAMA_MODEL, NULL_TOLERANCE_PCT, SKIP_SLM
+from config import OLLAMA_HOST, OLLAMA_MODEL, NULL_TOLERANCE_PCT, SKIP_SLM, SLM_NUM_PREDICT as NUM_PREDICT
 
 _SYSTEM_PROMPT = """Você é um Data Steward sênior de um banco brasileiro regulado pelo Banco Central.
 Você conhece os padrões de nomenclatura de dados financeiros brasileiros:
@@ -106,13 +106,14 @@ def enrich(storage, contract_filename: str, profiler_payload: dict) -> dict:
     )
 
     t0 = time.perf_counter()
+    payload={}
     try:
         response = requests.post(
             f"{OLLAMA_HOST}/api/chat",
             json={
                 "model"  : OLLAMA_MODEL,
                 "stream" : False,
-                "options": {"temperature": 0.2, "num_predict": 800},
+                "options": {"temperature": 0.2, "num_predict": NUM_PREDICT},
                 "messages": [
                     {"role": "system", "content": _SYSTEM_PROMPT},
                     {"role": "user",   "content": user_prompt},
@@ -121,7 +122,8 @@ def enrich(storage, contract_filename: str, profiler_payload: dict) -> dict:
             timeout=600,
         )
         response.raise_for_status()
-        doc    = response.json()["message"]["content"]
+        payload = response.json()
+        doc    = payload["message"]["content"]
         status = "SUCCESS"
     except Exception as e:
         doc    = f"Erro na inferencia SLM: {e}\n\n> **[AI_METADATA_STATUS: DRAFT]**"
@@ -135,9 +137,16 @@ def enrich(storage, contract_filename: str, profiler_payload: dict) -> dict:
 
     # Grava documentação no layer reports via storage
     storage.write_text("reports", report_filename, doc)
+    perf = _perf_metrics(payload, elapsed_ms)
+    out = _output_metrics(doc, yaml_content)
 
     if status == "SUCCESS":
-        print(f"   [SLM] [{table}] Documentacao gerada em {elapsed_ms} ms -> reports/{report_filename}")
+        tokens = (f"{perf['output_tokens']} tok" if perf["output_tokens"] is not None 
+                  else f"~{out['output_tokens_est']} tok (est)")
+        speed = f"{perf['tokens_per_s']} tok/s" if perf["tokens_per_s"] else "tok/s n/d"
+        trunc = "| TRUNCADO" if perf["truncated"] else ""
+        print(f"   [SLM] [{table}] {OLLAMA_MODEL}: {elapsed_ms} ms | {tokens} | {speed} | "
+              f"cobertura {out['column_coverage_pct']}%{trunc} -> reports/{report_filename}")
 
     return {
         "table"             : table,
@@ -145,6 +154,10 @@ def enrich(storage, contract_filename: str, profiler_payload: dict) -> dict:
         "inference_ms"      : elapsed_ms,
         "documentation"     : doc,
         "ai_metadata_status": "DRAFT",
+        "model"             : OLLAMA_MODEL,
+        "num_predict"       : NUM_PREDICT,
+        "perf"              : perf,
+        "output"            : out,
     }
 
 
@@ -154,8 +167,65 @@ def enrich(storage, contract_filename: str, profiler_payload: dict) -> dict:
 
 def _skipped(table: str) -> dict:
     return {"table": table, "status": "SKIPPED", "inference_ms": 0,
-            "documentation": _stub_doc(table), "ai_metadata_status": "DRAFT"}
+            "documentation": _stub_doc(table), "ai_metadata_status": "DRAFT",
+            "model": OLLAMA_MODEL, "num_predict": NUM_PREDICT, "perf": _perf_metrics({}, 0), "output": _output_metrics("", "")}
 
+def _perf_metrics(payload: dict, wall_ms: float) -> dict:
+    """Tempos reportados pelo Ollama (ns) normalizados em ms + throughput (tokens/s).
+    
+    Permite comparar modelos separando carga do modelo (load_ms), leitura do 
+    prompt(prompt_eval_ms) e geração do output (eval_ms) - o wall_ms sozinho mistura os
+    tres e penaliza o primeiro run de cada modelo."""
+    def _ms(key):
+        v=payload.get(key)
+        return round(v / 1_000_000, 1) if isinstance(v, (int, float)) else None
+    eval_ms = _ms("eval_duration")
+    out_tokens = payload.get("eval_count")
+    tokens_per_s = None
+    if isinstance(out_tokens, int) and eval_ms:
+        tokens_per_s = round(out_tokens / (eval_ms / 1000), 1)
+    return {
+        "wall_ms"      : wall_ms,
+        "total_ms"     : _ms("total_duration"),
+        "load_ms"      : _ms("load_duration"),
+        "prompt_tokens"  : payload.get("prompt_eval_count"),
+        "prompt_eval_ms" : _ms("prompt_eval_duration"),
+        "output_tokens"  : out_tokens,
+        "eval_ms"      : eval_ms,
+        "tokens_per_s"  : tokens_per_s,
+        "done_reason"    : payload.get("done_reason"),
+        "truncated"      : payload.get("done_reason") == "length",
+    }
+def _output_metrics(doc: str, yaml_content: str) -> dict:
+    """Caracteristicas da resposta - o que compara qualidade entre modelos.
+    
+    column_coverage_pct e o percentual de colunas do contrato citadas na
+    documentacao; truncated indica resposta cortada pelo num_predict"""
+
+    columns = []
+    if yaml_content:
+        try:
+            parsed = yaml.safe_load(yaml_content) or {}
+            columns = [c.get("name") for c in (parsed.get("schema") or [])
+                       if isinstance(c, dict) and c.get("name")]
+        except Exception:
+            columns = []
+    cited = [c for c in columns if c in doc]
+    words = doc.split()
+
+    return {
+        "chars"              : len(doc),
+        "words"              : len(words),
+        "lines"              : doc.count("\n") + 1 if doc else 0,
+        "headings"           : sum(1 for ln in doc.splitlines() if ln.startswith("#")),
+        "output_tokens_est"  : round(len(words) * 1.3) if words else 0,
+        "columns_total"          : len(columns),
+        "columns_cited"          : len(cited),
+        "column_coverage_pct"    : round(len(cited) / len(columns) * 100, 1) if columns else 0.0,
+        "columns_missing"          : [c for c in columns if c not in doc],
+        "has_pontos_atencao"          : "pontos de aten" in doc.lower(),
+        "has_draft_tag"          : "[AI_METADATA_STATUS: DRAFT]" in doc,
+    }
 
 def _stub_doc(table: str) -> str:
     return (

@@ -1,13 +1,18 @@
+import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).parent
+try:
+    from dotenv import load_dotenv
+    load_dotenv(BASE_DIR / ".env", override=False)
+except ImportError:
+    pass
 DATA_DIR  = BASE_DIR / "data"
 
-# ── Camadas da arquitetura medallion ─────────────────────────────────────────
-LANDING_DIR    = DATA_DIR / "landing"      # bronze  — dado bruto
-PROCESSED_DIR  = DATA_DIR / "processed"   # silver  — dado validado
-GOLD_DIR       = DATA_DIR / "gold"        # gold    — dado agregado
-QUARANTINE_DIR = DATA_DIR / "quarantine"  # DLQ     — breaking changes
+LANDING_DIR    = DATA_DIR / "landing"
+PROCESSED_DIR  = DATA_DIR / "processed"
+GOLD_DIR       = DATA_DIR / "gold"
+QUARANTINE_DIR = DATA_DIR / "quarantine"
 CONTRACTS_DIR  = DATA_DIR / "contracts"
 METRICS_DIR    = DATA_DIR / "metrics"
 REPORTS_DIR    = DATA_DIR / "reports"
@@ -16,27 +21,28 @@ for d in [LANDING_DIR, PROCESSED_DIR, GOLD_DIR, QUARANTINE_DIR,
           CONTRACTS_DIR, METRICS_DIR, REPORTS_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
-# ── Storage backend ───────────────────────────────────────────────────────────
-# False → disco local (padrão, sem dependências externas)
-# True  → MinIO      (requer: docker compose up -d && pip install minio)
-USE_MINIO = False
+USE_MINIO = os.environ.get("USE_MINIO", "false").lower() in ("true", "1", "yes")
 
-# ── MinIO (usado apenas quando USE_MINIO = True) ──────────────────────────────
-MINIO_ENDPOINT   = "localhost:9000"
-MINIO_ACCESS_KEY = "minioadmin"
-MINIO_SECRET_KEY = "minioadmin"
+MINIO_ENDPOINT   = os.environ.get("MINIO_ENDPOINT",   "localhost:9000")
+MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
+MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "minioadmin")
 
-# ── Ollama ────────────────────────────────────────────────────────────────────
-# Modelos recomendados por prioridade:
-#   phi3.5          → melhor custo/benefício em CPU (3.8B)
-#   phi4            → melhor qualidade de documentação (14B, lento em CPU)
-#   qwen2.5-coder:7b → alternativa, mas otimizado para código
-OLLAMA_HOST  = "http://localhost:11434"
-OLLAMA_MODEL = "phi4"
+OLLAMA_HOST  = os.environ.get("OLLAMA_HOST",  "http://localhost:11434")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "phi4")
+SKIP_SLM     = os.environ.get("SKIP_SLM", "false").lower() in ("true", "1", "yes")
+SLM_NUM_PREDICT = int(os.environ.get("SLM_NUM_PREDICT", "1500"))
 
-# Desativa o SLM sem alterar código (útil para testar o pipeline sem Ollama)
-SKIP_SLM = False
+NULL_TOLERANCE_PCT  = float(os.environ.get("NULL_TOLERANCE_PCT",  "30.0"))
+DUPLICATE_TOLERANCE = float(os.environ.get("DUPLICATE_TOLERANCE", "0.02"))
 
-# ── Qualidade ─────────────────────────────────────────────────────────────────
-NULL_TOLERANCE_PCT  = 30.0   # % de nulos acima do qual o SLM reporta anomalia
-DUPLICATE_TOLERANCE = 0.02   # 2% de duplicatas aceitas antes de warning
+DATABRICKS_HOST         = os.environ.get("DATABRICKS_HOST",         "")
+DATABRICKS_TOKEN        = os.environ.get("DATABRICKS_TOKEN",    "")
+DATABRICKS_WAREHOUSE_ID = os.environ.get("DATABRICKS_WAREHOUSE_ID", "")
+DATABRICKS_VOLUME       = os.environ.get("DATABRICKS_VOLUME",    "landing")
+DATABRICKS_CATALOG      = os.environ.get("DATABRICKS_CATALOG",      "nimbus")
+DATABRICKS_SCHEMA       = os.environ.get("DATABRICKS_SCHEMA",       "silver")
+DATABRICKS_SILVER_SCHEMA = os.environ.get("DATABRICKS_SILVER_SCHEMA",   DATABRICKS_SCHEMA)
+DATABRICKS_BRONZE_SCHEMA = os.environ.get("DATABRICKS_BRONZE_SCHEMA",   "bronze")
+DATABRICKS_AUTO_UPLOAD  = os.environ.get("DATABRICKS_AUTO_UPLOAD",  "True").lower() in ("true", "1", "yes")
+DATABRICKS_BRONZE_VOLUME = os.environ.get("DATABRICKS_BRONZE_VOLUME", "landing")
+DATABRICKS_BRONZE_UPLOAD = os.environ.get("DATABRICKS_BRONZE_UPLOAD", "True").lower() in ("true", "1", "yes")

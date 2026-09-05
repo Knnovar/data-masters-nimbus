@@ -1,51 +1,93 @@
 # Changelog — Projeto Nimbus
 
-Histórico de evolução do projeto, da concepção até o estado atual. O objetivo deste documento é que alguém de fora consiga entender por que o projeto está estruturado como está — não apenas o que existe hoje, mas as decisões que moldaram cada escolha.
+Histórico de evolução do projeto. O objetivo deste documento é que alguém de fora consiga entender por que o projeto está estruturado como está — não apenas o que existe hoje, mas as decisões que moldaram cada escolha.
 
 ---
 
 ## Sprint 1 — Fundação
 
-O objetivo da primeira sprint era estabelecer a arquitetura medallion local e provar que o Manifest poderia funcionar como um contrato de dados extensível, capaz de carregar tanto a estrutura técnica quanto o contexto de negócio.
-
-O entregável principal foi a arquitetura completa de Bronze, Silver, Gold e Quarantine com a abstração de Storage — uma interface única que o restante do pipeline usa sem saber se está escrevendo em disco local ou em um bucket S3. Essa decisão foi tomada cedo e com intenção clara: a migração para ADLS Gen2 em produção precisaria ser uma troca de implementação, não uma reescrita de lógica.
-
-O modelo de contrato (`DataContract`) ganhou os campos estendidos nesta sprint: `source`, `regulatory`, `steward`, `business_context` e `sample_queries`. Todos opcionais e backward-compatible — Manifests antigos continuam carregando sem erro.
-
-O extrator para SAS7BDAT foi o primeiro a ser implementado, e por um motivo estratégico: é o formato mais rico em metadados internos. O arquivo SAS já carrega nome de variável, label descritivo e formato — o extrator apenas organiza isso em YAML sem precisar carregar os dados em memória.
-
-O fluxo HITL foi estabelecido nesta sprint: todo Manifest nasce como `DRAFT`, e só avança para `VALIDATED` depois de revisão humana via `manifest_validator.py`. O pipeline emite aviso quando consome um contrato não validado, mas não trava.
-
-A orquestração foi implementada em paralelo com duas camadas: `run_pipeline.py` para execução direta e `prefect_flow.py` para integração com Prefect e mapeamento explícito para jobs Control-M com exit codes padronizados (0=OK, 1=WARNING, 2=ERROR/DLQ).
-
-A sprint encerrou com 65 testes unitários passando.
+Arquitetura medallion completa com abstração de Storage, modelo de contrato estendido (`source`, `regulatory`, `steward`, `business_context`, `sample_queries`), extrator SAS7BDAT, fluxo HITL DRAFT → VALIDATED, integração SLM via Ollama, orquestração com `run_pipeline.py` e `prefect_flow.py` mapeado para Control-M. 65 testes unitários.
 
 ---
 
 ## Sprint 2 — Multi-formato e encoding
 
-A segunda sprint partiu de uma constatação prática: um banco real não trabalha só com CSV. Arquivos chegam de sistemas distintos em formatos distintos, frequentemente com encoding incorreto para o ambiente de processamento.
-
-O primeiro entregável foi o `normalizer.py` — um pré-processador que garante UTF-8 e LF antes de qualquer coisa tocar o arquivo. Ele trata Latin-1, CP1252, BOM e CRLF automaticamente. Para EBCDIC, a decisão foi consciente: detectar e sinalizar, mas não converter. O middleware de transferência normalmente já faz essa conversão, e implementar um codec EBCDIC completo para casos esporádicos não justificaria o custo de manutenção.
-
-Os extratores de Manifest para CSV, Fixed-Width e JSON foram implementados seguindo a mesma interface do extrator SAS7BDAT da Sprint 1. O de Fixed-Width tem um detalhe importante: sem um arquivo de leiaute externo, um arquivo posicional é completamente ilegível. Por isso o extrator exige o leiaute (TXT, CSV ou XLSX) e oferece um modo de inferência experimental apenas como último recurso, marcando o resultado como `DRAFT_EXPERIMENTAL` para forçar revisão.
-
-O gerador de dados fictícios foi refatorado nesta sprint. A lógica que inventa os dados e a lógica que decide o formato de saída estavam misturadas — um problema que ficaria pior à medida que novos formatos fossem adicionados. A refatoração introduziu o padrão Strategy: `BaseWriter` como interface, `CSVWriter`, `JSONWriter` e `FixedWidthWriter` como implementações. O gerador de domínio entrega um DataFrame, o writer decide como serializar.
-
-O `FixedWidthWriter` introduziu um mecanismo de sidecar: ao gravar um `.txt`, ele grava também um `.layout` com os colspecs exatos de cada campo. O `LocalStorage.read()` usa esse sidecar para garantir que a leitura posterior use as posições corretas. Sem isso, `read_fwf` tentaria inferir as colunas por heurística e chegaria a resultados errados.
-
-Seis bugs foram corrigidos durante a sprint e documentados com causa raiz: a detecção de line endings que retornava `mixed` incorretamente para CRLF puro, a dupla normalização de nomes de coluna que quebrava o separador `__` em campos JSON aninhados, o `nunique()` que falhava em colunas com dicts colapsados, o DuckDB que falhava no sniff de CSV gerado no Windows sem `lineterminator` explícito, e o Storage que sempre assumia CSV ao ler — o que fazia JSON e Fixed-Width irem para DLQ antes mesmo de chegar ao validator.
-
-A sprint encerrou com 148 testes unitários passando.
+`normalizer.py` para encoding, extratores de Manifest para CSV, Fixed-Width e JSON. Refatoração do gerador de dados com padrão Strategy (`BaseWriter`, `CSVWriter`, `JSONWriter`, `FixedWidthWriter`). Sidecar `.layout` para fixed-width. Seis bugs corrigidos com causa raiz documentada. 148 testes unitários.
 
 ---
 
-## Reestruturação de documentação e rebrand
+## Reestruturação e rebrand
 
-Com o projeto funcional e estável, a necessidade passou a ser outra: tornar o código acessível para quem não participou do desenvolvimento. Havia instruções espalhadas em seis arquivos `.md` sem hierarquia clara, e o `Makefile` como único ponto de entrada de comandos — inutilizável no Windows sem instalação adicional.
+`tasks.py` como runner cross-platform, documentação reorganizada em `docs/`, README reescrito como porta de entrada. Projeto renomeado de Data Masters para **Projeto Nimbus**.
 
-O `tasks.py` foi criado como runner cross-platform: `python tasks.py <comando>` funciona nativamente em Windows, Mac e Linux sem dependência de `make`. Todos os fluxos do Makefile foram replicados e o comportamento padrão dos comandos de pipeline foi atualizado para rodar os três formatos por padrão — CSV, JSON e Fixed-Width — em vez de apenas CSV.
+---
 
-A documentação foi reorganizada em uma pasta `docs/` com arquivos temáticos: arquitetura, manifest, SLM, testes, changelog, próximos passos e plano de migração. O README foi reescrito como porta de entrada — apresentação, estrutura e manual rápido, sem detalhe técnico que pertence aos documentos específicos.
+## Sprint A — Parquet no Silver
 
-O projeto foi renomeado de Data Masters para **Projeto Nimbus**.
+O Silver passou a armazenar dados em Parquet com compressão Snappy. O arquivo original é preservado em `bronze/_archive/` para rastreabilidade. O `Storage.read()` detecta o formato pela extensão e usa o parser correto para cada um. 158 testes unitários.
+
+---
+
+## Sprint B — Integração Databricks (v1)
+
+`src/connectors/databricks_uploader.py` com upload via DBFS API, registro de tabela no metastore e `test_connection()`. `DATABRICKS_AUTO_UPLOAD` ativa o upload automático após cada promoção Silver. Testes via mock sem chamadas reais. 175 testes unitários.
+
+---
+
+## Deploy Docker one-click
+
+Stack Docker completo com três serviços: `nimbus`, `ollama` e `minio`. `scripts/entrypoint.sh` coordena a sequência de inicialização — aguarda healthchecks, baixa o modelo via `ollama pull`, inicia Prefect server, registra deployments, sobe worker e executa o pipeline. GPU NVIDIA e AMD/ROCm suportadas via configuração comentada. Modelo Ollama configurável via `.env`, baixado no primeiro boot. `config.py` reescrito para ler tudo via variáveis de ambiente.
+
+---
+
+## Sprint Parquet v2 — Tipagem governada pelo Manifest
+
+O Parquet no Silver passou a respeitar os tipos declarados no Manifest em vez de inferi-los pelo PyArrow. A contradição arquitetural estava aqui: o Manifest era declarado como fonte de verdade sobre o schema, mas o Silver tinha tipos decididos pelo PyArrow na serialização — sem relação com o que o Data Steward havia validado.
+
+`src/storage/schema_utils.py` é o módulo novo de responsabilidade única: converte tipos semânticos do Manifest para tipos físicos PyArrow e aplica o cast coluna a coluna. O cast é não-destrutivo — se mais de 5% dos valores falham, a coluna mantém string e o evento é registrado como WARNING. Booleanos reconhecem os domínios `S/N`, `0/1`, `SIM/NÃO`, `TRUE/FALSE`. Datas tentam o formato declarado no `business_rules` com fallback para formatos brasileiros conhecidos.
+
+`promote_to_parquet()` passou a aceitar `contract=None`. Quando passado, aplica o schema declarado. Quando não, mantém inferência (backward-compatible).
+
+Todo Parquet gerado carrega metadata rastreável no footer: `nimbus.schema_source`, `nimbus.manifest_version`, `nimbus.table`, `nimbus.generated_at`, `nimbus.warnings_count`. O Silver é auto-documentado.
+
+`prefect_flow.py` e `run_pipeline.py` carregam o contrato antes da promoção e o passam ao `promote_to_parquet()`. O log indica `schema=manifest` ou `schema=inferido`. 231 testes unitários.
+
+---
+
+## Sprint Databricks v2 — Delta Lake e diagnóstico estruturado
+
+O módulo de integração foi refatorado completamente para resolver três problemas: ausência do `warehouse_id` obrigatório, upload de arquivo único sem histórico e erros engolidos silenciosamente.
+
+O fluxo por execução agora tem quatro etapas: upload em pasta por tabela (`/nimbus/silver/<tabela>/`), conversão para Delta via `CONVERT TO DELTA` (idempotente), registro com `CREATE TABLE USING DELTA` na primeira vez e `REFRESH TABLE` nas seguintes, e população automática de comentários de colunas a partir do Manifest.
+
+`DATABRICKS_WAREHOUSE_ID` foi adicionado como variável obrigatória. O `diagnose()` valida a conectividade em quatro níveis sequenciais com mensagens de erro específicas. O `upload-silver` ganhou `--dry-run`, `--no-comments` e `--table`. 242 testes unitários.
+
+---
+
+## Sprint Databricks v3 — Volumes (Unity Catalog) e Files API
+
+A integração com o Databricks foi refatorada para abandonar o DBFS em favor dos Volumes do Unity Catalog. A mudança foi motivada pelo erro `PERMISSION_DENIED: Public DBFS root is disabled` — workspaces Databricks novos bloqueiam o root do DBFS por padrão, e a direção da plataforma é descontinuá-lo em favor de Volumes gerenciados pelo Unity Catalog.
+
+**O que mudou no upload.** A DBFS API (create → add-block → close com blocos base64) foi substituída pela Files API: um único `PUT /api/2.0/fs/files/<volume-path>?overwrite=true` com o binário do arquivo no corpo da requisição. O path segue o padrão de Volumes do Unity Catalog: `/Volumes/<catalog>/<schema>/<volume>/<tabela>/dat_ref=YYYY-MM-DD/`. O particionamento por data (`dat_ref`) foi introduzido nesta versão — cada execução do Nimbus adiciona uma partição ao Volume, permitindo rastrear histórico sem depender do Delta `_delta_log/`.
+
+**O que mudou no registro de tabela.** O fluxo anterior usava `CONVERT TO DELTA` seguido de `CREATE TABLE USING DELTA LOCATION`. O novo usa `CREATE OR REPLACE TABLE ... AS SELECT * FROM read_files('<volume-path>', format => 'parquet')` — um CTAS direto que registra a tabela como managed Delta table lendo o Volume como fonte. Isso elimina a necessidade de conversão explícita e funciona com Unity Catalog sem configurações extras de external location.
+
+**Metadata de tabela via tags.** O método `apply_table_metadata()` novo usa `COMMENT ON TABLE` para a descrição do `business_context` e `ALTER TABLE SET TAGS` / `ALTER COLUMN SET TAGS` para as `regulatory_flags` do Manifest. As tags aparecem no Unity Catalog como metadados pesquisáveis — um analista pode buscar todas as tabelas com a tag `LGPD_SENSITIVE` sem abrir nenhum arquivo.
+
+**`publish_table()` substitui `upload_silver_table()` como interface principal.** Retorna sempre um dict `{table, status, target, error}` — nunca levanta exceção. O `run_pipeline.py` chama `publish_table()` explicitamente após `promote_to_parquet()` e coleta os resultados para reportar no resumo final.
+
+**Suporte a OAuth.** Quando `DATABRICKS_TOKEN` está vazio, o uploader tenta OAuth via `databricks-sdk` (se instalado). Isso permite autenticação via browser em workspaces corporativos sem precisar gerar um PAT.
+
+**Novos parâmetros de configuração:** `DATABRICKS_VOLUME` (nome do Volume UC onde os Parquets vão), `DATABRICKS_CATALOG` mudou default de `hive_metastore` para `workspace` (catalog padrão do CE com Unity Catalog habilitado).
+
+**Passos para usar:**
+```sql
+-- No SQL Editor do Databricks, antes do primeiro upload:
+CREATE SCHEMA IF NOT EXISTS workspace.nimbus;
+CREATE VOLUME IF NOT EXISTS workspace.nimbus.landing;
+```
+```bash
+python tasks.py test-databricks    # diagnóstico em 4 níveis
+python tasks.py upload-silver --dry-run
+python tasks.py upload-silver
+```

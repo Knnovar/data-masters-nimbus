@@ -16,6 +16,7 @@ Uso:
 import argparse
 import json
 import uuid
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -35,7 +36,7 @@ BANNER = """
 """
 
 
-def run_scenario(scenario: str, run_id: str, fmt: str = "csv") -> list[dict]:
+def run_scenario(scenario: str, run_id: str, fmt: str = "csv") -> tuple[list[dict], list[dict]]:
     """Executa um único cenário end-to-end usando a camada Storage."""
     print(f"\n{chr(9552)*66}")
     print(f"  CENARIO: {scenario.upper()}")
@@ -48,7 +49,8 @@ def run_scenario(scenario: str, run_id: str, fmt: str = "csv") -> list[dict]:
     produced = generate_all(storage, scenario=scenario, fmt=fmt)
 
     # ── 2. Loop por tabela ────────────────────────────────────────────────
-    scenario_metrics = []
+    scenario_metrics = [] 
+    publications = []
     for item in produced:
         table             = item["table"]
         filename          = item["filename"]
@@ -56,28 +58,46 @@ def run_scenario(scenario: str, run_id: str, fmt: str = "csv") -> list[dict]:
 
         print(f"\n  -- {table} --")
 
+        from src.connectors.bronze_uploader import publish_bronze
+        publications.append(publish_bronze(storage.read_path("bronze", filename),
+                                           table_name=Path(filename).stem, run_id=run_id))
+
         # Silver: validação (DLQ → quarantine, OK → permanece no bronze)
         val_result = validate(storage, filename, contract_filename, scenario=scenario)
+
+        contract = None
+        if contract_filename and storage.exists("contracts", contract_filename):
+            try:
+                import yaml
+                from src.validation.contracts import DataContract
+                cp = storage.read_path("contracts", contract_filename)
+                with open(cp, encoding="utf-8") as f:
+                    contract = DataContract.from_dict(yaml.safe_load(f))
+            except Exception as ce:
+                print(f" [SCHEMA] Contrato Nao Carregado: {ce}")
+        cast_report = {}
 
         if val_result.status == "DLQ":
             slm_result       = {"table": table, "status": "SKIPPED", "inference_ms": 0, "documentation": ""}
             profiler_payload = {"table": table, "rows": 0, "profiling_ms": 0, "columns": {}}
         else:
-            # Profiling via path local (DuckDB/Pandas)
+
             csv_path         = storage.read_path("bronze", filename)
             profiler_payload = profile(csv_path)
 
-            # Enriquecimento SLM
             slm_result = enrich(storage, contract_filename, profiler_payload)
-
-            # Promoção Bronze → Silver
-            storage.move(filename, "bronze", "silver")
-
+            parquet_filename = storage.promote_to_parquet(filename, "bronze", "silver", contract=contract)
+            cast_report = dict(getattr(storage, "last_cast_report", {}) or {})
+            from src.connectors.databricks_uploader import publish_table
+            pub = publish_table(storage.read_path("silver", parquet_filename),
+                                table_name=Path(filename).stem, contract=contract, run_id=run_id)
+            publications.append(pub)
+        
         # Gold: métricas agregadas
-        m = collect(run_id, val_result, profiler_payload, slm_result, METRICS_DIR)
+        m = collect(run_id, val_result, profiler_payload, slm_result, METRICS_DIR, contract=contract, cast_report=cast_report, fmt = fmt)
         scenario_metrics.append(m)
 
-    return scenario_metrics
+    return scenario_metrics, publications
 
 
 def print_summary(all_metrics: list[dict]) -> None:
@@ -137,10 +157,12 @@ def main():
     fmt_list = ["csv", "json", "fixed"] if args.fmt == "all" else [args.fmt]
 
     all_metrics: list[dict] = []
+    publications: list[dict] = []
     for scenario in scenarios:
         for fmt in fmt_list:
-            metrics = run_scenario(scenario, run_id, fmt=fmt)
+            metrics, pubs = run_scenario(scenario, run_id, fmt=fmt)
             all_metrics.extend(metrics)
+            publications.extend(pubs)
 
     # Relatório consolidado
     print_summary(all_metrics)
@@ -153,8 +175,21 @@ def main():
 
     print(f"  Metricas JSON : {summary_path}")
     print(f"  Relatorio MD  : {report_path}")
+    attempted = [p for p in publications if p["status"] != "DISABLED"]
+    failed = [p for p in publications if p["status"] == "ERROR"]
+    if attempted:
+        for layer in ("bronze", "silver"):
+          rows = [p for p in attempted if p.get("layer", "silver") == layer]
+          if rows:  
+            ok = sum( 1 for p in rows if p["status"] in ("OK", "UPLOADED"))
+            print(f"Databricks: {layer}: {ok}/{len(rows)} tabelas publicadas")
+    for p in failed:
+        print(f" [DATABRICKS] {p.get('layer', 'silver')}/{['table']}: {p['error']}")
     print("\n  Pipeline concluida.\n")
+
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
+    

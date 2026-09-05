@@ -103,3 +103,53 @@ python prefect_flow.py --no-prefect --scenario baseline --run-id %%JOBRUNID%%
 ## Métricas e quality score
 
 A cada execução, `metrics_collector.py` calcula um score de 0 a 100 por tabela combinando quatro dimensões: o status da validação (40 pontos), a taxa de nulos em colunas obrigatórias (30 pontos), a taxa de duplicatas (20 pontos) e a cobertura de descrições no schema (10 pontos). Esses scores ficam em JSON em `data/metrics/` e são consultáveis via `python show_metrics.py`.
+
+---
+
+## Integração com Databricks — Unity Catalog Volumes
+
+`src/connectors/databricks_uploader.py` integra o pipeline com o Databricks via REST API, sem cluster Spark — compatível com Databricks Community Edition (SQL Warehouse + Unity Catalog básico).
+
+**Por que Volumes e não DBFS.** O root do DBFS está sendo bloqueado por padrão em workspaces novos (`PERMISSION_DENIED: Public DBFS root is disabled`). Os Volumes do Unity Catalog são o substituto oficial — têm controle de acesso por ACL, são versionáveis e aparecem no catálogo do workspace como objetos de primeira classe.
+
+**Pré-requisito no SQL Editor do Databricks (executar uma vez):**
+
+```sql
+CREATE SCHEMA IF NOT EXISTS workspace.nimbus;
+CREATE VOLUME IF NOT EXISTS workspace.nimbus.landing;
+```
+
+**Fluxo por execução.**
+
+O Parquet é enviado via Files API: um único `PUT /api/2.0/fs/files/<volume-path>?overwrite=true` com o binário no corpo — sem blocos base64, sem handle de escrita. O path segue particionamento Hive por data: `/Volumes/workspace/nimbus/landing/<tabela>/dat_ref=YYYY-MM-DD/part-YYYY-MM-DD.parquet`. O particionamento por `dat_ref` rastreia o histórico de execuções sem depender do Delta `_delta_log/`.
+
+O registro da tabela usa CTAS via `read_files`:
+
+```sql
+CREATE OR REPLACE TABLE workspace.nimbus.tb_clientes
+AS SELECT * FROM read_files(
+  '/Volumes/workspace/nimbus/landing/tb_clientes',
+  format => 'parquet'
+)
+```
+
+Isso cria uma managed Delta table lendo o Volume como fonte — sem `CONVERT TO DELTA`, sem external location, sem configuração adicional de permissão.
+
+Tags e comentários são populados a partir do Manifest via `COMMENT ON TABLE`, `ALTER TABLE SET TAGS` e `ALTER COLUMN SET TAGS`. As `regulatory_flags` (LGPD, SCR) aparecem como tags pesquisáveis no Unity Catalog — um analista pode buscar todas as tabelas `LGPD_SENSITIVE` sem abrir nenhum arquivo.
+
+`publish_table()` é a interface do pipeline. Retorna sempre `{table, status, target, error}` — nunca levanta exceção. O `run_pipeline.py` chama `publish_table()` explicitamente após `promote_to_parquet()` e coleta os resultados para o resumo final.
+
+| Variável | Exemplo | Descrição |
+|---|---|---|
+| `DATABRICKS_HOST` | `https://adb-1234.azuredatabricks.net` | URL do workspace |
+| `DATABRICKS_TOKEN` | `dapi...` | PAT (ou vazio para OAuth) |
+| `DATABRICKS_WAREHOUSE_ID` | `abc123` | SQL Editor > copy ID |
+| `DATABRICKS_CATALOG` | `workspace` | Catalog UC (CE: workspace) |
+| `DATABRICKS_SCHEMA` | `nimbus` | Schema no catalog |
+| `DATABRICKS_VOLUME` | `landing` | Volume criado no pré-requisito |
+
+```bash
+python tasks.py test-databricks          # diagnóstico em 4 níveis
+python tasks.py upload-silver --dry-run  # valida sem enviar dados
+python tasks.py upload-silver            # upload completo
+```

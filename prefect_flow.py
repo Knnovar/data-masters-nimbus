@@ -238,8 +238,8 @@ def task_profile(validated):
     table = validated["table"]
     if validated["validation_status"] == "DLQ":
         _log("JOB-DM-003", "PROFILE/{}".format(table), "SKIPPED", "upstream DLQ")
-        return {**validated, "profiler_payload": {
-            "table": table, "rows": 0, "profiling_ms": 0, "columns": {}}}
+        return {**validated, "profiler_payload": 
+            payload, "cast_report": dict(getattr(storage, "last_cast_report", {}) or {})}
 
     _log("JOB-DM-003", "PROFILE/{}".format(table), "STARTED",
          "reading bronze/{}".format(validated["filename"]))
@@ -247,7 +247,21 @@ def task_profile(validated):
         storage  = get_storage()
         csv_path = storage.read_path("bronze", validated["filename"])
         payload  = profile(csv_path)
-        storage.move(validated["filename"], "bronze", "silver")
+        # Carrega contrato para tipagem governada no Silver
+        contract = None
+        contract_fn = validated.get("contract_filename")
+        if contract_fn and storage.exists("contracts", contract_fn):
+            try:
+                import yaml
+                from src.validation.contracts import DataContract
+                cp = storage.read_path("contracts", contract_fn)
+                with open(cp, encoding="utf-8") as f:
+                    contract = DataContract.from_dict(yaml.safe_load(f))
+            except Exception as ce:
+                _log("JOB-DM-003", "PROFILE/{}".format(table), "WARN",
+                     "contrato nao carregado: {}".format(ce))
+        parquet_filename = storage.promote_to_parquet(
+            validated["filename"], "bronze", "silver", contract=contract)
         _log("JOB-DM-003", "PROFILE/{}".format(table), "ENDED_OK",
              "rows={} ms={} promoted=bronze->silver".format(
                  payload["rows"], payload["profiling_ms"]))
@@ -283,7 +297,21 @@ def task_enrich_slm(profiled):
         return {**profiled, "slm_result": {
             "table": table, "status": "ERROR", "inference_ms": 0}}
 
-
+def _load_contract(contract_filename):
+    if not contract_filename:
+        return None
+    try:
+        import yaml
+        from src.storage.storage import get_storage
+        from src.validation.contracts import DataContract
+        storage=get_storage()
+        if not storage.exists("contracts", contract_filename):
+            return None
+        with open(storage.read_path("contracts", contract_filename), encoding="utf-8") as f:
+            return DataContract.from_dict(yaml.safe_load(f))
+    except Exception:
+        return None
+    
 @task(name="JOB-DM-005-METRICS")
 def task_collect_metrics(enriched, run_id):
     """Control-M: JOB-DM-005-METRICS"""
@@ -309,6 +337,8 @@ def task_collect_metrics(enriched, run_id):
         enriched.get("profiler_payload", {}),
         enriched.get("slm_result", {}),
         METRICS_DIR,
+        contract        = contract,
+        cast_report     =enriched.get("cast_report") or {},    
     )
     _log("JOB-DM-005", "METRICS/{}".format(table), "ENDED_OK",
          "score={}".format(metrics["quality_score"]))

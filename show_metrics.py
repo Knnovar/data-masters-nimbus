@@ -167,6 +167,27 @@ def view_evolution(records: list[dict], table: str | None = None) -> None:
             print(f"  {run_id:<32} {ts:<12} {tag:<8} {bar}  {nulls:>7}  {dups:>5}")
 
 
+def view_score(records: list[dict]) -> None:
+    print("\n" + "=" * 72)
+    print(" QUALITY SCORE POR DIMENSAO")
+    print("=" * 72)
+
+    dims = [("conformity", "Conformidade"), ("completeness", "Completude"),
+            ("uniqueness", "Unicidade"), ("schema_stability", "Estabilidade")]
+    for r in records:
+        d = r.get("quality_dimensions") or {}
+        print(f"\n {r.get('table', '?')} / {r.get('scenario', '?')}"
+              f" -> score {r.get('quality_score', 0):.1f}/100")
+        if not d:
+            print("         (registro antigo, sem dimensoes)")
+            continue
+        for key, label in dims:
+            item = d.get(key) or {}
+            value = item.get("value")
+            peso = item.get("weight", 0) * 100
+            shown = "   n/d" if value is None else f"{value:5.1f}"
+            print(f"        {label:<14} peso {peso:2.0f}% {shown}   {item.get('detail', '')}")
+
 def view_issues(records: list[dict]) -> None:
     """Lista todos os registros com issues ou status DLQ/WARNING."""
     problems = [r for r in records if r.get("validation_status") in ("DLQ","WARNING")
@@ -197,8 +218,9 @@ def view_slm(records: list[dict]) -> None:
     print("\n" + "=" * 72)
     print("  STATUS SLM")
     print("=" * 72)
-    print(f"\n  {'Tabela':<30} {'Cenario':<14} {'SLM':<7} {'Inference (ms)':>15}")
-    print(f"  {'-'*30} {'-'*14} {'-'*7} {'-'*15}")
+    print(f"\n  {'Tabela':<30} {'Cenario':<14} {'SLM':<7} {'Inference (ms)':>15} "
+          f"{'Modelo':<14} {'Tok/s':>7} {'Cobertura':>10}")
+    print(f"  {'-'*30} {'-'*14} {'-'*7} {'-'*15} {'-'*14} {'-'*7} {'-'*10}")
 
     # Ultimo registro de cada (table, scenario)
     seen: dict[tuple, dict] = {}
@@ -213,12 +235,74 @@ def view_slm(records: list[dict]) -> None:
         tag = _slm_tag(r.get("slm_status","?"))
         ms  = r.get("slm_inference_ms", 0)
         ms_str = f"{ms:,.0f} ms" if ms else "-"
-        print(f"  {table:<30} {scenario:<14} {tag:<7} {ms_str:>15}")
+        model = r.get("slm_model") or "-"
+        tps = r.get("slm_tokens_per_s")
+        cov = r.get("slm_column_coverage_pct")
+        trunc = " *" if r.get("slm_truncated") else ""
+        print(f"  {table:<30} {scenario:<14} {tag:<7} {ms_str:>15} "
+              f"{model:<14} {(f'{tps:,.1f}' if tps else '-'):>7} " 
+              f"{(f'{cov:,.1f}%' if cov else '-'):>10}{trunc}")
 
+    if any(r.get("slm_truncated") for r in seen.values()):
+        print(" (*) resposta truncada pelo num_predict (SLM_NUM_PREDICT)")
+    if slm_ok:
+        print(" [INFO] Comparativo entre modelos: python show_metrics.py --models")
     print(f"\n  Documentadas: {slm_ok} | Ignoradas: {slm_skip} | Erro: {slm_err}")
     if slm_skip > 0:
         print("  [INFO] Para ativar o SLM: ollama serve && ollama pull phi3.5")
 
+def view_models(records: list[dict]) -> None:
+    """Compara modelos SLM: velocidade e caracteristicas de saida.
+    
+    Usa todos os runs (nao so o ultimo), agrupando por slm_model - e assim 
+    que se compara phi3.5 x phi4 sobre as mesmas tabelas.
+    """
+    runs =[r for r in records if r.get("slm_status") == "SUCCESS" and r.get("slm_model")]
+    print("\n" + "=" * 100)
+    print("  COMPARATIVO DE MODELOS SLM")
+    print("=" * 100)
+    if not runs:
+        print("\n  [INFO] Nenhuma inferencia bem-sucedida nesta execucao.")
+        return
+    by_model: dict[str, list[dict]] = {}
+    for r in runs:
+        by_model.setdefault(r["slm_model"], []).append(r)
+
+    def avg(rows, key):
+        vals = [x[key] for x in rows if isinstance(x.get(key), (int,float))]
+        return sum(vals) / len(vals) if vals else 0
+
+    print(f"\n  {'Modelo':<16} {'Runs':>5} {'Wall (ms)':>15} {'Carga':>10} {'Prompt(ms)':>11} "
+          f"{'Geracao(ms)':>12} {'Tok saida':>10} {'Tok/s':>8} {'Cobertura':>10} {'Trunc':>6}")
+    print(" " + "-" * 98)
+
+    for model, rows in sorted(by_model.items()):
+        trunc= sum(1 for x in rows if x.get("slm_truncated"))
+        print(f"  {model:<16} {len(rows):>5} "
+              f"{avg(rows, 'slm_inference_ms'):>10,.0f} "
+                f"{avg(rows, 'slm_load_ms'):>10,.0f} "
+                f"{avg(rows, 'slm_prompt_eval_ms'):>11,.0f} "
+                f"{avg(rows, 'slm_eval_ms'):>12,.0f} "
+                f"{avg(rows, 'slm_output_tokens'):>10,.0f} "
+                f"{avg(rows, 'slm_tokens_per_s'):>8,.1f} "
+                f"{avg(rows, 'slm_column_coverage_pct'):>9,.1f}% "
+                f"{trunc:>6}")
+    print("\n  Por tabela:")
+    print(f"  {'Tabela':<30} {'Modelo':<16} {'Wall(ms)':>10}  {'Tokens':>8} {'Tok saida':>10} {'Cobertura':>10}")
+    print("  " + "-" * 84)
+    for r in sorted(runs, key=lambda x: (x.get("table"), x.get("slm_model"))):
+        print(f"  {r.get('table'):<26} {r.get('slm_model'):<16} "
+              f"{r.get('slm_inference_ms') or 0:>10,.0f} "
+              f"{r.get('slm_tokens_per_s') or 0:>8,.1f} "
+              f"{r.get('slm_output_tokens') or 0:>10,.0f} "
+              f"{r.get('slm_column_coverage_pct') or 0:>9,.1f}%")    
+    missing = {r['slm_model']: r.get("slm_columns_missing") or [] for r in runs}
+    for model, cols in sorted(missing.items()):
+        if cols:
+            print(f"\n  [INFO] Colunas ausentes no modelo {model}: {', '.join(cols)}")
+
+    print("\n Wall = tempo total do request | Carga = load do modelo (alto no 1o run) | "
+          "\n Geracao = eval_duration | Tok/s = tokens de saida / tempo de geracao")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Export CSV
@@ -236,6 +320,12 @@ def export_csv(records: list[dict], output_path: Path) -> None:
         "rows_total", "rows_valid", "duplicate_count",
         "avg_null_pct", "profiling_ms",
         "slm_status", "slm_inference_ms", "quality_score",
+        "slm_model", "slm_num_predict", "slm_load_ms", "slm_prompt_eval_ms", 
+        "slm_prompt_tokens", "slm_output_words", "slm_output_tokens", "slm_eval_ms",
+        "slm_tokens_per_s", "slm_column_coverage_pct", "slm_truncated",
+        "slm_output_chars"
+        ,"score_conformity","score_completeness",
+        "score_uniqueness", "score_schema_stability",
     ]
 
     with open(output_path, "w", newline="", encoding="utf-8") as f:
@@ -258,6 +348,8 @@ def main():
     parser.add_argument("--issues",   action="store_true", help="Exibe apenas registros com problemas")
     parser.add_argument("--slm",      action="store_true", help="Exibe status do enriquecimento SLM")
     parser.add_argument("--csv",      default=None,        help="Exporta para CSV (ex: --csv metricas.csv)")
+    parser.add_argument( "--models",  action="store_true", help = "Compara desempenho de modelos SLM (ex: phi3.5 x phi4)")
+    parser.add_argument("--score",  action="store_true", help="Decompoe o quality score nas 4 dimensoes")
     args = parser.parse_args()
 
     records = load_all_metrics(METRICS_DIR)
@@ -279,8 +371,16 @@ def main():
         return
 
     # Exibe views conforme flags
-    if args.issues:
+    if args.models:
+                view_models(filter_records(records, table=args.table, scenario=args.scenario, last_only = False))
+    elif args.issues:
         view_issues(filter_records(records, table=args.table, scenario=args.scenario))
+    elif args.issues:
+        view_issues(filter_records(records, table=args.table, scenario=args.scenario))
+    elif args.score:
+        view_score(filtered)
+    elif args.slm:
+        view_slm(filtered)
     elif args.slm:
         view_slm(filtered)
     else:
