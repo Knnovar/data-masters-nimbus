@@ -45,7 +45,7 @@ def collect(
     profiler_payload: dict,
     slm_result      : dict,
     metrics_dir     : Path,
-    contract         : None,
+    contract        = None,
     cast_report     : dict | None = None,
 ) -> dict:
     """Salva métricas individuais de uma tabela e retorna o dict."""
@@ -137,15 +137,15 @@ def generate_report(all_metrics: list[dict], reports_dir: Path) -> Path:
             f"| `{m['table']}` | {_v('conformity')} | {_v('completeness')} "
             f"| {_v('uniqueness')} |  {_v('schema_stability')} | **{m['quality_score']}** |"
         )
-        lines.append("")
-        for m in all_metrics:
-            dims=m.get("quality_dimensions") or {}
-            low = [(n, d) for n, d in dims.items() if d.get("value") is not None and d["value"] < 100]
-            for name, d in low:
-                lines.append(f"- ``{m['table']}` / **{name}** = {d['value']}: {d.get('detail, ')}")
-        lines += [
-            "\n---\n",
-            "## Desempenho da SLM\n",
+    lines.append("")
+    for m in all_metrics:
+        dims=m.get("quality_dimensions") or {}
+        low = [(n, d) for n, d in dims.items() if d.get("value") is not None and d["value"] < 100]
+        for name, d in low:
+            lines.append(f"- ``{m['table']}` / **{name}** = {d['value']}: {d.get('detail', '')}")
+    lines += [
+        "\n---\n",
+        "## Desempenho da SLM\n",
         ]
     slm_rows = [m for m in all_metrics if m.get("slm_status") == "SUCCESS" and m.get("slm_model")]
     if slm_rows:
@@ -157,8 +157,8 @@ def generate_report(all_metrics: list[dict], reports_dir: Path) -> Path:
             lines.append(
                 f"| `{m['table']}` | {m['slm_model']} | {m['slm_inference_ms']:,.0f} "
                 f"| {m.get('slm_load_ms') or 0:,.0f} "
-                f"| {m['slm_prompt_tokens'] or 0}/{m.get('slm_prompt_eval_ms') or 0:,.0f} "
-                f"| {m['slm_output_tokens'] or 0}/{m.get('slm_eval_ms') or 0:,.0f} "
+                f"| {m.get('slm_prompt_tokens') or 0}/{m.get('slm_prompt_eval_ms') or 0:,.0f} "
+                f"| {m.get('slm_output_tokens') or 0}/{m.get('slm_eval_ms') or 0:,.0f} "
                 f"| **{m.get('slm_tokens_per_s') or 0:,.1f}** "
                 f"| {m.get('slm_column_coverage_pct') or 0}% "
                 f"| {'sim' if m.get('slm_truncated') else 'nao'} |"

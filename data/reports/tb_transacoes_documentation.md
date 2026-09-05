@@ -1,66 +1,79 @@
-## Dicionário Técnico Estruturado em Markdown
+# Dicionário Técnico da Tabela `tb_transacoes`
 
-### Tabela: `tb_transacoes`
+## Visão Geral
 
-#### Propósito de Negócio
-- **Registro de todas as movimentações financeiras por canal**, com foco especial em transações suspeitas para análise pelo motor antifraude.
+A tabela `tb_transacoes` registra todas as movimentações financeiras realizadas através de diferentes canais de atendimento do banco. Ela é gerida pela equipe `squad-transacoes` e está atualmente em versão 2.3.1, com status de manifesto como DRAFT. As transações são capturadas de forma event-driven a partir do sistema `SWITCH_TRANSACIONAL` e armazenadas em formato CSV com codificação UTF-8.
 
-#### Owner
-- `squad-transacoes`
+### Contexto de Negócio
 
-#### Versão do Manifesto
-- **Versão:** 2.3.1
+- **Propósito**: Registro de todas as movimentações financeiras por canal.
+- **Detalhes Importantes**: 
+  - O campo `fl_suspeita` indica se uma transação está sendo analisada pelo motor antifraude.
+  - O campo `cd_estabelecimento` pode ser nulo para compras online não identificadas, o que ocorre em aproximadamente 6% dos casos.
 
-#### Desenvolvedor
-- **Nome do Steward:** Data Steward Transacional
-- **Email:** steward-transacoes@banco.com.br
+### Regulamentações e Compliance
 
-#### Informações Regulatórias
-- **Tags Regulatórios:** BACEN_4658, PCI_DSS
-- **Classificação de Dados:** Confidencial
-- **Retenção de Dados:** 7 anos
+- **Tags Regulatórias**: 
+  - BACEN_4658
+  - PCI_DSS
+- **Classificação de Dados**: Confidencial
+- **Período de Retenção**: 7 anos
 
-#### Descrição das Colunas
+## Colunas
 
-1. `cd_transacao` (cd_estabelecimento):
-   - **Tipo:** VARCHAR
-   - **Nullabilidade:** Não permitido
-   - **Propósito:** UUID gerado pelo sistema transacional no momento da operação.
-   - **Observação:** Nulo para aproximadamente 6% das transações, indicando compras online não identificadas.
+### `id_transacao`
 
-2. `cd_cliente` (cd_estabelecimento):
-   - **Tipo:** VARCHAR
-  0. **Nullabilidade:** Não permitido
-   - **Propósito:** Referência ao cliente em `tb_clientes`.
+- **Tipo**: String
+- **Descrição**: UUID da transação, gerado pelo switch transacional no momento da operação.
+- **Comportamento Esperado**: Não nulo, chave primária, único para cada transação.
+- **Estatísticas**:
+  - **Null Pct**: 0.0%
+  - **Unique Count**: 1999
+  - **Anomalias**: Existem duplicatas (ex.: 2 ocorrências para alguns valores).
 
-3. `dt_transacao` (dt_transacao):
-   - **Tipo:** DATE
-   - **Nullabilidade:** Não permitido
-   - **Propósito:** Data da transação no fuso horário America/Sao_Paulo.
+### `cd_cliente`
 
-4. `vl_transacao` (vl_transacao):
-   - **Tipo:** FLOAT
-   - **Nullabilidade:** Não permitido
-   - **Propósito:** Valor em BRL. Positivo para débitos, negativo para estornos.
+- **Tipo**: String
+- **Descrição**: Referência ao cliente em `tb_clientes`.
+- **Comportamento Esperado**: Não nulo.
+- **Estatísticas**:
+  - **Null Pct**: 0.0%
+  - **Unique Count**: 1999
 
-5. `tp_transacao` (tp_transacao):
-   - **Tipo:** VARCHAR
-   - **Nullabilidade:** Não permitido
-   - **Propósito:** Tipo da operação, dominio: COMPRA, SAQUE, TED, PIX, PAGAMENTO_BOLETO.
+### `dt_transacao`
 
-6. `fl_suspeita` (fl_suspeita):
-   - **Tipo:** BOOLEAN
-   - **Nullabilidade:** Não permitido
-   - **Propósito:** Flag do motor antifraude. True indica transação em análise (aproximadamente 4% do volume).
+- **Tipo**: Date
+- **Descrição**: Data da transação no fuso horário America/Sao_Paulo.
+- **Comportamento Esperado**: Não nulo.
+- **Estatísticas**: Não disponíveis no perfil de dados.
 
-7. `cd_canal` (cd_canal):
-   - **Tipo:** VARCHAR
-   - **Nullabilidade:** Não permitido
-   - **Propósito:** Canal de origem: APP, INTERNET, AGENCIA, ATM, POS.
+### `vl_transacao`
 
-#### Estatísticas do Data Profiler
+- **Tipo**: Float
+- **Descrição**: Valor em BRL. Positivo para débitos, negativo para estornos.
+- **Comportamento Esperado**: Não nulo.
+- **Estatísticas**:
+  - **Null Pct**: 0.0%
+  - **Min**: 1235749000180.0
+  - **Max**: 98706123000147.0
+  - **Mean**: 49641986374552.44
 
-| Coluna           | dtype | Null Pct | Unique Count | Top Values (Top 3)                                                                                                                
+### `tp_transacao`
+
+- **Tipo**: String
+- **Descrição**: Tipo da operação. Domínio: COMPRA, SAQUE, TED, PIX, PAGAMENTO_BOLETO, ESTORNO.
+- **Comportamento Esperado**: Não nulo.
+- **Estatísticas**:
+  - **Null Pct**: 0.0%
+  - **Unique Count**: 1999
+  - **Top Values**: COMPRA, PAGAMENTO_BOLETO, SAQUE (cada um com 2 ocorrências).
+
+### `cd_estabelecimento`
+
+- **Tipo**: String
+- **Descrição**: CNPJ do estabelecimento. Nulo para compras online não identificadas (~6%).
+- **Comportamento Esperado**: Pode ser nulo.
+
 
 ---
 > **[AI_METADATA_STATUS: DRAFT]**

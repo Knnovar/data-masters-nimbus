@@ -172,9 +172,9 @@ def view_score(records: list[dict]) -> None:
     print(" QUALITY SCORE POR DIMENSAO")
     print("=" * 72)
 
-    dims = [("comformity", "Conformidade"), ("completeness", "Completude"),
+    dims = [("conformity", "Conformidade"), ("completeness", "Completude"),
             ("uniqueness", "Unicidade"), ("schema_stability", "Estabilidade")]
-    for f in records:
+    for r in records:
         d = r.get("quality_dimensions") or {}
         print(f"\n {r.get('table', '?')} / {r.get('scenario', '?')}"
               f" -> score {r.get('quality_score', 0):.1f}/100")
@@ -323,7 +323,9 @@ def export_csv(records: list[dict], output_path: Path) -> None:
         "slm_model", "slm_num_predict", "slm_load_ms", "slm_prompt_eval_ms", 
         "slm_prompt_tokens", "slm_output_words", "slm_output_tokens", "slm_eval_ms",
         "slm_tokens_per_s", "slm_column_coverage_pct", "slm_truncated",
-        "slm_output_chars","score_completeness","score_uniqueness", "score_Schema_stability",
+        "slm_output_chars"
+        ,"score_conformity","score_completeness",
+        "score_uniqueness", "score_schema_stability",
     ]
 
     with open(output_path, "w", newline="", encoding="utf-8") as f:
@@ -352,16 +354,6 @@ def main():
 
     records = load_all_metrics(METRICS_DIR)
 
-    if args.models:
-            view_models(filter_records(records, table=args.table, scenario=args.scenario, last_only = False))
-    elif args.issues:
-        view_issues(filter_records(records, table=args.table, scenario=args.scenario))
-    elif args.score:
-        view_score(filtered)
-    elif args.slm:
-        view_slm(filtered)
-        
-
     if not records:
         print("[INFO] Nenhuma metrica encontrada. Execute o pipeline primeiro:")
         print("       python run_pipeline.py --scenario baseline")
@@ -379,8 +371,16 @@ def main():
         return
 
     # Exibe views conforme flags
-    if args.issues:
+    if args.models:
+                view_models(filter_records(records, table=args.table, scenario=args.scenario, last_only = False))
+    elif args.issues:
         view_issues(filter_records(records, table=args.table, scenario=args.scenario))
+    elif args.issues:
+        view_issues(filter_records(records, table=args.table, scenario=args.scenario))
+    elif args.score:
+        view_score(filtered)
+    elif args.slm:
+        view_slm(filtered)
     elif args.slm:
         view_slm(filtered)
     else:

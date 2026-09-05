@@ -97,7 +97,7 @@ def _mark_fail(stats, fail_pct):
         stats["cast_ok"] = False
         stats["fail_pct"] = round(fail_pct, 2)
 
-def _cast_numeric(series, col_name, warnings, integer):
+def _cast_numeric(series, col_name, warnings, integer, stats=None):
     non_null = series.dropna().replace("", pd.NA).dropna()
     if len(non_null) == 0:
         return series, warnings
@@ -106,13 +106,16 @@ def _cast_numeric(series, col_name, warnings, integer):
     if fail_rate > CAST_FAIL_THRESHOLD:
         warnings.append("CAST_FAIL: '{}' como {} — {:.1f}% falhou. Mantida como string.".format(
             col_name, "integer" if integer else "float", fail_rate * 100))
+        _mark_fail(stats, fail_rate * 100)
         return series.astype(object), warnings
+    if stats is not None:
+        stats["fail_pct"] = round(fail_rate * 100, 2)
     result = pd.to_numeric(series, errors="coerce")
     if integer:
         result = result.astype("Int64")
     return result, warnings
 
-def _cast_boolean(series, col_name, warnings):
+def _cast_boolean(series, col_name, warnings, stats=None):
     def _to_bool(val):
         if pd.isna(val) or val == "": return None
         v = str(val).strip().lower()
@@ -127,14 +130,17 @@ def _cast_boolean(series, col_name, warnings):
     if fail_rate > CAST_FAIL_THRESHOLD:
         warnings.append("CAST_FAIL: '{}' como boolean — {:.1f}% fora do dominio. Mantida como string.".format(
             col_name, fail_rate * 100))
+        _mark_fail(stats, fail_rate * 100)
         return series.astype(object), warnings
+    if stats is not None:
+        stats["fail_pct"] = round(fail_rate * 100, 2)
     result = series.apply(_to_bool)
     try:
         return result.astype(pd.BooleanDtype()), warnings
     except Exception:
         return result, warnings
 
-def _cast_date(series, col_name, date_format, warnings, as_datetime):
+def _cast_date(series, col_name, date_format, warnings, as_datetime, stats=None):
     non_null = series.dropna().replace("", pd.NA).dropna()
     if len(non_null) == 0:
         return series, warnings
@@ -145,6 +151,8 @@ def _cast_date(series, col_name, date_format, warnings, as_datetime):
             converted = pd.to_datetime(non_null, format=fmt, errors="coerce")
             if converted.isna().sum() / len(non_null) <= CAST_FAIL_THRESHOLD:
                 result = pd.to_datetime(series, format=fmt, errors="coerce")
+                if stats is not None:
+                    stats["fail_pct"] = round(converted.isna().sum() /len(non_null) * 100, 2)
                 if fmt != date_format and date_format:
                     warnings.append("DATE_FORMAT_FALLBACK: '{}' — usando '{}' em vez de '{}'.".format(
                         col_name, fmt, date_format))
@@ -155,11 +163,14 @@ def _cast_date(series, col_name, date_format, warnings, as_datetime):
         converted = pd.to_datetime(non_null, errors="coerce")
         if converted.isna().sum() / len(non_null) <= CAST_FAIL_THRESHOLD:
             result = pd.to_datetime(series, errors="coerce")
+            if stats is not None:
+                stats["fail_pct"] = round(converted.isna().sum() / len(non_null) * 100, 2)
             return (result.dt.date if not as_datetime else result), warnings
     except Exception:
         pass
     warnings.append("CAST_FAIL: '{}' como {} — nenhum formato funcionou. Mantida como string.".format(
         col_name, "datetime" if as_datetime else "date"))
+    _mark_fail(stats, 100.0)
     return series.astype(object), warnings
 
 def _extract_date_format(col_def):

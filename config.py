@@ -23,7 +23,7 @@ MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
 MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "minioadmin")
 
 OLLAMA_HOST  = os.environ.get("OLLAMA_HOST",  "http://localhost:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "phi3.5")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "phi4")
 SKIP_SLM     = os.environ.get("SKIP_SLM", "false").lower() in ("true", "1", "yes")
 SLM_NUM_PREDICT = int(os.environ.get("SLM_NUM_PREDICT", "800"))
 

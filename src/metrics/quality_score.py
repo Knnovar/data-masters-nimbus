@@ -25,8 +25,9 @@ def _conformity(val_result, cast_report):
 
     broken = [c for c, s in cast_report.items() if not s.get("cast_ok", True)]
     if broken:
-        worst = max(cast_report[c].get("fail_pct", 0)for c in broken)
-        return _dim(0.0, "tipo divergente do Manifest em {} ({:.,1f}% de falha)".format(", ".join(sorted(broken)), worst))
+        worst = max(cast_report[c].get("fail_pct", 0) for c in broken)
+        return _dim(0.0, "tipo divergente do Manifest em {} ({:.1f}% de falha)".format(
+            ", ".join(sorted(broken)), worst))
 
     avg_fail = sum(s.get("fail_pct", 0) for s in cast_report.values()) / len(cast_report)
     return _dim(max(0.0, 100.0 - avg_fail), "{} colunas conformes, {:.2f}% de falha media de cast".format(len(cast_report), avg_fail))
@@ -47,7 +48,9 @@ def _completeness(val_result, profiler_payload, contract):
             optional_ratio = min(1.0, avg_opt / tolerance)
     value = 100.0 - MANDATORY_NULL_FACTOR * mandatory_pct - OPTIONAL_NULL_MAX_PENALTY * optional_ratio
     if cols:
-        opt_detail = "anulaveis a {:.0f}% da tolerancioa{}".format(optional_ratio *100, "({}%)".format(tolerance) if tolerance else "(nao declarado)")
+        opt_detail = "anulaveis a {:.0f}% da tolerancia{}".format(
+            optional_ratio *100,
+              " ({}%)".format(tolerance) if tolerance else " (nao declarado)")
     else:
         opt_detail = "colunas anulaveis nao avaliadas (sem profiling)"
     return _dim(max(0.0, value), "nulos em obrigatorias: {:.2f}% | {}".format(mandatory_pct, opt_detail))
