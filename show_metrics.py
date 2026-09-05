@@ -167,6 +167,27 @@ def view_evolution(records: list[dict], table: str | None = None) -> None:
             print(f"  {run_id:<32} {ts:<12} {tag:<8} {bar}  {nulls:>7}  {dups:>5}")
 
 
+def view_score(records: list[dict]) -> None:
+    print("\n" + "=" * 72)
+    print(" QUALITY SCORE POR DIMENSAO")
+    print("=" * 72)
+
+    dims = [("comformity", "Conformidade"), ("completeness", "Completude"),
+            ("uniqueness", "Unicidade"), ("schema_stability", "Estabilidade")]
+    for f in records:
+        d = r.get("quality_dimensions") or {}
+        print(f"\n {r.get('table', '?')} / {r.get('scenario', '?')}"
+              f" -> score {r.get('quality_score', 0):.1f}/100")
+        if not d:
+            print("         (registro antigo, sem dimensoes)")
+            continue
+        for key, label in dims:
+            item = d.get(key) or {}
+            value = item.get("value")
+            peso = item.get("weight", 0) * 100
+            shown = "   n/d" if value is None else f"{value:5.1f}"
+            print(f"        {label:<14} peso {peso:2.0f}% {shown}   {item.get('detail', '')}")
+
 def view_issues(records: list[dict]) -> None:
     """Lista todos os registros com issues ou status DLQ/WARNING."""
     problems = [r for r in records if r.get("validation_status") in ("DLQ","WARNING")
@@ -302,7 +323,7 @@ def export_csv(records: list[dict], output_path: Path) -> None:
         "slm_model", "slm_num_predict", "slm_load_ms", "slm_prompt_eval_ms", 
         "slm_prompt_tokens", "slm_output_words", "slm_output_tokens", "slm_eval_ms",
         "slm_tokens_per_s", "slm_column_coverage_pct", "slm_truncated",
-        "slm_output_chars",
+        "slm_output_chars","score_completeness","score_uniqueness", "score_Schema_stability",
     ]
 
     with open(output_path, "w", newline="", encoding="utf-8") as f:
@@ -326,6 +347,7 @@ def main():
     parser.add_argument("--slm",      action="store_true", help="Exibe status do enriquecimento SLM")
     parser.add_argument("--csv",      default=None,        help="Exporta para CSV (ex: --csv metricas.csv)")
     parser.add_argument( "--models",  action="store_true", help = "Compara desempenho de modelos SLM (ex: phi3.5 x phi4)")
+    parser.add_argument("--score",  action="store_true", help="Decompoe o quality score nas 4 dimensoes")
     args = parser.parse_args()
 
     records = load_all_metrics(METRICS_DIR)
@@ -334,6 +356,8 @@ def main():
             view_models(filter_records(records, table=args.table, scenario=args.scenario, last_only = False))
     elif args.issues:
         view_issues(filter_records(records, table=args.table, scenario=args.scenario))
+    elif args.score:
+        view_score(filtered)
     elif args.slm:
         view_slm(filtered)
         

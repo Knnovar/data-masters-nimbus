@@ -61,36 +61,28 @@ def run_scenario(scenario: str, run_id: str, fmt: str = "csv") -> tuple[list[dic
         # Silver: validação (DLQ → quarantine, OK → permanece no bronze)
         val_result = validate(storage, filename, contract_filename, scenario=scenario)
 
+        contract = None
+        if contract_filename and storage.exists("contracts", contract_filename):
+            try:
+                import yaml
+                from src.validation.contracts import DataContract
+                cp = storage.read_path("contracts", contract_filename)
+                with open(cp, encoding="utf-8") as f:
+                    contract = DataContract.from_dict(yaml.safe_load(f))
+            except Exception as ce:
+                print(f" [SCHEMA] Contrato Nao Carregado: {ce}")
+        cast_report = {}
+
         if val_result.status == "DLQ":
             slm_result       = {"table": table, "status": "SKIPPED", "inference_ms": 0, "documentation": ""}
             profiler_payload = {"table": table, "rows": 0, "profiling_ms": 0, "columns": {}}
         else:
-            # Profiling via path local (DuckDB/Pandas)
-            csv_path         = storage.read_path("bronze", filename)
-            profiler_payload = profile(csv_path)
-
-            # Enriquecimento SLM
-            slm_result = enrich(storage, contract_filename, profiler_payload)
-
-            # Promoção Bronze → Silver
-            # Carrega contrato para tipagem governada no Silver
-            contract = None
-            if contract_filename and storage.exists("contracts", contract_filename):
-                try:
-                    import yaml
-                    from src.validation.contracts import DataContract
-                    cp = storage.read_path("contracts", contract_filename)
-                    with open(cp, encoding="utf-8") as f:
-                        contract = DataContract.from_dict(yaml.safe_load(f))
-                except Exception as ce:
-                    print(f"   [SCHEMA] Contrato nao carregado: {ce}")
             parquet_filename = storage.promote_to_parquet(filename, "bronze", "silver", contract=contract)
             from src.connectors.databricks_uploader import publish_table
             pub = publish_table(storage.read_path("silver", parquet_filename),
                                 table_name=Path(filename).stem, contract=contract, run_id=run_id)
             publications.append(pub)
         
-
         # Gold: métricas agregadas
         m = collect(run_id, val_result, profiler_payload, slm_result, METRICS_DIR)
         scenario_metrics.append(m)

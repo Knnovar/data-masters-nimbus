@@ -5,6 +5,7 @@ from pathlib import Path
 import pandas as pd
 
 class StorageBase(ABC):
+    last_cast_report: dict = {}
     @abstractmethod
     def write(self, layer, filename, df): pass
     @abstractmethod
@@ -105,6 +106,7 @@ class LocalStorage(StorageBase):
         print("   [MOVE] {}: {} -> {}".format(filename, from_layer.upper(), to_layer.upper()))
 
     def promote_to_parquet(self, filename, from_layer, to_layer, contract=None):
+        self.last_cast_report = {}
         src = self._path(from_layer, filename)
         df  = _read_file(src)
         arrow_schema = None
@@ -113,7 +115,9 @@ class LocalStorage(StorageBase):
             from src.storage.schema_utils import apply_manifest_schema, manifest_to_arrow_schema, build_parquet_metadata
             manifest_cols = {c.name.lower() for c in contract.schema}
             extra_cols    = [c for c in df.columns if c.lower() not in manifest_cols]
-            df, cast_warnings = apply_manifest_schema(df, contract)
+            cast_report = {}
+            df, cast_warnings = apply_manifest_schema(df, contract, report=cast_report)
+            self.last_cast_report=cast_report
             arrow_schema      = manifest_to_arrow_schema(contract, extra_columns=extra_cols)
             metadata          = build_parquet_metadata(contract, cast_warnings)
             for w in cast_warnings:

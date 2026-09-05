@@ -33,7 +33,7 @@ def manifest_to_arrow_schema(contract, extra_columns=None):
         fields.append(pa.field(c, pa.string(), nullable=True))
     return pa.schema(fields)
 
-def apply_manifest_schema(df, contract, source_status="manifest_validated"):
+def apply_manifest_schema(df, contract, source_status="manifest_validated", report=None):
     df = df.copy()
     warnings = []
     contract_cols = {c.name.lower(): c for c in contract.schema}
@@ -41,6 +41,9 @@ def apply_manifest_schema(df, contract, source_status="manifest_validated"):
         if col_def.name.lower() not in {c.lower() for c in df.columns}:
             if not (col_def.nullable if col_def.nullable is not None else True):
                 warnings.append("MISSING_REQUIRED: '{}' nao encontrada no dado.".format(col_def.name))
+                if report is not None:
+                    report[col_def.name] = {"declared": (col_def.type or "string"),
+                                            "cast_ok": False, "fail_pct":100.0, "missing": True}
     for df_col in df.columns:
         col_def = contract_cols.get(df_col.lower())
         if col_def is None:
@@ -48,9 +51,12 @@ def apply_manifest_schema(df, contract, source_status="manifest_validated"):
             continue
         mt = (col_def.type or "string").lower().strip()
         fmt = _extract_date_format(col_def)
-        result, cw = _cast_column(df[df_col], df_col, mt, fmt)
+        stats = {"declared": mt, "cast_ok": True, "fail_pct": 0.0, "missing": False}
+        result, cw = _cast_column(df[df_col], df_col, mt, fmt, stats)
         df[df_col] = result
         warnings.extend(cw)
+        if report is not None:
+            report[col_def.name] = stats
     return df, warnings
 
 def build_parquet_metadata(contract, warnings):
@@ -68,22 +74,28 @@ def build_parquet_metadata(contract, warnings):
         meta["nimbus.warnings"] = json.dumps(warnings[:10])
     return {k.encode(): v.encode() for k, v in meta.items()}
 
-def _cast_column(series, col_name, manifest_type, date_format):
+def _cast_column(series, col_name, manifest_type, date_format, stats=None):
     warnings = []
     if manifest_type == "string":
         return series.astype(object), warnings
     if manifest_type in ("integer","int","long"):
-        return _cast_numeric(series, col_name, warnings, integer=True)
+        return _cast_numeric(series, col_name, warnings, integer=True, stats=stats)
     if manifest_type in ("float","double","decimal","numeric"):
-        return _cast_numeric(series, col_name, warnings, integer=False)
+        return _cast_numeric(series, col_name, warnings, integer=False, stats=stats)
     if manifest_type in ("boolean","bool"):
-        return _cast_boolean(series, col_name, warnings)
+        return _cast_boolean(series, col_name, warnings, stats=stats)
     if manifest_type == "date":
-        return _cast_date(series, col_name, date_format, warnings, as_datetime=False)
+        return _cast_date(series, col_name, date_format, warnings, as_datetime=False, stats=stats)
     if manifest_type in ("datetime","timestamp"):
-        return _cast_date(series, col_name, date_format, warnings, as_datetime=True)
+        return _cast_date(series, col_name, date_format, warnings, as_datetime=True, stats=stats)
     warnings.append("UNKNOWN_TYPE: tipo '{}' em '{}', mantido como string.".format(manifest_type, col_name))
+    _mark_fail(stats, 100.0)
     return series, warnings
+
+def _mark_fail(stats, fail_pct):
+    if stats is not None:
+        stats["cast_ok"] = False
+        stats["fail_pct"] = round(fail_pct, 2)
 
 def _cast_numeric(series, col_name, warnings, integer):
     non_null = series.dropna().replace("", pd.NA).dropna()

@@ -10,41 +10,8 @@ Produz:
 import json
 from datetime import datetime
 from pathlib import Path
-
+from src.metrics import quality_score
 from src.validation.validator import ValidationResult
-
-
-def _compute_quality_score(val_result: ValidationResult, profiler_payload: dict) -> float:
-    """
-    Score de qualidade 0–100 baseado em:
-      - 40 pts: status de validação
-      - 30 pts: taxa de nulos global
-      - 20 pts: taxa de duplicatas
-      - 10 pts: cobertura de schema (colunas esperadas presentes)
-    """
-    score = 0.0
-
-    # Validação
-    if val_result.status == "PASS"   : score += 40
-    elif val_result.status == "WARNING": score += 25
-    # DLQ → 0
-
-    # Nulos globais
-    cols = profiler_payload.get("columns", {})
-    if cols:
-        avg_null = sum(c.get("null_pct", 0) for c in cols.values()) / len(cols)
-        score += max(0, 30 - avg_null)    # 30 pts se nulos = 0
-
-    # Duplicatas
-    total = val_result.rows_total or 1
-    dup_pct = val_result.duplicate_count / total * 100
-    score += max(0, 20 - dup_pct * 10)
-
-    # Schema coverage (bonus estático)
-    if val_result.evolution_type is None:
-        score += 10
-
-    return round(min(score, 100), 1)
 
 def _slm_metrics(slm_result: dict) -> dict:
     """Achata perf/output do enriquecimento para comparar modelos entre runs.
@@ -78,10 +45,12 @@ def collect(
     profiler_payload: dict,
     slm_result      : dict,
     metrics_dir     : Path,
+    contract         : None,
+    cast_report     : dict | None = None,
 ) -> dict:
     """Salva métricas individuais de uma tabela e retorna o dict."""
 
-    quality_score = _compute_quality_score(val_result, profiler_payload)
+    score = quality_score.compute(val_result, profiler_payload, contract, cast_report)
 
     # Nulos por coluna
     cols          = profiler_payload.get("columns", {})
@@ -107,6 +76,9 @@ def collect(
         "slm_status"         : slm_result.get("status"),
         "slm_inference_ms"   : slm_result.get("inference_ms", 0),
         **_slm_metrics(slm_result),
+        "quality_score"      : score["score"],
+        "quality_dimensions" : score["dimensions"],
+        **{f"score_{n}": d["value"] for n, d in score["dimensions"].items()},
     }
 
     # Persiste JSON por run
@@ -152,8 +124,29 @@ def generate_report(all_metrics: list[dict], reports_dir: Path) -> Path:
         f"- **Com WARNING:** {sum(1 for m in all_metrics if m['validation_status'] == 'WARNING')}",
         f"- **Documentadas por SLM:** {sum(1 for m in all_metrics if m['slm_status'] == 'SUCCESS')}",
         "\n---\n",
-        "## Desempenho da SLM\n",
+        "## Score por Dimensao\n",
+        "| Tabela | Conformidade (40%) | Completude (25%) | Unicidade (20%) | Estabilidade (15%) | Score |",
+        "|--------|--------------------|------------------|-----------------|--------------------|-------|",
     ]
+    for m in all_metrics:
+        dims = m.get("quality_dimensions") or {}
+        def _v(name):
+            v = (dims.get(name) or {}).get("value")
+            return "n/d" if v is None else f"{v:.1f}"
+        lines.append(
+            f"| `{m['table']}` | {_v('conformity')} | {_v('completeness')} "
+            f"| {_v('uniqueness')} |  {_v('schema_stability')} | **{m['quality_score']}** |"
+        )
+        lines.append("")
+        for m in all_metrics:
+            dims=m.get("quality_dimensions") or {}
+            low = [(n, d) for n, d in dims.items() if d.get("value") is not None and d["value"] < 100]
+            for name, d in low:
+                lines.append(f"- ``{m['table']}` / **{name}** = {d['value']}: {d.get('detail, ')}")
+        lines += [
+            "\n---\n",
+            "## Desempenho da SLM\n",
+        ]
     slm_rows = [m for m in all_metrics if m.get("slm_status") == "SUCCESS" and m.get("slm_model")]
     if slm_rows:
         lines += [
