@@ -2,6 +2,11 @@ import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).parent
+try:
+    from dotenv import load_dotenv
+    load_dotenv(BASE_DIR / ".env", override=False)
+except ImportError:
+    pass
 DATA_DIR  = BASE_DIR / "data"
 
 LANDING_DIR    = DATA_DIR / "landing"
@@ -34,8 +39,10 @@ DATABRICKS_HOST         = os.environ.get("DATABRICKS_HOST",         "")
 DATABRICKS_TOKEN        = os.environ.get("DATABRICKS_TOKEN",    "")
 DATABRICKS_WAREHOUSE_ID = os.environ.get("DATABRICKS_WAREHOUSE_ID", "")
 DATABRICKS_VOLUME       = os.environ.get("DATABRICKS_VOLUME",    "landing")
-DATABRICKS_CATALOG      = os.environ.get("DATABRICKS_CATALOG",      "workspace")
-DATABRICKS_SCHEMA       = os.environ.get("DATABRICKS_SCHEMA",       "nimbus")
-DATABRICKS_AUTO_UPLOAD  = os.environ.get("DATABRICKS_AUTO_UPLOAD",  "False").lower() in ("true", "1", "yes")
-DATABRICKS_BRONZE_VOLUME = os.environ.get("DATABRICKS_BRONZE_VOLUME", "bronze")
-DATABRICKS_BRONZE_UPLOAD = os.environ.get("DATABRICKS_BRONZE_UPLOAD", "False").lower() in ("true", "1", "yes")
+DATABRICKS_CATALOG      = os.environ.get("DATABRICKS_CATALOG",      "nimbus")
+DATABRICKS_SCHEMA       = os.environ.get("DATABRICKS_SCHEMA",       "silver")
+DATABRICKS_SILVER_SCHEMA = os.environ.get("DATABRICKS_SILVER_SCHEMA",   DATABRICKS_SCHEMA)
+DATABRICKS_BRONZE_SCHEMA = os.environ.get("DATABRICKS_BRONZE_SCHEMA",   "bronze")
+DATABRICKS_AUTO_UPLOAD  = os.environ.get("DATABRICKS_AUTO_UPLOAD",  "True").lower() in ("true", "1", "yes")
+DATABRICKS_BRONZE_VOLUME = os.environ.get("DATABRICKS_BRONZE_VOLUME", "landing")
+DATABRICKS_BRONZE_UPLOAD = os.environ.get("DATABRICKS_BRONZE_UPLOAD", "True").lower() in ("true", "1", "yes")

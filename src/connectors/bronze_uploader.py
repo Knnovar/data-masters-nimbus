@@ -19,7 +19,7 @@ _PROVENANCE = {
 }
 
 class BronzeUploader(DatabricksUploader):
-    TABLE_SUFFIX = "_bronze"
+    TABLE_SUFFIX = ""
     TABLE_COMMENT= ("Camada Bronze do Nimbus: copia fiel do arquivo recebido da origem, "
                     "sem cast, sem validacao de contrato e sem gate de qualidade. "
                     "Todas as colunas sao STRING por definicao. "
@@ -39,10 +39,10 @@ class BronzeUploader(DatabricksUploader):
         tbl = table_name or src.stem
         folder = self._volume_dir(tbl)
         d      = self._dat_ref(dat_ref)
-        target = "{}/dat)ref={}/{}".format(folder, d, src.name)
+        target = "{}/dat_ref={}/{}".format(folder, d, src.name)
         data   = src.read_bytes()
 
-        print("[BRONZE] Upload: {} -> {}".format(src.name, target),
+        print("[BRONZE] Upload: {} -> {}".format(src.name, target)
               + (" (run_id={})".format(run_id) if run_id else ""))
         resp = self._session.put(
             "{}/api/2.0/fs/files{}".format(self._host, target),
@@ -61,12 +61,12 @@ class BronzeUploader(DatabricksUploader):
             opts += ["header => true"]
         return "read_files('{}', {})".format(folder, ", ".join(opts))
 
-    def _register_raw(self, table_name, volume_folder, fmt, run_id=None):
+    def register_raw(self, table_name, volume_folder, fmt, run_id=None):
         full = "{}.{}.{}".format(self._catalog, self._schema, self.bronze_table(table_name))
-        self._sql("CREATE SCHEMA IF NOTE EXISTS {}.{}".format(self._catalog, self._schema))
+        self._sql("CREATE SCHEMA IF NOT EXISTS {}.{}".format(self._catalog, self._schema))
         self._sql(
             "CREATE OR REPLACE TABLE {} AS SELECT *, "
-            "_metadata.filename AS _ingest_file, "
+            "_metadata.file_name AS _ingest_file, "
             "_metadata.file_modification_time AS _ingest_time, "
             "'{}' AS _ingest_run_id "
             "FROM {}".format(full, self._esc(run_id or ""), self._read_files_expr(volume_folder, fmt))
@@ -75,7 +75,7 @@ class BronzeUploader(DatabricksUploader):
         return full
 
     def describe_bronze(self, table_name):
-        full = "{}.{}.{}".format(self._catalog, self._schema, self.bronze(table_name))
+        full = "{}.{}.{}".format(self._catalog, self._schema, self.bronze_table(table_name))
         applied = 0
         try:
             self._sql("COMMENT ON TABLE {} IS '{}'".format(full, self._esc(self.TABLE_COMMENT)))
@@ -84,7 +84,7 @@ class BronzeUploader(DatabricksUploader):
             print("[BRONZE][WARN] COMMENT ON TABLE falhou: {}".format(e))
 
         comments = dict(_PROVENANCE)
-        comments[self.PARTITION_COLUMN] = self.PARTITION_COLUMN
+        comments[self.PARTITION_COLUMN] = self.PARTITION_COMMENT
         for col, text in comments.items():
             try:
                 self._sql("ALTER TABLE {} ALTER COLUMN `{}` COMMENT '{}'".format(
@@ -114,23 +114,23 @@ class BronzeUploader(DatabricksUploader):
                   "arquivo mantido no Volume sem tabela.".format(Path(local_path).suffix))
             return None
 
-        full = self.register_ram(tbl, folder, fmt, run_id=run_id)
+        full = self.register_raw(tbl, folder, fmt, run_id=run_id)
         if not skip_comments:
             self.describe_bronze(tbl)
         return full
 
-    def get_bronze_uploader():
+def get_bronze_uploader():
         import config as cfg
         return BronzeUploader(
             host         = getattr(cfg, "DATABRICKS_HOST",          ""),
             token        = getattr(cfg, "DATABRICKS_TOKEN",         ""),
             warehouse_id = getattr(cfg, "DATABRICKS_WAREHOUSE_ID",  ""),
-            volume       = getattr(cfg, "DATABRICKS_BRONZE_VOLUME", "bronze"),
-            catalog      = getattr(cfg, "DATABRICKS_CATALOG",       "workspace"),
-            schema       = getattr(cfg, "DATABRICKS_SCHEMA",        "nimbus"), 
+            volume       = getattr(cfg, "DATABRICKS_BRONZE_VOLUME", "landing"),
+            catalog      = getattr(cfg, "DATABRICKS_CATALOG",       "nimbus"),
+            schema       = getattr(cfg, "DATABRICKS_SCHEMA",        "bronze"), 
         )
 
-    def publish_bronze(local_path, table_name, run_id=None, dat_ref=None):
+def publish_bronze(local_path, table_name, run_id=None, dat_ref=None):
         import config as cfg
         if not getattr(cfg, "DATABRICKS_BRONZE_UPLOAD", False):
             return{"table": table_name, "layer": "bronze", "status": "DISABLED",

@@ -295,8 +295,8 @@ def get_uploader():
         token        = getattr(cfg, "DATABRICKS_TOKEN",        ""),
         warehouse_id = getattr(cfg, "DATABRICKS_WAREHOUSE_ID", ""),
         volume      = getattr(cfg, "DATABRICKS_VOLUME",      "landing"),
-        catalog      = getattr(cfg, "DATABRICKS_CATALOG",      "workspace"),
-        schema       = getattr(cfg, "DATABRICKS_SCHEMA",       "nimbus"),
+        catalog      = getattr(cfg, "DATABRICKS_CATALOG",      "nimbus"),
+        schema       = getattr(cfg, "DATABRICKS_SCHEMA",      getattr(cfg, "DATABRICKS_SCHEMA", "silver")),
     )
 
 def publish_table(silver_path, table_name, contract=None, run_id=None, dat_ref=None):
@@ -338,7 +338,7 @@ def upload_silver_table(silver_path, table_name=None, contract=None, dat_ref=Non
         return None
     u = DatabricksUploader(host=host, token=token, warehouse_id=wid,
             volume=volume or getattr(cfg,"DATABRICKS_VOLUME","landing"),
-            catalog=getattr(cfg,"DATABRICKS_CATALOG","workspace"),
-            schema=getattr(cfg,"DATABRICKS_SCHEMA","nimbus"))
+            catalog=getattr(cfg,"DATABRICKS_CATALOG","nimbus"),
+            schema=getattr(cfg,"DATABRICKS_SCHEMA",getattr(cfg, "DATABRICKS_SILVER_SCHEMA", getattr(cfg, "DATABRICKS_SCHEMA", "silver"))))
     return u.upload_and_register(silver_path, table_name=table_name, contract=contract, dat_ref=dat_ref, run_id=run_id)
  

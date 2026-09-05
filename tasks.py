@@ -177,13 +177,13 @@ def cmd_upload_silver(args):
     print("[UPLOAD] {}/{} tabelas enviadas".format(len(parquets)-errors, len(parquets)))
     return 0 if errors == 0 else 1
 
-def cmd_upload_bronze(ags):
+def cmd_upload_bronze(args):
     import sys; sys.path.insert(0, str(ROOT))
     import config as cfg
     from src.connectors.bronze_uploader import get_bronze_uploader
 
     table_filter = _get_opt(args, "--table")
-    no_comments = "--no-comemnts" in args
+    no_comments = "--no-comments" in args
     bronze_dir = cfg.DATA_DIR / "landing"
     files = [p for p in sorted(bronze_dir.iterdir())
              if p.is_file() and not p.name.startswith("_")]
@@ -206,9 +206,9 @@ def cmd_upload_bronze(ags):
                                              skip_comments=no_comments)
         except Exception as e:
             print("[ERRO] {}: {}".format(path.name, e)); errors += 1
-        print()
-        print("[BRONZE] {}/{} arquivos enviados".format(len(files) - errors, len(files)))
-        return 0 if errors == 0 else 1
+    print()
+    print("[BRONZE] {}/{} arquivos enviados".format(len(files) - errors, len(files)))
+    return 0 if errors == 0 else 1
 # ── Testes ────────────────────────────────────────────────────────────────────
 
 def cmd_test(args):

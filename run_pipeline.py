@@ -181,8 +181,8 @@ def main():
         for layer in ("bronze", "silver"):
           rows = [p for p in attempted if p.get("layer", "silver") == layer]
           if rows:  
-            ok = sum(1 for p in attempted if p["status"] == "OK")
-            print(f"Databricks: {ok}/{len(attempted)} tabelas publicadas")
+            ok = sum( 1 for p in rows if p["status"] in ("OK", "UPLOADED"))
+            print(f"Databricks: {layer}: {ok}/{len(rows)} tabelas publicadas")
     for p in failed:
         print(f" [DATABRICKS] {p.get('layer', 'silver')}/{['table']}: {p['error']}")
     print("\n  Pipeline concluida.\n")

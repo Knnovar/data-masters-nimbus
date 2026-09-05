@@ -2,7 +2,7 @@
 
 ## Visão Geral
 
-A tabela `tb_clientes` é um cadastro mestre de clientes pessoa física e jurídica, utilizada por todos os produtos de crédito e relacionamento do banco. A segmentação dos clientes determina o produto ofertado e o gestor responsável. A tabela é atualizada diariamente pelo batch noturno do sistema CORE_BANCARIO_TOTVS.
+A tabela `tb_clientes` representa o cadastro mestre de clientes pessoa física e jurídica. Ela é utilizada por todos os produtos de crédito e relacionamento do banco, com segmentação que determina o produto ofertado e o gestor responsável. A tabela é atualizada diariamente pelo batch noturno do sistema CORE_BANCARIO_TOTVS.
 
 ### Propriedades da Tabela
 
@@ -13,104 +13,87 @@ A tabela `tb_clientes` é um cadastro mestre de clientes pessoa física e juríd
 - **Contato**: squad-dados-cadastrais@banco.com.br
 - **Classificação de Dados**: Confidencial
 - **Período de Retenção**: 10 anos
-- **Regulamentações**: LGPD, BACEN 4658
+- **Tags Regulatórias**: LGPD, BACEN_4658
 
 ## Colunas
 
-### 1. `cd_cliente`
-- **Tipo**: string
-- **Nullable**: false
+### `cd_cliente`
+- **Tipo**: VARCHAR
 - **Descrição**: Código único do cliente no sistema legado, gerado sequencialmente pelo CORE_BANCARIO.
-- **Propósito de Negócio**: Identificação única de cada cliente.
-- **Comportamento Esperado**: Sem valores nulos, deve ser único para cada cliente.
-- **Anomalias Observadas**: Nenhuma duplicata ou valor nulo observado.
+- **Negócio**: Serve como identificador primário para cada cliente.
+- **Estatísticas**: 0% de valores nulos, 500 valores únicos.
+- **Anomalias**: Nenhuma.
 
-### 2. `nr_cpf_cnpj`
-- **Tipo**: string
-- **Nullable**: false
+### `nr_cpf_cnpj`
+- **Tipo**: VARCHAR
 - **Descrição**: CPF (11 dígitos) ou CNPJ (14 dígitos) sem máscara.
-- **Propósito de Negócio**: Identificação fiscal do cliente.
-- **Comportamento Esperado**: Sempre preenchido, sem valores nulos.
-- **Regulamentações**: LGPD_SENSITIVE
-- **Anomalias Observadas**: Nenhuma duplicata ou valor nulo observado.
+- **Negócio**: Identificador único de clientes pessoa física ou jurídica.
+- **Estatísticas**: 0% de valores nulos, 500 valores únicos, valores variam entre 1284567958.0 e 98751263491.0.
+- **Anomalias**: Nenhuma.
+- **Implicações Regulatórias**: Considerado sensível sob a LGPD.
 
-### 3. `nm_cliente`
-- **Tipo**: string
-- **Nullable**: false
+### `nm_cliente`
+- **Tipo**: VARCHAR
 - **Descrição**: Nome completo do cliente conforme cadastro na Receita Federal.
-- **Propósito de Negócio**: Nome do cliente para identificação.
-- **Comportamento Esperado**: Sempre preenchido, sem valores nulos.
-- **Regulamentações**: LGPD_SENSITIVE
-- **Anomalias Observadas**: 2 duplicatas observadas para o nome "Ravy Borges".
+- **Negócio**: Nome do cliente para identificação.
+- **Estatísticas**: 0% de valores nulos, 495 valores únicos.
+- **Anomalias**: 5 duplicatas identificadas.
+- **Implicações Regulatórias**: Considerado sensível sob a LGPD.
 
-### 4. `dt_nascimento`
-- **Tipo**: date
-- **Nullable**: true
+### `dt_nascimento`
+- **Tipo**: VARCHAR
 - **Descrição**: Data de nascimento. Nula para clientes PJ.
-- **Propósito de Negócio**: Data de nascimento para clientes pessoa física.
-- **Comportamento Esperado**: Pode ser nulo para clientes jurídicos.
-- **Regulamentações**: LGPD_SENSITIVE
-- **Anomalias Observadas**: Nenhuma observada.
+- **Negócio**: Data de nascimento para clientes pessoa física.
+- **Estatísticas**: 0% de valores nulos, 495 valores únicos.
+- **Anomalias**: Nenhuma.
 
-### 5. `cd_segmento`
-- **Tipo**: string
-- **Nullable**: false
-- **Descrição**: Segmento de relacionamento. Dominio: VAREJO, PRIME, PRIVATE, PJ_PEQUENO, PJ_MEDIO.
-- **Propósito de Negócio**: Determina o produto ofertado e o gestor responsável.
-- **Comportamento Esperado**: Sempre preenchido, sem valores nulos.
-- **Regras de Negócio**:
+### `cd_segmento`
+- **Tipo**: VARCHAR
+- **Descrição**: Segmento de relacionamento. Domínio: VAREJO, PRIME, PRIVATE, PJ_PEQUENO, PJ_MEDIO.
+- **Negócio**: Determina o produto ofertado e o gestor responsável.
+- **Estatísticas**: 0% de valores nulos, 5 valores únicos.
+- **Anomalias**: Nenhuma.
+- **Regras de Negócio**: 
   - PRIME: `vl_renda_mensal >= 10000`
   - PRIVATE: `vl_renda_mensal >= 30000`
-- **Anomalias Observadas**: 3 duplicatas observadas para o segmento "PJ_MEDIO".
+  - Sempre nulo para `cd_segmento` IN (PJ_PEQUENO, PJ_MEDIO).
 
-### 6. `cd_agencia`
-- **Tipo**: string
-- **Nullable**: false
+### `cd_agencia`
+- **Tipo**: VARCHAR
 - **Descrição**: Código numérico de 4 dígitos da agência de relacionamento principal.
-- **Propósito de Negócio**: Identificação da agência responsável pelo cliente.
-- **Comportamento Esperado**: Sempre preenchido, sem valores nulos.
-- **Anomalias Observadas**: 15 valores "AGENC-" observados, possivelmente indicando dados incompletos ou incorretos.
+- **Negócio**: Identifica a agência principal do cliente.
+- **Estatísticas**: 0% de valores nulos, 473 valores únicos.
+- **Anomalias**: 15 ocorrências do valor "AGENC-???".
 
-### 7. `vl_renda_mensal`
-- **Tipo**: float
-- **Nullable**: true
+### `vl_renda_mensal`
+- **Tipo**: VARCHAR
 - **Descrição**: Renda mensal declarada em BRL. Nula para clientes PJ.
-- **Propósito de Negócio**: Indicador de renda para clientes pessoa física.
-- **Comportamento Esperado**: Pode ser nulo para clientes jurídicos e segmentos PJ_PEQUENO, PJ_MEDIO.
-- **Regulamentações**: SCR_CANDIDATE
-- **Anomalias Observadas**: Nenhuma observada.
+- **Negócio**: Indica a renda mensal do cliente.
+- **Estatísticas**: 20.6% de valores nulos, 397 valores únicos.
+- **Anomalias**: Nenhuma.
+- **Implicações Regulatórias**: Candidato a SCR (Sensitive Content Review).
 
-### 8. `fl_ativo`
-- **Tipo**: boolean
-- **Nullable**: false
+### `fl_ativo`
+- **Tipo**: VARCHAR
 - **Descrição**: Indica se o cliente possui relacionamento ativo com o banco.
-- **Propósito de Negócio**: Status de ativação do cliente.
-- **Comportamento Esperado**: Sempre preenchido, sem valores nulos.
+- **Negócio**: Status de ativação do cliente.
+- **Estatísticas**: 0% de valores nulos, 2 valores únicos (True/False).
+- **Anomalias**: Nenhuma.
 
-### 9. `dt_cadastro`
-- **Tipo**: date
-- **Nullable**: false
+### `dt_cadastro`
+- **Tipo**: VARCHAR
 - **Descrição**: Data de abertura do cadastro no sistema.
-- **Propósito de Negócio**: Registro da data de cadastro do cliente.
-- **Comportamento Esperado**: Sempre preenchido, sem valores nulos.
-
-## Análise de Anomalias
-
-- **Duplicatas**: Observadas para `nm_cliente` ("Ravy Borges") e `cd_segmento` ("PJ_MEDIO").
-- **Valores Incompletos**: Observados para `cd_agencia` ("AGENC-").
-- **Comportamento Esperado**: Todas as colunas obrigatórias estão preenchidas conforme esperado, exceto `dt_nascimento` e `vl_renda_mensal`, que podem ser nulos conforme as regras de negócio.
-
-## Implicações de Compliance
-
-- **LGPD**: Dados sensíveis como CPF/CNPJ, nome e data de nascimento estão sujeitos a regulamentações de proteção de dados.
-- **BACEN 4658**: Requisitos de segurança e proteção de dados financeiros.
-- **SCR_CANDIDATE**: Renda mensal pode ser considerada para Score de Crédito.
+- **Negócio**: Data de criação do cadastro do cliente.
+- **Estatísticas**: 0% de valores nulos, 462 valores únicos.
+- **Anomalias**: Nenhuma.
 
 ## Pontos de Atenção
 
-1. **Duplicatas**: Verificar e corrigir duplicatas nos nomes e segmentos.
-2. **Valores Incompletos**: Investigar e corrigir valores incompletos na coluna `cd_agencia`.
-3. **Compliance**: Garantir conformidade contínua com LGPD e BAC
+- **Duplicatas**: Identificadas no campo `nm_cliente`, o que pode indicar problemas de integridade de dados.
+- **Valores Nulos**: `vl_renda_mensal` possui 20.6% de valores nulos, o que pode afetar análises de renda.
+- **Valores Anômalos**: Ocorrência de "AGENC-???" no campo `cd_agencia` sugere dados incorretos ou não processados.
+- **Compliance LGPD**: Campos `nr_cpf_cnpj`, `nm_cliente`, e `dt_nascimento` são sensíveis e devem ser tratados conforme a LGPD.
+- **Regras de Negócio**: Verificar se `vl_renda_mensal` está sempre nulo para `cd_segmento` IN (PJ_PEQUENO, PJ_MEDIO).
 
 ---
-> **[AI_METADATA_STATUS: DRAFT]**
+> **[AI_METADATA_STATUS: DRAFT]** — Documentação gerada por SLM. Requer validação humana pelo Data Steward responsável antes de uso em produção.
