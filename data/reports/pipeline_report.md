@@ -1,5 +1,5 @@
 # Pipeline Projeto Nimbus - Relatorio de Execucao
-**Data:** 2026-09-05 19:46:16  |  **Run ID:** `run_20260905_194209_b2f96d`
+**Data:** 2026-09-05 19:57:18  |  **Run ID:** `run_20260905_195154_fc0f38`
 
 ---
 
@@ -7,9 +7,9 @@
 
 | Tabela | Cenário | Status | Linhas | Dups | Nulos (avg%) | Profiling (ms) | SLM (ms) | Score |
 |--------|---------|--------|--------|------|--------------|----------------|----------|-------|
-| `tb_clientes` | baseline | [PASS] PASS | 500 | 0 | 2.29% | 1286.4 | [OK] 80477.5 | **94.8** |
-| `tb_transacoes` | baseline | [WARN] WARNING | 2,030 | 30 | 0.81% | 4124.0 | [OK] 62075.5 | **86.0** |
-| `tb_contratos_credito` | baseline | [PASS] PASS | 300 | 0 | 0.0% | 943.4 | [OK] 69786.5 | **100.0** |
+| `tb_clientes` | baseline | [PASS] PASS | 500 | 0 | 2.29% | 1278.2 | [OK] 70648.7 | **94.8** |
+| `tb_transacoes` | baseline | [WARN] WARNING | 2,030 | 30 | 0.81% | 4277.9 | [OK] 60904.5 | **86.0** |
+| `tb_contratos_credito` | baseline | [PASS] PASS | 300 | 0 | 0.0% | 895.1 | [OK] 56657.4 | **100.0** |
 
 ---
 
@@ -41,9 +41,9 @@
 
 | Tabela | Modelo | Wall (ms) | Carga (ms) | Prompt (Tok/ms) | Saida (tok/ms) | Tok/s | Cobertura | Truncado |
 |--------|--------|-----------|------------|-----------------|----------------|-------|-----------|----------|
-| `tb_clientes` | phi4 | 80,478 | 14,269 | 2322/2,094 | 1613/62,061 | **26.0** | 100.0% | nao |
-| `tb_transacoes` | phi4 | 62,076 | 2 | 2097/9,815 | 1308/50,042 | **26.1** | 100.0% | nao |
-| `tb_contratos_credito` | phi4 | 69,786 | 3 | 2633/3,540 | 1651/63,987 | **25.8** | 100.0% | nao |
+| `tb_clientes` | phi4 | 70,649 | 2 | 2321/1,972 | 1724/66,494 | **25.9** | 100.0% | nao |
+| `tb_transacoes` | phi4 | 60,904 | 2 | 2099/3,260 | 1444/55,230 | **26.1** | 100.0% | nao |
+| `tb_contratos_credito` | phi4 | 56,657 | 2 | 2633/1,939 | 1361/52,507 | **25.9** | 100.0% | nao |
 
 > Compare modelos com `python show_metrics.py --models` (agrega todas as runs por `slm_model`).
 

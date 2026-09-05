@@ -101,21 +101,21 @@ class DatabricksUploader:
             return result
         return self._await_statement(result, stmt)
     
-    SQL_POOL_TIMEOUT_S = 600
-    SQL_POOL_INTERVAL_S = 5
+    SQL_POLL_TIMEOUT_S = 600
+    SQL_POLL_INTERVAL_S = 5
     _SQL_PENDING = ("PENDING", "RUNNING")
 
     def _await_statement(self, result, stmt):
         import time
-        deadline = time.time() + self.SQL_POOL_TIMEOUT_S
-        state= result.get("status", {}).get(state, "UNKNOWN")
+        deadline = time.time() + self.SQL_POLL_TIMEOUT_S
+        state = result.get("status", {}).get("state", "UNKNOWN")
         sid = result.get("statement_id")
 
         while state in self._SQL_PENDING and sid and time.time() < deadline:
-            time.sleep(self.SQL_POOL_INTERVAL_S)
+            time.sleep(self.SQL_POLL_INTERVAL_S)
             poll = self._get("sql/statements/{}".format(sid))
             if not poll.ok:
-                raise RuntimeError("SQL erro ao consultar statement {}: {} {}").format(sid, poll.status_code, poll.text[:300])
+                raise RuntimeError("SQL erro ao consultar statement {}: {} {}".format(sid, poll.status_code, poll.text[:300]))
             result = poll.json()
             state = result.get("status", {}).get("state", "UNKNOWN")
 
@@ -128,7 +128,7 @@ class DatabricksUploader:
                 state, detail or "sem detalhe na resposta", stmt[:300]
             ))
         raise RuntimeError("SQL nao concluido em {}s (state={}): {}\nStmt: {}".format(
-            self.SQL_POOL_INTERVAL_S, state, detail or "sem detalhe", stmt[:300]
+            self.SQL_POLL_TIMEOUT_S, state, detail or "sem detalhe", stmt[:300]
         ))
 
 

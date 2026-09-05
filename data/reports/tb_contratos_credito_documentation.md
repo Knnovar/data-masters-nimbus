@@ -1,104 +1,105 @@
 # Dicionário Técnico: tb_contratos_credito
 
 ## Visão Geral
-A tabela `tb_contratos_credito` contém informações sobre contratos de produtos de crédito ativos e encerrados. Ela é gerida pela equipe `squad-credito` e é alimentada diariamente pelo sistema `SISTEMA_CREDITO_SAS`. A tabela é essencial para o cálculo do Score de Crédito (SCR) e está sujeita a regulamentações como a LGPD e a BACEN 4658, com uma classificação de dados restrita e um período de retenção de 10 anos.
+
+A tabela `tb_contratos_credito` armazena informações sobre contratos de produtos de crédito ativos e encerrados. Ela é gerida pela equipe `squad-credito` e é alimentada diariamente pelo sistema `SISTEMA_CREDITO_SAS`. A tabela é essencial para o cumprimento do SCR (Serviço de Proteção ao Crédito) e está sujeita a regulamentações como a LGPD (Lei Geral de Proteção de Dados) e a BACEN_4658.
+
+### Propósito de Negócio
+
+- **Contratos de Crédito**: Inclui todos os produtos de crédito oferecidos pelo banco.
+- **Alimentação do SCR**: A tabela alimenta o SCR mensalmente.
+- **Regras de Negócio**: `vl_utilizado` pode exceder `vl_limite` em até 15% para produtos com tolerância de limite (ex: cheque especial). `cd_status` EM_ATRASO dispara cobrança automática após D+1.
+
+### Regulamentações e Classificação de Dados
+
+- **Regulatory Tags**: SCR, BACEN_4658, LGPD.
+- **Classificação de Dados**: Restrita.
+- **Período de Retenção**: 10 anos.
 
 ## Colunas
 
 ### id_contrato
-- **Tipo**: string
-- **Nullable**: false
+- **Tipo**: String
+- **Nullable**: Não
 - **Descrição**: Identificador único do contrato gerado pelo sistema de crédito.
-- **Propósito de Negócio**: Serve como chave primária para identificar exclusivamente cada contrato.
-- **Comportamento Esperado**: Deve ser único para cada registro.
-- **Anomalias**: Nenhuma anomalia observada; 100% de unicidade.
+- **Comportamento Esperado**: Valor único por contrato.
+- **Anomalias**: Nenhuma observada (0% nulos, 100% únicos).
 
 ### cd_cliente
-- **Tipo**: string
-- **Nullable**: false
+- **Tipo**: String
+- **Nullable**: Não
 - **Descrição**: Referência ao cliente em `tb_clientes`.
-- **Propósito de Negócio**: Liga o contrato ao cliente correspondente.
-- **Comportamento Esperado**: Deve corresponder a um cliente válido na tabela `tb_clientes`.
-- **Anomalias**: Alta frequência de valores repetidos, indicando múltiplos contratos por cliente.
+- **Comportamento Esperado**: Valor único por cliente.
+- **Anomalias**: Alta frequência de valores repetidos (213 únicos em 300 registros).
 
 ### dt_contrato
-- **Tipo**: string (esperado como date)
-- **Nullable**: false
+- **Tipo**: String (deveria ser Date)
+- **Nullable**: Não
 - **Descrição**: Data de abertura do contrato.
-- **Propósito de Negócio**: Registra quando o contrato foi iniciado.
-- **Comportamento Esperado**: Deve ser uma data válida e formatada corretamente.
-- **Anomalias**: Armazenado como string, o que pode causar problemas de análise de dados.
+- **Comportamento Esperado**: Formato de data válido.
+- **Anomalias**: Tipo de dado incorreto (VARCHAR em vez de DATE).
 
 ### vl_limite
-- **Tipo**: string (esperado como float)
-- **Nullable**: false
+- **Tipo**: String (deveria ser Float)
+- **Nullable**: Não
 - **Descrição**: Limite de crédito aprovado em BRL.
-- **Propósito de Negócio**: Define o valor máximo que pode ser utilizado pelo cliente.
-- **Comportamento Esperado**: Deve ser um número positivo.
-- **Anomalias**: Armazenado como string, o que pode causar problemas de cálculo.
-- **Implicações de Compliance**: Candidato ao SCR, exigindo precisão nos valores.
+- **Comportamento Esperado**: Valor numérico positivo.
+- **Anomalias**: Tipo de dado incorreto (VARCHAR em vez de FLOAT).
 
 ### vl_utilizado
-- **Tipo**: string (esperado como float)
-- **Nullable**: false
+- **Tipo**: String (deveria ser Float)
+- **Nullable**: Não
 - **Descrição**: Saldo utilizado atual em BRL. Pode exceder `vl_limite` em produtos com tolerância.
-- **Propósito de Negócio**: Indica o valor atualmente utilizado pelo cliente.
-- **Comportamento Esperado**: Deve ser um número positivo; pode exceder `vl_limite` em até 15% para cheque especial.
-- **Anomalias**: Armazenado como string, o que pode causar problemas de cálculo.
-- **Implicações de Compliance**: Candidato ao SCR, exigindo precisão nos valores.
+- **Comportamento Esperado**: Valor numérico positivo.
+- **Anomalias**: Tipo de dado incorreto (VARCHAR em vez de FLOAT).
 
 ### tp_produto
-- **Tipo**: string
-- **Nullable**: false
-- **Descrição**: Tipo do produto de crédito. Domínio: `CARTAO_CREDITO`, `CHEQUE_ESPECIAL`, `CREDITO_PESSOAL`, `FINANCIAMENTO_VEICULO`, `CONSIGNADO`.
-- **Propósito de Negócio**: Identifica o tipo de produto de crédito associado ao contrato.
-- **Comportamento Esperado**: Deve ser um valor válido dentro do domínio especificado.
-- **Anomalias**: Nenhuma anomalia observada.
+- **Tipo**: String
+- **Nullable**: Não
+- **Descrição**: Tipo do produto de crédito. Domínio: CARTAO_CREDITO, CHEQUE_ESPECIAL, CREDITO_PESSOAL, FINANCIAMENTO_VEICULO, CONSIGNADO.
+- **Comportamento Esperado**: Valores dentro do domínio especificado.
+- **Anomalias**: Nenhuma observada.
 
 ### cd_status
-- **Tipo**: string
-- **Nullable**: false
-- **Descrição**: Status do contrato. Domínio: `ATIVO`, `ENCERRADO`, `EM_ATRASO`, `RENEGOCIADO`.
-- **Propósito de Negócio**: Indica o estado atual do contrato.
-- **Comportamento Esperado**: Deve ser um valor válido dentro do domínio especificado.
-- **Anomalias**: Nenhuma anomalia observada.
-- **Regras de Negócio**: `EM_ATRASO` dispara cobrança automática após D+1.
+- **Tipo**: String
+- **Nullable**: Não
+- **Descrição**: Status do contrato. Domínio: ATIVO, ENCERRADO, EM_ATRASO, RENEGOCIADO.
+- **Comportamento Esperado**: Valores dentro do domínio especificado.
+- **Anomalias**: Nenhuma observada.
 
 ### dt_vencimento
-- **Tipo**: string (esperado como date)
-- **Nullable**: false
+- **Tipo**: String (deveria ser Date)
+- **Nullable**: Não
 - **Descrição**: Data de vencimento da última parcela ou do contrato.
-- **Propósito de Negócio**: Indica quando o contrato ou a última parcela deve ser paga.
-- **Comportamento Esperado**: Deve ser uma data válida e formatada corretamente.
-- **Anomalias**: Armazenado como string, o que pode causar problemas de análise de dados.
+- **Comportamento Esperado**: Formato de data válido.
+- **Anomalias**: Tipo de dado incorreto (VARCHAR em vez de DATE).
 
 ### nr_parcelas
-- **Tipo**: string (esperado como integer)
-- **Nullable**: false
+- **Tipo**: String (deveria ser Integer)
+- **Nullable**: Não
 - **Descrição**: Número total de parcelas do contrato. 1 para crédito rotativo.
-- **Propósito de Negócio**: Indica quantas parcelas o contrato é dividido.
-- **Comportamento Esperado**: Deve ser um número inteiro positivo.
-- **Anomalias**: Armazenado como string, o que pode causar problemas de cálculo.
+- **Comportamento Esperado**: Valor numérico inteiro positivo.
+- **Anomalias**: Tipo de dado incorreto (VARCHAR em vez de INTEGER).
 
 ### tx_juros_am
-- **Tipo**: string (esperado como float)
-- **Nullable**: false
+- **Tipo**: String (deveria ser Float)
+- **Nullable**: Não
 - **Descrição**: Taxa de juros ao mês em percentual. Ex: 2.5 = 2,5% a.m.
-- **Propósito de Negócio**: Define a taxa de juros aplicada ao contrato.
-- **Comportamento Esperado**: Deve ser um número positivo.
-- **Anomalias**: Armazenado como string, o que pode causar problemas de cálculo.
-
-## Implicações de Compliance
-- **SCR**: A tabela é candidata ao SCR, exigindo precisão e integridade nos dados financeiros.
-- **LGPD**: Como os dados são classificados como restritos, é crucial garantir a proteção e o uso adequado dos dados pessoais.
-- **BACEN 4658**: A tabela deve estar em conformidade com as normas de relatórios ao Banco Central.
+- **Comportamento Esperado**: Valor numérico positivo.
+- **Anomalias**: Tipo de dado incorreto (VARCHAR em vez de FLOAT).
 
 ## Pontos de Atenção
-1. **Tipos de Dados**: Muitas colunas estão armazenadas como strings, o que pode causar problemas de análise e cálculo. É recomendável converter essas colunas para seus tipos esperados (float, date, integer).
-2. **Dupla Referência de Clientes**: Alta frequência de valores repetidos em `cd_cliente` sugere múltiplos contratos por cliente, o que deve ser verificado para evitar inconsistências.
-3. **Precisão dos Dados**: Como a tabela é candidata ao SCR, é essencial garantir a precisão dos valores financeiros.
-4. **Validação de Dados**: Implementar validações para garantir que os valores estejam dentro dos domínios esperados e que as regras de negócio sejam respeitadas.
-5. **Conformidade Regulatória**: Manter a conformidade com LGPD e BACEN 4658 é crucial, especialmente considerando a classificação de dados restritos.
+
+1. **Tipos de Dados Incorretos**: Múltiplas colunas (`dt_contrato`, `vl_limite`, `vl_utilizado`, `dt_vencimento`, `nr_parcelas`, `tx_juros_am`) estão armazenadas como VARCHAR em vez dos tipos esperados (Date, Float, Integer).
+
+2. **Duplicatas de Clientes**: Alta frequência de valores repetidos em `cd_cliente`, indicando potencial duplicação de registros de clientes.
+
+3. **Compliance Regulatório**: A tabela contém dados restritos e deve ser gerenciada conforme as regulamentações LGPD e BACEN_4658.
+
+4. **Regras de Negócio**: Garantir que `vl_utilizado` não exceda `vl_limite` além do permitido para produtos específicos.
+
+5. **Atualização de Dados**: A tabela é atualizada diariamente, exigindo monitoramento constante para garantir a integridade e precisão dos dados.
 
 ---
+
 > **[AI_METADATA_STATUS: DRAFT]** — Documentação gerada por SLM. Requer validação humana pelo Data Steward responsável antes de uso em produção.
