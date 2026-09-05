@@ -47,6 +47,7 @@ def collect(
     metrics_dir     : Path,
     contract        = None,
     cast_report     : dict | None = None,
+    fmt             : str = 'csv',
 ) -> dict:
     """Salva métricas individuais de uma tabela e retorna o dict."""
 
@@ -62,6 +63,7 @@ def collect(
         "timestamp"          : datetime.now().isoformat(),
         "table"              : val_result.table,
         "scenario"           : val_result.scenario,
+        "format"             : fmt,
         "validation_status"  : val_result.status,
         "evolution_type"     : val_result.evolution_type,
         "rows_total"         : val_result.rows_total,
@@ -70,7 +72,6 @@ def collect(
         "null_violations"    : val_result.null_violations,
         "avg_null_pct"       : avg_null,
         "profiling_ms"       : profiler_payload.get("profiling_ms", 0),
-        "quality_score"      : quality_score,
         "issues"             : val_result.issues,
         "warnings"           : val_result.warnings,
         "slm_status"         : slm_result.get("status"),
@@ -82,7 +83,7 @@ def collect(
     }
 
     # Persiste JSON por run
-    path = metrics_dir / f"{run_id}_{val_result.table}.json"
+    path = metrics_dir / f"{run_id}_{val_result.table}_{fmt}.json"
     with open(path, "w", encoding="utf-8") as f:
         json.dump(record, f, ensure_ascii=False, indent=2)
 

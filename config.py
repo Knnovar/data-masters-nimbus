@@ -25,7 +25,7 @@ MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "minioadmin")
 OLLAMA_HOST  = os.environ.get("OLLAMA_HOST",  "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "phi4")
 SKIP_SLM     = os.environ.get("SKIP_SLM", "false").lower() in ("true", "1", "yes")
-SLM_NUM_PREDICT = int(os.environ.get("SLM_NUM_PREDICT", "800"))
+SLM_NUM_PREDICT = int(os.environ.get("SLM_NUM_PREDICT", "1500"))
 
 NULL_TOLERANCE_PCT  = float(os.environ.get("NULL_TOLERANCE_PCT",  "30.0"))
 DUPLICATE_TOLERANCE = float(os.environ.get("DUPLICATE_TOLERANCE", "0.02"))

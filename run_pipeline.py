@@ -83,13 +83,14 @@ def run_scenario(scenario: str, run_id: str, fmt: str = "csv") -> tuple[list[dic
 
             slm_result = enrich(storage, contract_filename, profiler_payload)
             parquet_filename = storage.promote_to_parquet(filename, "bronze", "silver", contract=contract)
+            cast_report = dict(getattr(storage, "last_cast_report", {}) or {})
             from src.connectors.databricks_uploader import publish_table
             pub = publish_table(storage.read_path("silver", parquet_filename),
                                 table_name=Path(filename).stem, contract=contract, run_id=run_id)
             publications.append(pub)
         
         # Gold: métricas agregadas
-        m = collect(run_id, val_result, profiler_payload, slm_result, METRICS_DIR, contract=contract, cast_report=cast_report)
+        m = collect(run_id, val_result, profiler_payload, slm_result, METRICS_DIR, contract=contract, cast_report=cast_report, fmt = fmt)
         scenario_metrics.append(m)
 
     return scenario_metrics, publications
