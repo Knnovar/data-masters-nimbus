@@ -2,7 +2,7 @@
 
 Pipeline de dados bancária com arquitetura medallion, contratos de dados extensíveis e documentação semântica gerada por IA local. Construído para resolver uma dor concreta: a distância entre o time de negócio e o time técnico na hora de entender o que um dado significa.
 
-O projeto roda com um único comando e inclui tudo que precisa: pipeline, modelo de IA, storage S3-compatível, orquestração e integração com Databricks.
+O projeto roda com um único comando e inclui tudo que precisa: pipeline, modelo de IA, storage S3-compatível, orquestração e integração com Databricks via Unity Catalog.
 
 ---
 
@@ -16,7 +16,17 @@ O **Data Steward** é quem fecha o ciclo. Toda documentação gerada por IA nasc
 
 O **Silver** armazena os dados em Parquet com os tipos declarados no Manifest — não os inferidos pelo PyArrow. Uma coluna `fl_ativo: boolean` chega ao Silver como `pa.bool_()` porque o Steward disse que é boolean, não porque o PyArrow adivinhou. O footer do arquivo carrega metadata rastreável indicando se o schema veio de um Manifest `VALIDATED` ou `DRAFT`.
 
-O **Databricks** recebe os dados via REST API: Parquet sobe para o DBFS em pasta por tabela, é convertido para Delta Lake (com histórico de execuções via `DESCRIBE HISTORY`), a tabela é registrada no metastore e os comentários das colunas são populados automaticamente a partir do Manifest.
+O **Databricks** recebe os dados via Files API (Unity Catalog Volumes): o Parquet é gravado em `/Volumes/<catalog>/<schema>/<volume>/<tabela>/dat_ref=YYYY-MM-DD/`, a tabela é registrada como managed Delta table via `CREATE OR REPLACE TABLE ... AS SELECT * FROM read_files(...)`, e as tags de governança (LGPD, SCR) são populadas automaticamente no Unity Catalog a partir do Manifest.
+
+```
+Dado bruto -> Extrator gera Manifest DRAFT -> Data Steward valida -> VALIDATED
+                                                                          |
+                                               SLM documenta com base no contrato validado
+                                                                          |
+                                               Silver em Parquet com tipos do Manifest
+                                                                          |
+                                               Databricks UC Volumes + Delta + tags
+```
 
 ---
 
@@ -30,37 +40,39 @@ nimbus/
 |-- Dockerfile                Imagem Docker do pipeline
 |-- docker-compose.yml        Pipeline + Ollama + MinIO
 |-- .env.example              Template de configuracao
-|-- config.py                 Lê todas as configs via variaveis de ambiente
+|-- config.py                 Le todas as configs via variaveis de ambiente
 |-- run_pipeline.py           Execucao direta
 |-- prefect_flow.py           Orquestracao Prefect mapeada para Control-M
 |-- show_metrics.py           Dashboard no terminal
 |
 |-- docs/
-|   |-- ARCHITECTURE.md
-|   |-- MANIFEST.md
-|   |-- SLM.md
-|   |-- TESTING.md
-|   |-- CHANGELOG.md
-|   |-- NEXT_STEPS.md
-|   `-- MIGRATION_PLAN.md
+|   |-- ARCHITECTURE.md       Arquitetura tecnica e integracao Databricks
+|   |-- MANIFEST.md           Estrutura do contrato e papel do Data Steward
+|   |-- SLM.md                Como o modelo de IA se encaixa no fluxo
+|   |-- TESTING.md            Cobertura de testes e criterios de aceite
+|   |-- CHANGELOG.md          Historico de evolucao por sprint
+|   |-- NEXT_STEPS.md         Pendencias e planejamento
+|   `-- MIGRATION_PLAN.md     Plano de migracao para Azure Databricks
 |
 |-- scripts/
-|   `-- entrypoint.sh
+|   `-- entrypoint.sh         Orquestra inicializacao do container
 |
 |-- src/
 |   |-- generators/           Dados ficticios (CSV, JSON, Fixed-Width)
 |   |-- ingestion/            Normalizacao de encoding
 |   |-- manifest/             Extratores automaticos e validacao HITL
-|   |-- storage/              Abstracoes medallion + Parquet governado
+|   |-- storage/              Abstracoes medallion + Parquet governado pelo Manifest
 |   |-- validation/           Contratos e schema evolution
 |   |-- profiler/             Profiling via DuckDB
 |   |-- slm/                  Integracao com Ollama
 |   |-- metrics/              Metricas e relatorios
-|   `-- connectors/           Integracao Databricks via REST API
+|   `-- connectors/           Integracao Databricks via Files API + Unity Catalog
 |
-|-- tests/                    242 testes unitarios
+|-- tests/                    263 testes unitarios
 `-- data/                     Camadas medallion (persiste no host via Docker volume)
 ```
+
+O fluxo de dados: arquivo bruto entra no Bronze no formato original, passa pela validação de contrato e profiling DuckDB, é promovido para o Silver já em Parquet com os tipos do Manifest. Bronze preserva o original em `_archive/`. Arquivos com quebra de contrato vão para quarentena sem interromper o restante.
 
 ---
 
@@ -70,12 +82,19 @@ nimbus/
 
 ```bash
 cp .env.example .env
-# Se for a primeira vez e quiser evitar timeout do Ollama:
+# Evita timeout do Ollama na primeira execucao:
 docker run --rm -v ollama_models:/root/.ollama ollama/ollama pull phi3.5
 docker compose up --build
 ```
 
 Prefect UI: `http://localhost:4200` | MinIO UI: `http://localhost:9001`
+
+Para rodar comandos com o container em execucao:
+
+```bash
+docker compose exec nimbus python tasks.py metrics
+docker compose exec nimbus python tasks.py upload-silver
+```
 
 ### Sem Docker
 
@@ -89,19 +108,30 @@ python tasks.py metrics
 
 ## 4. Configuracao
 
-O unico arquivo que o usuario precisa editar e o `.env`. O `config.py` le tudo via variaveis de ambiente.
+O unico arquivo que o usuario precisa editar e o `.env`. O `config.py` le tudo via variaveis de ambiente — em Docker elas vem do `docker-compose.yml`, localmente vem do `.env`.
 
 | Variavel | Padrao | O que controla |
 |---|---|---|
-| `OLLAMA_MODEL` | `phi3.5` | Modelo baixado no primeiro boot |
+| `OLLAMA_MODEL` | `phi3.5` | Modelo baixado automaticamente no primeiro boot |
 | `SKIP_SLM` | `false` | Desativa enriquecimento semantico |
 | `DATABRICKS_HOST` | (vazio) | URL do workspace |
-| `DATABRICKS_TOKEN` | (vazio) | Token de acesso pessoal |
-| `DATABRICKS_WAREHOUSE_ID` | (vazio) | ID do SQL Warehouse |
+| `DATABRICKS_TOKEN` | (vazio) | PAT ou vazio para OAuth |
+| `DATABRICKS_WAREHOUSE_ID` | (vazio) | SQL Editor > nome do warehouse > copy ID |
+| `DATABRICKS_CATALOG` | `workspace` | Catalog UC (CE usa workspace) |
+| `DATABRICKS_SCHEMA` | `nimbus` | Schema no catalog |
+| `DATABRICKS_VOLUME` | `landing` | Volume UC criado no pre-requisito |
 | `DATABRICKS_AUTO_UPLOAD` | `false` | Upload automatico apos cada run |
 
 GPU NVIDIA: descomente `deploy.resources` no `docker-compose.yml`.
 GPU AMD/ROCm: descomente o bloco de devices e adicione `AMD_GFX_VERSION` no `.env`.
+Modelo alternativo: troque `OLLAMA_MODEL` no `.env` — o download acontece no proximo boot.
+
+### Pre-requisito Databricks (executar uma vez no SQL Editor)
+
+```sql
+CREATE SCHEMA IF NOT EXISTS workspace.nimbus;
+CREATE VOLUME IF NOT EXISTS workspace.nimbus.landing;
+```
 
 ---
 
@@ -113,11 +143,12 @@ GPU AMD/ROCm: descomente o bloco de devices e adicione `AMD_GFX_VERSION` no `.en
 | `python tasks.py baseline` | Cenario padrao, todos os formatos |
 | `python tasks.py breaking` | Simula quebra de contrato e testa DLQ |
 | `python tasks.py metrics` | Resumo do ultimo run |
-| `python tasks.py test` | 242 testes unitarios |
-| `python tasks.py test-databricks` | Diagnostico em 4 niveis |
-| `python tasks.py upload-silver` | Upload -> DBFS -> Delta -> metastore |
-| `python tasks.py upload-silver --dry-run` | Valida sem enviar dados |
-| `python tasks.py validate-manifest --file <path> --steward "Nome"` | Promove DRAFT->VALIDATED |
+| `python tasks.py test` | 263 testes unitarios |
+| `python tasks.py test-databricks` | Diagnostico de conectividade em 4 niveis |
+| `python tasks.py upload-silver` | Upload Parquet -> UC Volume -> Delta -> metastore |
+| `python tasks.py upload-silver --dry-run` | Valida configuracao sem enviar dados |
+| `python tasks.py upload-silver --table tb_clientes` | Envia apenas uma tabela |
+| `python tasks.py validate-manifest --file <path> --steward "Nome"` | Promove DRAFT para VALIDATED |
 | `python tasks.py help` | Lista todos os comandos |
 
 ---
@@ -126,10 +157,10 @@ GPU AMD/ROCm: descomente o bloco de devices e adicione `AMD_GFX_VERSION` no `.en
 
 | Para entender... | Consulte |
 |---|---|
-| Arquitetura tecnica completa | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| Arquitetura tecnica completa e integracao Databricks | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | Manifest e papel do Data Steward | [docs/MANIFEST.md](docs/MANIFEST.md) |
-| Como a SLM funciona | [docs/SLM.md](docs/SLM.md) |
+| Como a SLM funciona e por que nao inventa | [docs/SLM.md](docs/SLM.md) |
 | Testes e criterios de aceite | [docs/TESTING.md](docs/TESTING.md) |
-| Evolucao do projeto | [docs/CHANGELOG.md](docs/CHANGELOG.md) |
-| Pendencias e planejamento | [docs/NEXT_STEPS.md](docs/NEXT_STEPS.md) |
-| Plano de migracao Azure Databricks | [docs/MIGRATION_PLAN.md](docs/MIGRATION_PLAN.md) |
+| Evolucao do projeto sprint a sprint | [docs/CHANGELOG.md](docs/CHANGELOG.md) |
+| O que esta pendente e planejado | [docs/NEXT_STEPS.md](docs/NEXT_STEPS.md) |
+| Plano de migracao para Azure Databricks | [docs/MIGRATION_PLAN.md](docs/MIGRATION_PLAN.md) |
