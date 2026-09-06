@@ -499,5 +499,95 @@ class TestTagHelpers(unittest.TestCase):
         self.assertLessEqual(len(DatabricksUploader._tag_value("x" * 300)), 256)
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# TestDiagnose — 4 niveis, sem rede real
+# ═════════════════════════════════════════════════════════════════════════════
+class TestDiagnose(unittest.TestCase):
+    def test_all_levels_ok(self):
+        u = _u()
+        warehouse = _ok({"state": "RUNNING", "name": "nimbus-wh"})
+        with patch.object(u, "_get", return_value=warehouse), \
+             patch.object(u, "_sql", return_value=_sql_ok([["silver"]])), \
+             patch.object(u._session, "put", return_value=_ok()), \
+             patch.object(u._session, "delete", return_value=_ok()):
+            r = u.diagnose()
+        self.assertTrue(r.all_ok)
+        self.assertEqual(len(r.levels), 4)
+
+    def test_401_stops_after_token_check(self):
+        u = _u()
+        with patch.object(u, "_get", return_value=_ok(status_code=401)):
+            r = u.diagnose()
+        self.assertFalse(r.levels["1. Token e workspace"]["ok"])
+        self.assertNotIn("2. SQL Warehouse", r.levels)
+
+    def test_stopped_warehouse_fails_level_2(self):
+        u = _u()
+        warehouse = _ok({"state": "STOPPED", "name": "nimbus-wh"})
+        with patch.object(u, "_get", return_value=warehouse), \
+             patch.object(u, "_sql", return_value=_sql_ok([["silver"]])), \
+             patch.object(u._session, "put", return_value=_ok()), \
+             patch.object(u._session, "delete", return_value=_ok()):
+            r = u.diagnose()
+        self.assertFalse(r.levels["2. SQL Warehouse"]["ok"])
+        self.assertIn("STOPPED", r.levels["2. SQL Warehouse"]["message"])
+
+    def test_uses_warehouses_plural_endpoint(self):
+        u = _u()
+        urls = []
+        def cap(ep, **kw):
+            urls.append(ep)
+            return _ok({"state": "RUNNING", "name": "wh"})
+        with patch.object(u, "_get", side_effect=cap), \
+             patch.object(u, "_sql", return_value=_sql_ok([["silver"]])), \
+             patch.object(u._session, "put", return_value=_ok()), \
+             patch.object(u._session, "delete", return_value=_ok()):
+            u.diagnose()
+        self.assertTrue(any("sql/warehouses/" in e for e in urls))
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# TestAwaitStatement
+# ═════════════════════════════════════════════════════════════════════════════
+class TestAwaitStatement(unittest.TestCase):
+    def test_returns_when_already_succeeded(self):
+        u = _u()
+        result = {"status": {"state": "SUCCEEDED"}, "statement_id": "s1"}
+        self.assertEqual(u._await_statement(result, "SELECT 1")["status"]["state"], "SUCCEEDED")
+
+    def test_polls_pending_then_succeeds(self):
+        u = _u()
+        pending = {"status": {"state": "PENDING"}, "statement_id": "s1"}
+        done = _ok({"status": {"state": "SUCCEEDED"}, "statement_id": "s1"})
+        with patch.object(u, "_get", return_value=done), patch("time.sleep"):
+            out = u._await_statement(pending, "SELECT 1")
+        self.assertEqual(out["status"]["state"], "SUCCEEDED")
+
+    def test_failed_raises(self):
+        u = _u()
+        failed = {"status": {"state": "FAILED", "error": {"message": "boom"}},
+                  "statement_id": "s1"}
+        with self.assertRaises(RuntimeError) as ctx:
+            u._await_statement(failed, "SELECT 1")
+        self.assertIn("FAILED", str(ctx.exception))
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# TestGetUploader — schema Silver do config
+# ═════════════════════════════════════════════════════════════════════════════
+class TestGetUploader(unittest.TestCase):
+    def test_uses_silver_schema(self):
+        from src.connectors.databricks_uploader import get_uploader
+        with patch("config.DATABRICKS_HOST", HOST), \
+             patch("config.DATABRICKS_TOKEN", TOKEN), \
+             patch("config.DATABRICKS_WAREHOUSE_ID", WID), \
+             patch("config.DATABRICKS_VOLUME", VOL), \
+             patch("config.DATABRICKS_CATALOG", "nimbus"), \
+             patch("config.DATABRICKS_SILVER_SCHEMA", "silver"):
+            u = get_uploader()
+        self.assertEqual(u._catalog, "nimbus")
+        self.assertEqual(u._schema, "silver")
+
+
 if __name__ == "__main__":
     unittest.main()

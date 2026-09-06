@@ -91,3 +91,18 @@ python tasks.py test-databricks    # diagnóstico em 4 níveis
 python tasks.py upload-silver --dry-run
 python tasks.py upload-silver
 ```
+
+---
+
+## Sprint Databricks v4 — Camada Bronze e catalog `nimbus`
+
+O Unity Catalog passou a espelhar a medallion local: catalog `nimbus`, schema `bronze` para o arquivo bruto e schema `silver` para o Parquet tipado. `DATABRICKS_SCHEMA` continua existindo como fallback; o uploader Silver lê `DATABRICKS_SILVER_SCHEMA` e o Bronze lê `DATABRICKS_BRONZE_SCHEMA`.
+
+**Bronze no Databricks.** `src/connectors/bronze_uploader.py` reusa a Files API do Silver, mas preserva o nome original do arquivo e registra a tabela com `inferColumnTypes => false`. Colunas `_ingest_file`, `_ingest_time` e `_ingest_run_id` rastreiam a carga. O pipeline chama `publish_bronze()` logo após a geração, antes da validação — DLQ não apaga o que já chegou no Volume bronze.
+
+**Diagnóstico.** `diagnose()` passou a usar `GET /api/2.0/sql/warehouses/{id}` (plural, endpoint oficial) via `_get`.
+
+**Gerador.** `_adapt_layout` ajusta o leiaute posicional quando o cenário `non_breaking` adiciona coluna ou o `breaking` remove `cd_agencia`, para o Fixed-Width acompanhar o schema evolution.
+
+**Suite.** 300 testes unitários, incluindo `tests/test_bronze.py`.
+

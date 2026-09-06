@@ -28,6 +28,10 @@ Arquivo bruto
   SLM documenta
      |
   Métricas + Relatório
+     |
+  Databricks
+     |-- Bronze: arquivo bruto em nimbus.bronze (STRING + provenance)
+     `-- Silver: Parquet tipado em nimbus.silver (Delta + tags do Manifest)
 ```
 
 ---
@@ -106,50 +110,61 @@ A cada execução, `metrics_collector.py` calcula um score de 0 a 100 por tabela
 
 ---
 
-## Integração com Databricks — Unity Catalog Volumes
+## Integração com Databricks — Bronze e Silver no Unity Catalog
 
-`src/connectors/databricks_uploader.py` integra o pipeline com o Databricks via REST API, sem cluster Spark — compatível com Databricks Community Edition (SQL Warehouse + Unity Catalog básico).
+`src/connectors/databricks_uploader.py` e `src/connectors/bronze_uploader.py` integram o pipeline com o Databricks via REST API, sem cluster Spark. O catalog padrão é `nimbus`, com schemas separados por camada: `nimbus.bronze` (arquivo bruto) e `nimbus.silver` (Parquet tipado pelo Manifest).
 
 **Por que Volumes e não DBFS.** O root do DBFS está sendo bloqueado por padrão em workspaces novos (`PERMISSION_DENIED: Public DBFS root is disabled`). Os Volumes do Unity Catalog são o substituto oficial — têm controle de acesso por ACL, são versionáveis e aparecem no catálogo do workspace como objetos de primeira classe.
 
 **Pré-requisito no SQL Editor do Databricks (executar uma vez):**
 
 ```sql
-CREATE SCHEMA IF NOT EXISTS workspace.nimbus;
-CREATE VOLUME IF NOT EXISTS workspace.nimbus.landing;
+CREATE SCHEMA IF NOT EXISTS nimbus.bronze;
+CREATE SCHEMA IF NOT EXISTS nimbus.silver;
+CREATE VOLUME IF NOT EXISTS nimbus.bronze.landing;
+CREATE VOLUME IF NOT EXISTS nimbus.silver.landing;
 ```
 
-**Fluxo por execução.**
+**Fluxo Bronze por execução.**
 
-O Parquet é enviado via Files API: um único `PUT /api/2.0/fs/files/<volume-path>?overwrite=true` com o binário no corpo — sem blocos base64, sem handle de escrita. O path segue particionamento Hive por data: `/Volumes/workspace/nimbus/landing/<tabela>/dat_ref=YYYY-MM-DD/part-YYYY-MM-DD.parquet`. O particionamento por `dat_ref` rastreia o histórico de execuções sem depender do Delta `_delta_log/`.
+O arquivo da landing zone é enviado via Files API preservando o nome original: `/Volumes/nimbus/bronze/landing/<tabela>/dat_ref=YYYY-MM-DD/<arquivo>`. O registro usa CTAS com `inferColumnTypes => false` — todas as colunas de negócio ficam STRING — e acrescenta `_ingest_file`, `_ingest_time` e `_ingest_run_id`. Tags `nimbus_layer=bronze` e `validated=false` deixam explícito que a tabela não passou pelo gate de qualidade. Formatos sem `read_files` (sidecar `.layout`) sobem só o arquivo.
+
+**Fluxo Silver por execução.**
+
+O Parquet é enviado via Files API: um único `PUT /api/2.0/fs/files/<volume-path>?overwrite=true` com o binário no corpo. O path segue particionamento Hive por data: `/Volumes/nimbus/silver/landing/<tabela>/dat_ref=YYYY-MM-DD/part-YYYY-MM-DD.parquet`.
 
 O registro da tabela usa CTAS via `read_files`:
 
 ```sql
-CREATE OR REPLACE TABLE workspace.nimbus.tb_clientes
+CREATE OR REPLACE TABLE nimbus.silver.tb_clientes
 AS SELECT * FROM read_files(
-  '/Volumes/workspace/nimbus/landing/tb_clientes',
+  '/Volumes/nimbus/silver/landing/tb_clientes',
   format => 'parquet'
 )
 ```
 
-Isso cria uma managed Delta table lendo o Volume como fonte — sem `CONVERT TO DELTA`, sem external location, sem configuração adicional de permissão.
+Isso cria uma managed Delta table lendo o Volume como fonte — sem `CONVERT TO DELTA`, sem external location.
 
-Tags e comentários são populados a partir do Manifest via `COMMENT ON TABLE`, `ALTER TABLE SET TAGS` e `ALTER COLUMN SET TAGS`. As `regulatory_flags` (LGPD, SCR) aparecem como tags pesquisáveis no Unity Catalog — um analista pode buscar todas as tabelas `LGPD_SENSITIVE` sem abrir nenhum arquivo.
+Tags e comentários Silver vêm do Manifest via `COMMENT ON TABLE`, `ALTER TABLE SET TAGS` e `ALTER COLUMN SET TAGS`. As `regulatory_flags` (LGPD, SCR) aparecem como tags pesquisáveis no Unity Catalog.
 
-`publish_table()` é a interface do pipeline. Retorna sempre `{table, status, target, error}` — nunca levanta exceção. O `run_pipeline.py` chama `publish_table()` explicitamente após `promote_to_parquet()` e coleta os resultados para o resumo final.
+`publish_bronze()` e `publish_table()` são as interfaces do pipeline. Cada uma devolve `{table, status, target, error}` e nunca levanta exceção. O `run_pipeline.py` publica o Bronze logo após a geração e o Silver após `promote_to_parquet()`, e reporta as duas camadas no resumo.
 
 | Variável | Exemplo | Descrição |
 |---|---|---|
 | `DATABRICKS_HOST` | `https://adb-1234.azuredatabricks.net` | URL do workspace |
 | `DATABRICKS_TOKEN` | `dapi...` | PAT (ou vazio para OAuth) |
 | `DATABRICKS_WAREHOUSE_ID` | `abc123` | SQL Editor > copy ID |
-| `DATABRICKS_CATALOG` | `workspace` | Catalog UC (CE: workspace) |
-| `DATABRICKS_SCHEMA` | `nimbus` | Schema no catalog |
-| `DATABRICKS_VOLUME` | `landing` | Volume criado no pré-requisito |
+| `DATABRICKS_CATALOG` | `nimbus` | Catalog UC |
+| `DATABRICKS_SILVER_SCHEMA` | `silver` | Schema Silver |
+| `DATABRICKS_BRONZE_SCHEMA` | `bronze` | Schema Bronze |
+| `DATABRICKS_VOLUME` | `landing` | Volume Silver |
+| `DATABRICKS_BRONZE_VOLUME` | `landing` | Volume Bronze |
+| `DATABRICKS_AUTO_UPLOAD` | `true` | Publica Silver no fim do run |
+| `DATABRICKS_BRONZE_UPLOAD` | `true` | Publica Bronze após a geração |
 
 ```bash
 python tasks.py test-databricks          # diagnóstico em 4 níveis
+python tasks.py upload-bronze            # arquivo bruto
 python tasks.py upload-silver --dry-run  # valida sem enviar dados
-python tasks.py upload-silver            # upload completo
+python tasks.py upload-silver            # Parquet + Delta + tags
 ```

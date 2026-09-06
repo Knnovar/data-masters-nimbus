@@ -381,6 +381,7 @@ def _contrato_contratos_credito() -> dict:
 # Entry point público
 # ─────────────────────────────────────────────────────────────────────────────
 # ─── Leiaute posicional padrão para FixedWidthWriter ─────────────────────────
+_NEW_COLUMN_WIDTH = 20
 _FIXED_LAYOUT_CLIENTES: List[Tuple[str, int, str]] = [
     ("cd_cliente",      12, "string"),
     ("nr_cpf_cnpj",     14, "string"),
@@ -427,15 +428,29 @@ _JSON_NEST_CONTRATOS: Dict[str, List[str]] = {
     "valores": ["vl_limite", "vl_utilizado", "tx_juros_am"],
     "info_contrato": ["tp_produto", "cd_status", "dt_vencimento", "nr_parcelas"],
 }
+def _adapt_layout(
+        layout: List[Tuple[str, int, str]],
+        columns: List[str],
+) -> List[Tuple[str, int, str]]:
+
+    declared = {col for col, _, _ in layout}
+    adapted = [(col, w, t) for col, w, t in layout if col in columns]
+    adapted += [
+        (col, _NEW_COLUMN_WIDTH, "string")
+        for col in columns if col not in declared
+    ]
+    return adapted
+    
 
 
-def _build_writer(fmt: str, table_name: str) -> BaseWriter:
+def _build_writer(fmt: str, table_name: str, df: pd.DataFrame) -> BaseWriter:
     """
     Constrói o writer adequado para a tabela e formato solicitados.
 
     Args:
         fmt: Formato de saida ('csv', 'json', 'fixed').
         table_name: Nome da tabela para selecionar leiaute/nesting correto.
+        df: Dataset a serializar - usado para adaptar o leiaute posicional.
 
     Returns:
         Instância de BaseWriter configurada.
@@ -460,7 +475,10 @@ def _build_writer(fmt: str, table_name: str) -> BaseWriter:
         }
         if table_name not in layout_map:
             raise ValueError(f"Sem leiaute posicional definido para: {table_name}")
-        return WriterFactory.get("fixed", layout=layout_map[table_name])
+        layout = layout_map[table_name]
+        if df is not None:
+            layout = _adapt_layout(layout, list(df.columns))
+        return WriterFactory.get("fixed", layout=layout)
 
     raise ValueError(
         f"Formato nao suportado: '{fmt}'. Opcoes validas: {', '.join(SUPPORTED_FORMATS)}"
@@ -514,7 +532,7 @@ def generate_all(
         contract_filename = f"{table_name}{suffix}.yaml"
 
         # Seleciona writer — delega serialização para o Strategy correto
-        writer                = _build_writer(fmt, table_name)
+        writer                = _build_writer(fmt, table_name, df)
         base_name             = f"{table_name}{suffix}"
         filename, file_content = writer.serialize(df, base_name)
 

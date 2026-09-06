@@ -16,7 +16,7 @@ O **Data Steward** é quem fecha o ciclo. Toda documentação gerada por IA nasc
 
 O **Silver** armazena os dados em Parquet com os tipos declarados no Manifest — não os inferidos pelo PyArrow. Uma coluna `fl_ativo: boolean` chega ao Silver como `pa.bool_()` porque o Steward disse que é boolean, não porque o PyArrow adivinhou. O footer do arquivo carrega metadata rastreável indicando se o schema veio de um Manifest `VALIDATED` ou `DRAFT`.
 
-O **Databricks** recebe os dados via Files API (Unity Catalog Volumes): o Parquet é gravado em `/Volumes/<catalog>/<schema>/<volume>/<tabela>/dat_ref=YYYY-MM-DD/`, a tabela é registrada como managed Delta table via `CREATE OR REPLACE TABLE ... AS SELECT * FROM read_files(...)`, e as tags de governança (LGPD, SCR) são populadas automaticamente no Unity Catalog a partir do Manifest.
+O **Databricks** recebe duas camadas via Files API (Unity Catalog Volumes). O Bronze copia o arquivo bruto para `nimbus.bronze` (todas as colunas STRING, mais provenance de ingestão). O Silver grava o Parquet tipado em `nimbus.silver`, registra a managed Delta table via `CREATE OR REPLACE TABLE ... AS SELECT * FROM read_files(...)` e popula tags de governança (LGPD, SCR) a partir do Manifest.
 
 ```
 Dado bruto -> Extrator gera Manifest DRAFT -> Data Steward valida -> VALIDATED
@@ -25,7 +25,7 @@ Dado bruto -> Extrator gera Manifest DRAFT -> Data Steward valida -> VALIDATED
                                                                           |
                                                Silver em Parquet com tipos do Manifest
                                                                           |
-                                               Databricks UC Volumes + Delta + tags
+                                               Databricks Bronze (bruto) + Silver (Delta + tags)
 ```
 
 ---
@@ -68,7 +68,7 @@ nimbus/
 |   |-- metrics/              Metricas e relatorios
 |   `-- connectors/           Integracao Databricks via Files API + Unity Catalog
 |
-|-- tests/                    263 testes unitarios
+|-- tests/                    300 testes unitarios
 `-- data/                     Camadas medallion (persiste no host via Docker volume)
 ```
 
@@ -93,6 +93,7 @@ Para rodar comandos com o container em execucao:
 
 ```bash
 docker compose exec nimbus python tasks.py metrics
+docker compose exec nimbus python tasks.py upload-bronze
 docker compose exec nimbus python tasks.py upload-silver
 ```
 
@@ -117,10 +118,13 @@ O unico arquivo que o usuario precisa editar e o `.env`. O `config.py` le tudo v
 | `DATABRICKS_HOST` | (vazio) | URL do workspace |
 | `DATABRICKS_TOKEN` | (vazio) | PAT ou vazio para OAuth |
 | `DATABRICKS_WAREHOUSE_ID` | (vazio) | SQL Editor > nome do warehouse > copy ID |
-| `DATABRICKS_CATALOG` | `workspace` | Catalog UC (CE usa workspace) |
-| `DATABRICKS_SCHEMA` | `nimbus` | Schema no catalog |
-| `DATABRICKS_VOLUME` | `landing` | Volume UC criado no pre-requisito |
-| `DATABRICKS_AUTO_UPLOAD` | `false` | Upload automatico apos cada run |
+| `DATABRICKS_CATALOG` | `nimbus` | Catalog UC |
+| `DATABRICKS_SILVER_SCHEMA` | `silver` | Schema das tabelas Silver |
+| `DATABRICKS_BRONZE_SCHEMA` | `bronze` | Schema das tabelas Bronze |
+| `DATABRICKS_VOLUME` | `landing` | Volume UC do Silver |
+| `DATABRICKS_BRONZE_VOLUME` | `landing` | Volume UC do Bronze |
+| `DATABRICKS_AUTO_UPLOAD` | `true` | Publica Silver apos cada run |
+| `DATABRICKS_BRONZE_UPLOAD` | `true` | Publica o arquivo bruto apos a geracao |
 
 GPU NVIDIA: descomente `deploy.resources` no `docker-compose.yml`.
 GPU AMD/ROCm: descomente o bloco de devices e adicione `AMD_GFX_VERSION` no `.env`.
@@ -129,8 +133,10 @@ Modelo alternativo: troque `OLLAMA_MODEL` no `.env` — o download acontece no p
 ### Pre-requisito Databricks (executar uma vez no SQL Editor)
 
 ```sql
-CREATE SCHEMA IF NOT EXISTS workspace.nimbus;
-CREATE VOLUME IF NOT EXISTS workspace.nimbus.landing;
+CREATE SCHEMA IF NOT EXISTS nimbus.bronze;
+CREATE SCHEMA IF NOT EXISTS nimbus.silver;
+CREATE VOLUME IF NOT EXISTS nimbus.bronze.landing;
+CREATE VOLUME IF NOT EXISTS nimbus.silver.landing;
 ```
 
 ---
@@ -143,9 +149,10 @@ CREATE VOLUME IF NOT EXISTS workspace.nimbus.landing;
 | `python tasks.py baseline` | Cenario padrao, todos os formatos |
 | `python tasks.py breaking` | Simula quebra de contrato e testa DLQ |
 | `python tasks.py metrics` | Resumo do ultimo run |
-| `python tasks.py test` | 263 testes unitarios |
+| `python tasks.py test` | 300 testes unitarios |
 | `python tasks.py test-databricks` | Diagnostico de conectividade em 4 niveis |
-| `python tasks.py upload-silver` | Upload Parquet -> UC Volume -> Delta -> metastore |
+| `python tasks.py upload-bronze` | Upload do arquivo bruto -> Volume bronze |
+| `python tasks.py upload-silver` | Upload Parquet -> Volume silver -> Delta -> metastore |
 | `python tasks.py upload-silver --dry-run` | Valida configuracao sem enviar dados |
 | `python tasks.py upload-silver --table tb_clientes` | Envia apenas uma tabela |
 | `python tasks.py validate-manifest --file <path> --steward "Nome"` | Promove DRAFT para VALIDATED |
