@@ -39,16 +39,16 @@ jobs:
        run: |
         python - <<'PY'
         import sys, unittest
-        MINIMO = 280
+        MINIMO = 320
         total = unittest.TestLoader().discover("tests", pattern="test*.py").countTestCases()
-        print(f"testes descobertos: {total} {minimo {MINIMO}}")
+        print(f"testes descobertos: {total} (minimo {MINIMO})")
         sys.exit(0 if total >= MINIMO else 1)
         PY
      
      - name: Pipeline end-to-end (todos os cenarios e formatos)
        run: python run_pipeline.py --scenario all --format all
      
-     - name: Viewsde metrica
+     - name: Views de metrica
        run: |
           python show_metrics.py --score
           python show_metrics.py --all

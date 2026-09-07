@@ -1,6 +1,6 @@
 # Testes — Projeto Nimbus
 
-300 testes unitários usando `unittest` nativo do Python, sem dependências externas.
+325 testes unitários usando `unittest` nativo do Python, sem dependências externas.
 
 ---
 

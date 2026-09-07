@@ -68,7 +68,7 @@ nimbus/
 |   |-- metrics/              Metricas e relatorios
 |   `-- connectors/           Integracao Databricks via Files API + Unity Catalog
 |
-|-- tests/                    300 testes unitarios
+|-- tests/                    325 testes unitarios
 `-- data/                     Camadas medallion (persiste no host via Docker volume)
 ```
 
@@ -149,7 +149,7 @@ CREATE VOLUME IF NOT EXISTS nimbus.silver.landing;
 | `python tasks.py baseline` | Cenario padrao, todos os formatos |
 | `python tasks.py breaking` | Simula quebra de contrato e testa DLQ |
 | `python tasks.py metrics` | Resumo do ultimo run |
-| `python tasks.py test` | 300 testes unitarios |
+| `python tasks.py test` | 325 testes unitarios |
 | `python tasks.py test-databricks` | Diagnostico de conectividade em 4 niveis |
 | `python tasks.py upload-bronze` | Upload do arquivo bruto -> Volume bronze |
 | `python tasks.py upload-silver` | Upload Parquet -> Volume silver -> Delta -> metastore |

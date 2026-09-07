@@ -20,6 +20,8 @@ from src.generators.data_generator import (
     _contrato_clientes,
     _gerar_transacoes,
     _gerar_contratos_credito,
+    _contrato_transacoes,
+    _contrato_contratos_credito,
     generate_all
 )
 
@@ -126,7 +128,7 @@ class TestGerarTransacoes(unittest.TestCase):
         df = _gerar_contratos_credito(self.clientes, n=120)
         self.assertEqual(len(df), 120)
         self.assertTrue(
-            set(df["cd_cliente"].dropna().issubset(set(self.clientes["cd_cliente"]))))
+            set(df["cd_cliente"].dropna()).issubset(set(self.clientes["cd_cliente"])))
 
 class TestContratos(unittest.TestCase):
 
@@ -171,7 +173,7 @@ class TestGenerateAll(unittest.TestCase):
     def test_arquivos_e_contratos_persistidos(self):
         s = _storage()
         for p in generate_all(s, scenario="baseline", fmt="csv"):
-            self.assertTrue(s.exists("bronze"), p["filename"])
+            self.assertTrue(s.exists("bronze", p["filename"]))
 
     def test_formato_invalido_levanta(self):
         with self.assertRaises(ValueError):

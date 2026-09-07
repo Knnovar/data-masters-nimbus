@@ -104,5 +104,5 @@ O Unity Catalog passou a espelhar a medallion local: catalog `nimbus`, schema `b
 
 **Gerador.** `_adapt_layout` ajusta o leiaute posicional quando o cenário `non_breaking` adiciona coluna ou o `breaking` remove `cd_agencia`, para o Fixed-Width acompanhar o schema evolution.
 
-**Suite.** 300 testes unitários, incluindo `tests/test_bronze.py`.
+**Suite.** 325 testes unitários, incluindo `tests/test_bronze.py`.
 
