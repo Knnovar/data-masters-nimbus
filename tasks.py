@@ -275,7 +275,7 @@ COMMANDS = {
     "test"              : (cmd_test,              "Roda a suite de testes"),
     "test-databricks"   : (cmd_test_databricks,   "Diagnostico em 4 niveis: token, warehouse, schema, Volumes"),
     "upload-silver"     : (cmd_upload_silver,      "Upload Silver -> Volumes -> Delta -> metastore (--table, --no-comments, --dry-run)"),
-    "upload-bronze"     :(cmd_upload_bronze,        "Upload do arquivo bruto -> Volume bronze -> tabela <tabela>_bronze (--table)"),
+    "upload-bronze"     :(cmd_upload_bronze,        "Upload do arquivo bruto -> Volume bronze -> tabela no schema bronze (--table)"),
     "setup"             : (cmd_setup,             "Instala dependencias"),
     "clean"             : (cmd_clean,             "Remove __pycache__"),
     "clean-data"        : (cmd_clean_data,        "Remove dados gerados (pede confirmacao)"),

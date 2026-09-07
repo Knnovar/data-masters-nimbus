@@ -135,16 +135,24 @@ class DatabricksUploader:
     def diagnose(self):
         r = DiagnoseResult()
         try:
-            resp = self._session.get(f"sql/warehouse/{self._warehouse_id}")
-            if resp.status_code == 200: r.add("1. Token e workspace", True, f"Autenticado em {self._host}")
+            resp = self._get(f"sql/warehouses/{self._warehouse_id}")
+            if resp.status_code == 200: 
+                r.add("1. Token e workspace", True, f"Autenticado em {self._host}")
             elif resp.status_code == 401:
-                r.add("1. Token e workspace", False, "Credencial invalida. Gere um PAT em Settings > Developer, ou deixe DATABRICKS_TOKKEN vazio para usar OAuth.")
+                r.add("1. Token e workspace", False, 
+                      "Credencial invalida. Gere um PAT em Settings > Developer, " 
+                      "ou deixe DATABRICKS_TOKEN vazio para usar OAuth.")
+                r.print_report()
                 return r
             else:
-                r.add("1. Token e workspace", False, f"HTTP {resp.status_code}")
+                r.add("1. Token e workspace", False, 
+                      f"HTTP {resp.status_code}")
+                r.print_report()
                 return r
-        except requests.exceptions.ConnectionError:
-            r.add("1. Token e workspace", False, f"Nao foi possivel conectar a {self._host}")
+        except requests.exceptions.RequestException as e:
+            r.add("1. Token e workspace", False, 
+                  f"Nao foi possivel conectar a {self._host}: {e}")
+            r.print_report()
             return r
         try:
             if resp.status_code == 200:

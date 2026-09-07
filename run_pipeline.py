@@ -184,7 +184,7 @@ def main():
             ok = sum( 1 for p in rows if p["status"] in ("OK", "UPLOADED"))
             print(f"Databricks: {layer}: {ok}/{len(rows)} tabelas publicadas")
     for p in failed:
-        print(f" [DATABRICKS] {p.get('layer', 'silver')}/{['table']}: {p['error']}")
+        print(f" [DATABRICKS] {p.get('layer', 'silver')}/{p['table']}: {p['error']}")
     print("\n  Pipeline concluida.\n")
 
     return 1 if failed else 0

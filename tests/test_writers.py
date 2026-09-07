@@ -397,5 +397,48 @@ class TestGenerateAllMultiFormat(unittest.TestCase):
                     f"Contrato nao gerado para fmt={fmt}: {item['contract_filename']}")
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# TestAdaptLayout — leiaute posicional acompanha schema evolution
+# ═════════════════════════════════════════════════════════════════════════════
+
+class TestAdaptLayout(unittest.TestCase):
+
+    def test_keeps_declared_columns_in_order(self):
+        from src.generators.data_generator import _adapt_layout, _FIXED_LAYOUT_CLIENTES
+        cols = [c for c, _, _ in _FIXED_LAYOUT_CLIENTES]
+        adapted = _adapt_layout(_FIXED_LAYOUT_CLIENTES, cols)
+        self.assertEqual([c for c, _, _ in adapted], cols)
+        self.assertEqual(adapted, list(_FIXED_LAYOUT_CLIENTES))
+
+    def test_drops_missing_columns(self):
+        from src.generators.data_generator import _adapt_layout, _FIXED_LAYOUT_CLIENTES
+        cols = [c for c, _, _ in _FIXED_LAYOUT_CLIENTES if c != "cd_agencia"]
+        adapted = _adapt_layout(_FIXED_LAYOUT_CLIENTES, cols)
+        names = [c for c, _, _ in adapted]
+        self.assertNotIn("cd_agencia", names)
+        self.assertEqual(names, cols)
+
+    def test_appends_new_nullable_column(self):
+        from src.generators.data_generator import (
+            _adapt_layout, _FIXED_LAYOUT_CLIENTES, _NEW_COLUMN_WIDTH,
+        )
+        cols = [c for c, _, _ in _FIXED_LAYOUT_CLIENTES] + ["cd_gestor_relacionamento"]
+        adapted = _adapt_layout(_FIXED_LAYOUT_CLIENTES, cols)
+        self.assertEqual(adapted[-1], ("cd_gestor_relacionamento", _NEW_COLUMN_WIDTH, "string"))
+
+    def test_fixed_non_breaking_writes_without_error(self):
+        from src.generators.data_generator import generate_all
+        s = self._make_storage(Path(tempfile.mkdtemp()))
+        produced = generate_all(s, scenario="non_breaking", fmt="fixed")
+        clientes = next(p for p in produced if p["table"] == "tb_clientes")
+        self.assertTrue(s.exists("bronze", clientes["filename"]))
+
+    def _make_storage(self, tmp_path):
+        from src.storage.storage import LocalStorage
+        layer_map = {l: tmp_path / l for l in
+                     ["bronze","silver","gold","quarantine","contracts","metrics","reports"]}
+        return LocalStorage(layer_map)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -15,8 +15,10 @@ from src.manifest.extractor_json  import JSONExtractor
 
 
 def _w(path, content, mode="w", enc="utf-8"):
-    if mode == "wb": path.write_bytes(content)
-    else: path.write_text(content, encoding=enc)
+    if mode == "wb":
+        path.write_bytes(content)
+    else:
+        path.write_text(content, encoding=enc, newline="\n")
     return path
 
 
@@ -27,8 +29,11 @@ class TestNormalizer(unittest.TestCase):
 
     def test_already_utf8_lf(self):
         p = _w(self.tmp/"t.csv", "id,nome\n1,Ana\n")
-        r = normalize(p, backup=False)
+        with patch("src.ingestion.normalizer.chardet.detect",
+                   return_value={"encoding": "utf-8", "confidence": 0.99}):
+            r = normalize(p, backup=False)
         self.assertEqual(r["status"], "already_utf8")
+        self.assertEqual(p.read_text(encoding="utf-8"), "id,nome\n1,Ana\n")
 
     def test_crlf_to_lf(self):
         p = _w(self.tmp/"t.csv", "id,nome\r\n1,Ana\r\n")
