@@ -65,7 +65,9 @@ def _nome() -> str:
 def _cnpj() -> str:
     if fake:
         return fake.cnpj().replace(".", "").replace("/", "").replace("-", "")
-    return f"{random.randint(10000000,99999999):08d}{random.randint(1000,9999):04d}"
+    return (f"{random.randint(10000000,99999999):08d}"
+            f"{random.randint(1000,9999):04d}"
+            f"{random.randint(0,99):02d}")
 
 ScenarioType = Literal["baseline", "non_breaking", "breaking"]
 

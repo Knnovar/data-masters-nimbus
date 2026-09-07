@@ -6,7 +6,7 @@ try:
     from dotenv import load_dotenv
     load_dotenv(BASE_DIR / ".env", override=False)
 except ImportError:
-    if (BASE_DIR) / ".env".exists():
+    if (BASE_DIR / ".env").exists():
         print("[CONFIG] python-dotenv nao instalado: .env ignorado. "
               "Instale com: pip install python-dotenv")
 DATA_DIR  = BASE_DIR / "data"

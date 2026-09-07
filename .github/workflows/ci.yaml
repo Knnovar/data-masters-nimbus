@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SKIP_SLM: "true"
+      DATABRICKS_AUTO_UPLOAD: "false"
+      DATABRICKS_BRONZE_UPLOAD: "false"
+      USE_MINIO: "FALSE"
+
+    steps:
+     - uses: actions/checkout@v4
+
+     - uses: actions/setup-python@v5
+       with:
+        python-version: "3.10"
+        cache: pip
+
+     - name: Instalar dependencias
+       run: |
+         python -m pip install --upgrade pip
+         pip install -r requirements.txt
+     
+     - name: Compilar tudo
+       run: python -m compileall -q .
+
+     - name: Testes Unitarios
+       run: python tests/run_tests.py
+     
+     - name: Piso de quantidade de testes
+       run: |
+        python - <<'PY'
+        import sys, unittest
+        MINIMO = 280
+        total = unittest.TestLoader().discover("tests", pattern="test*.py").countTestCases()
+        print(f"testes descobertos: {total} {minimo {MINIMO}}")
+        sys.exit(0 if total >= MINIMO else 1)
+        PY
+     
+     - name: Pipeline end-to-end (todos os cenarios e formatos)
+       run: python run_pipeline.py --scenario all --format all
+     
+     - name: Viewsde metrica
+       run: |
+          python show_metrics.py --score
+          python show_metrics.py --all
+     - name: Artefatos da execucao
+       if: always()
+       uses: actions/upload-artifact@v4
+       with:
+        name: nimbus-run
+        path: |
+          data/metrics/
+          data/reports/
+        if-no-files-found: warn
+
+
+
