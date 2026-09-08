@@ -55,3 +55,4 @@ secrets.yaml
 secrets.yml
 *.key
 *.pem
+*.openclaude

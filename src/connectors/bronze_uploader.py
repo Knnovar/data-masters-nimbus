@@ -54,14 +54,16 @@ class BronzeUploader(DatabricksUploader):
         print("[BRONZE] Upload OK: {} ({:.1f} KB)".format(target, len(data) / 1024))
         return folder
 
-    def _read_files_expr(self, folder, fmt):
+    def _read_files_expr(self, folder, fmt, pattern=None):
         opts = ["format => '{}'".format(fmt), "inferColumnTypes => false",
                 "schemaEvolutionMode => 'none'"]
         if fmt == 'csv':
             opts += ["header => true"]
+        if pattern:
+            opts += ["pathGlobFilter => '{}'".format(pattern)]
         return "read_files('{}', {})".format(folder, ", ".join(opts))
 
-    def register_raw(self, table_name, volume_folder, fmt, run_id=None):
+    def register_raw(self, table_name, volume_folder, fmt, run_id=None, pattern=None):
         full = "{}.{}.{}".format(self._catalog, self._schema, self.bronze_table(table_name))
         self._sql("CREATE SCHEMA IF NOT EXISTS {}.{}".format(self._catalog, self._schema))
         self._sql(
@@ -69,7 +71,7 @@ class BronzeUploader(DatabricksUploader):
             "_metadata.file_name AS _ingest_file, "
             "_metadata.file_modification_time AS _ingest_time, "
             "'{}' AS _ingest_run_id "
-            "FROM {}".format(full, self._esc(run_id or ""), self._read_files_expr(volume_folder, fmt))
+            "FROM {}".format(full, self._esc(run_id or ""), self._read_files_expr(volume_folder, fmt, pattern))
         )
         print("[BRONZE] Tabela registrada: {} <- {}".format(full, volume_folder))
         return full
@@ -114,7 +116,8 @@ class BronzeUploader(DatabricksUploader):
                   "arquivo mantido no Volume sem tabela.".format(Path(local_path).suffix))
             return None
 
-        full = self.register_raw(tbl, folder, fmt, run_id=run_id)
+        full = self.register_raw(tbl, folder, fmt, run_id=run_id, 
+                                 pattern="*{}".format(Path(local_path).suffix))
         if not skip_comments:
             self.describe_bronze(tbl)
         return full
