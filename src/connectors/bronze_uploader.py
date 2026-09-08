@@ -1,5 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
+import json, re
 from src.connectors.databricks_uploader import DatabricksUploader, dat_ref_from_run_id
 
 _FORMAT_BY_EXT = {
@@ -54,18 +55,48 @@ class BronzeUploader(DatabricksUploader):
         print("[BRONZE] Upload OK: {} ({:.1f} KB)".format(target, len(data) / 1024))
         return folder
 
+    @staticmethod
+    def json_root_key(local_path):
+        try:
+            payload = json.loads(Path(local_path).read_text(encoding="utf-8"))
+        except (ValueError, OSError, UnicodeDecodeError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        for key, value in payload.items():
+            if isinstance(value, list) and re.match(r"^\w+$", str(key)):
+                return key
+            return None
+
     def _read_files_expr(self, folder, fmt, pattern=None):
         opts = ["format => '{}'".format(fmt), "inferColumnTypes => false",
                 "schemaEvolutionMode => 'none'"]
         if fmt == 'csv':
             opts += ["header => true"]
+        if fmt == "json":
+            opts += ["multiLine => true"]
         if pattern:
             opts += ["pathGlobFilter => '{}'".format(pattern)]
         return "read_files('{}', {})".format(folder, ", ".join(opts))
 
-    def register_raw(self, table_name, volume_folder, fmt, run_id=None, pattern=None):
+    def register_raw(self, table_name, volume_folder, fmt, run_id=None, pattern=None,
+                     json_root_key=None):
         full = "{}.{}.{}".format(self._catalog, self._schema, self.bronze_table(table_name))
-        self._sql("CREATE SCHEMA IF NOT EXISTS {}.{}".format(self._catalog, self._schema))
+        source = self._read_files_expr(volume_folder, fmt, pattern)
+        if fmt == 'json' and json_root_key:
+            select = ("SELECT _rec.*, {part}, _ingest_file, _ingest_time, "
+                      "'{run}' AS _ingest_run_id FROM ("
+                      "SELECT explode(`{key}`) AS _rec, {part}, "
+                      "_metadata.file_name AS _ingest_file, "
+                      "_metadata.file_modification_time AS _inget_time "
+                      "FROM {src}").format(part=self.PARTITION_COLUMN, run=self._esc(run_id or ""),
+                                           key=json_root_key, src=source)
+        else:
+            select = ("SELECT *, _medatada.file_name AS _ingest_file, "
+            "_metadata.file_modification_time AS _ingest_time,"
+            "'{run}' AS _ingest_run_id "
+            "FROM {src}").format(run=self._esc(run_id or ""), src=source)
+        self._sql("CREATE SCHEMA IF NOT EXISTS {}.{}".format(full, select))
         self._sql(
             "CREATE OR REPLACE TABLE {} AS SELECT *, "
             "_metadata.file_name AS _ingest_file, "
@@ -117,7 +148,8 @@ class BronzeUploader(DatabricksUploader):
             return None
 
         full = self.register_raw(tbl, folder, fmt, run_id=run_id, 
-                                 pattern="*{}".format(Path(local_path).suffix))
+                                 pattern="*{}".format(Path(local_path).suffix),
+                                 json_root_key=self.json_root_key(local_path) if fmt == 'json' else None)
         if not skip_comments:
             self.describe_bronze(tbl)
         return full
