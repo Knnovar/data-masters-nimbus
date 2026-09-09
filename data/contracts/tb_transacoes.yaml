@@ -24,6 +24,7 @@ business_context: Registro de todas as movimentacoes financeiras por canal. fl_s
   nulo para compras online nao identificadas.
 tolerance:
   max_null_pct: 10
+  max_reject_pct: 1
   allow_duplicates: false
 dependencies:
 - tb_clientes

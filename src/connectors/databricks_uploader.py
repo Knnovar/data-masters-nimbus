@@ -90,7 +90,29 @@ class DatabricksUploader:
         """Valor de tag: o UC aceita no maximo 256 caracteres."""
         return cls._esc(str(value).strip()[:256])
 
+    SQL_RETRY_ATTEMPTS = 3
+    SQL_RETRY_BACKOFF_S = 15
+    _SQL_TRANSIENT = ("safeint", "div by zero", "internal_error", "internal error", 
+                      "temporarily unavailable", "service unavailable")
+
+    @classmethod
+    def _is_transient_sql_error(cls, message):
+        low = str(message).lower()
+        return any(marker in low for marker in cls._SQL_TRANSIENT)
+
     def _sql(self, stmt, wait=True):
+        import time
+        for attempt in range(1, self.SQL_RETRY_ATTEMPTS + 1):
+            try:
+                return self._sql_once(stmt, wait-wait)
+            except RuntimeError as err:
+                last = attempt == self.SQL_RETRY_ATTEMPTS
+                if last or not self._is_transient_sql_error(err):
+                    raise
+                print("[DATABRICKS] Erro interno do engine, tentativa {}/{} em {}s: {}".format(attempt, self.SQL_RETRY_ATTEMPTS, self.SQL_RETRY_BACKOFF_S, str(err)[:200]))
+                time.sleep(self.SQL_RETRY_BACKOFF_S)
+    
+    def _sql_once(self, stmt, wait=True):
         payload = {"statement": stmt, "warehouse_id": self._warehouse_id,
                    "wait_timeout": "50s" if wait else "0s",
                    "catalog": self._catalog, "schema": self._schema}

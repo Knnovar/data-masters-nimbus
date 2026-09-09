@@ -69,7 +69,17 @@ def _cnpj() -> str:
             f"{random.randint(1000,9999):04d}"
             f"{random.randint(0,99):02d}")
 
-ScenarioType = Literal["baseline", "non_breaking", "breaking"]
+ScenarioType = Literal["baseline", "non_breaking", "breaking", "type_drift"]
+
+# Cenarios que nao alteram o schema declarado: reusam o contrato do baseline
+_SAME_CONTRACT_AS_BASELINE = ("baseline", "type_drift")
+# Fracao de valores de vl_renda_mensal exportados fora do tipo 'float' do
+# Manifest no cenario type_drift (formato brasileiro e marcadores textuais
+# tipicos de extracao SAS/legado).
+
+TYPE_DRIFT_FRAC = 0.08
+_TYPE_DRIFT_VALUES = ["2.345,67", "12.900,00", "N/D", "NAO INFORMADO", "1.234,56"]
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -121,6 +131,14 @@ def _gerar_clientes(n: int = 500, scenario: ScenarioType = "baseline") -> pd.Dat
     elif scenario == "breaking":
         # Coluna obrigatória 'cd_agencia' foi removida da exportação SAS → BREAKING
         df = df.drop(columns=["cd_agencia"])
+    elif scenario == "type_drift":
+        # Schema intacto, mas valores fora do tipo declarado: o dado passa a 
+        # validacao estrutural e so o caster estrito o recusa (gate de tipagem).
+        drift_idx = df.sample(frac=TYPE_DRIFT_FRAC).index
+        df["vl_renda_mensal"] = df["vl_renda_mensal"].astype(object)
+        df.loc[drift_idx, "vl_renda_mensal"] = [
+            random.choice(_TYPE_DRIFT_VALUES) for _ in drift_idx
+        ]
 
     return df
 
@@ -154,7 +172,7 @@ def _contrato_clientes(scenario: ScenarioType) -> dict:
             "A segmentacao (cd_segmento) determina o produto ofertado e o gestor responsavel. "
             "Atualizada diariamente pelo batch noturno do CORE_BANCARIO_TOTVS."
         ),
-        "tolerance"   : {"max_null_pct": 25, "allow_duplicates": False},
+        "tolerance"   : {"max_null_pct": 25, "max_reject_pct": 1, "allow_duplicates": False},
         "dependencies": ["tb_agencias", "tb_segmentos"],
         "sample_queries": [
             {"description": "Distribuicao por segmento",
@@ -250,7 +268,7 @@ def _contrato_transacoes() -> dict:
             "fl_suspeita sinaliza transacoes em analise pelo motor antifraude. "
             "cd_estabelecimento pode ser nulo para compras online nao identificadas."
         ),
-        "tolerance"      : {"max_null_pct": 10, "allow_duplicates": False},
+        "tolerance"      : {"max_null_pct": 10, "max_reject_pct": 1, "allow_duplicates": False},
         "dependencies"   : ["tb_clientes"],
         "sample_queries" : [
             {"description": "Volume transacionado por canal no mes",
@@ -336,7 +354,7 @@ def _contrato_contratos_credito() -> dict:
             "para produtos com tolerancia de limite (cheque especial). "
             "cd_status EM_ATRASO dispara cobranca automatica apos D+1."
         ),
-        "tolerance"      : {"max_null_pct": 5, "allow_duplicates": False},
+        "tolerance"      : {"max_null_pct": 5, "max_reject_pct": 1, "allow_duplicates": False},
         "dependencies"   : ["tb_clientes"],
         "sample_queries" : [
             {"description": "Contratos em atraso por produto",
@@ -530,7 +548,7 @@ def generate_all(
     produced: List[dict] = []
 
     for table_name, df, contract in datasets:
-        suffix            = f"_{scenario}" if scenario != "baseline" else ""
+        suffix            =  "" if scenario in _SAME_CONTRACT_AS_BASELINE else f"_{scenario}"
         contract_filename = f"{table_name}{suffix}.yaml"
 
         # Seleciona writer — delega serialização para o Strategy correto

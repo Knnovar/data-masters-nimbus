@@ -145,12 +145,16 @@ class ColumnContract:
 class TolerancePolicy:
     max_null_pct    : float = 20.0
     allow_duplicates: bool  = False
+    #Tolerancia de linhas rejeitadas por tipo divergente do Manifest.
+    # None = nao declarado; o caster estrito cai para max_null_pct.
+    max_reject_pct : Optional[float] = None
 
     @classmethod
     def from_dict(cls, d: dict) -> "TolerancePolicy":
         return cls(
             max_null_pct    = d.get("max_null_pct", 20.0),
             allow_duplicates= d.get("allow_duplicates", False),
+            max_reject_pct = d.get("max_reject_pct"),
         )
 
 

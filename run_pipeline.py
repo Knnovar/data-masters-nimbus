@@ -35,6 +35,37 @@ BANNER = """
 ╚══════════════════════════════════════════════════════════════════╝
 """
 
+def evaluate_gate(table: str, reject_report: dict) -> dict:
+    """Decide se a tabela pode ser publicada.
+    
+    O criterio e a taxa de linhas rejeitadas por tipo divergente do Manifest
+    contra a tolerancia declarada no contrato (`tolerance.max_reject_pct`, com 
+    fallback para `max_null_pct`). Rejeicao dentro da tolerancia publica com 
+    aviso; acima dela bloqueia a publicacao e o exit code da run.
+    """
+    import config
+
+    reject_pct = reject_report.get("reject_pct")
+    limit_pct = reject_report.get("limit_pct")
+    rejected = reject_report.get("rows_rejected", 0)
+
+    if reject_pct is None:
+        return {"status": "PASS", "reason": "NO_REJECT_REPORT",
+                "detail": "sem relatorio de rejeicao (tipagem tolerante)",
+                "reject_pct": None, "limit_pct": None}
+    detail = "{} linha(s) rejeitada(s) ({:.2f}%)".format(
+        rejected, reject_pct, limit_pct or 0.0)
+    if not reject_report.get("within_limit", True) and getattr(config, "QUALITY_GATE", True):
+        print("     [GATE] [{}] BLOQUEADO: {}".format(table, detail))
+        return {"status": "BLOCKED", "reason": "REJECT_ABOVE_TOLERANCE", "detail": detail,
+                "reject_pct": reject_pct, "limit_pct": limit_pct}
+    if rejected:
+        print("     [GATE] [{}] LIBERADO com rejeicao: {}".format(table, detail))
+        return {"status": "PASS_WITH_REJECTS", "reason": "REJECT_WITHIN_TOLERANCE", "detail": detail,
+                "reject_pct": reject_pct, "limt_pct": limit_pct}
+    
+    return{"status": "PASS", "reason": "CONFORMANT", "detail": "nenhuma linha rejeitada",
+           "reject_pct": 0.0, "limit_pct": limit_pct}
 
 def run_scenario(scenario: str, run_id: str, fmt: str = "csv") -> tuple[list[dict], list[dict]]:
     """Executa um único cenário end-to-end usando a camada Storage."""
@@ -76,10 +107,15 @@ def run_scenario(scenario: str, run_id: str, fmt: str = "csv") -> tuple[list[dic
             except Exception as ce:
                 print(f" [SCHEMA] Contrato Nao Carregado: {ce}")
         cast_report = {}
+        reject_report = {}
 
         if val_result.status == "DLQ":
             slm_result       = {"table": table, "status": "SKIPPED", "inference_ms": 0, "documentation": ""}
             profiler_payload = {"table": table, "rows": 0, "profiling_ms": 0, "columns": {}}
+            gate             = {"status": "BLOCKED", "reason": "VALIDATION_DLQ",
+                                "detail": "quarentena na validacao ({})".format(val_result.evolution_type or "regra de contrato"),
+                                "reject_pct": None, "limit_pct": None}
+            print("     [GATE] [{}] BLOQUEADO: {}".format(table, gate["detail"]))
         else:
 
             csv_path         = storage.read_path("bronze", filename)
@@ -88,13 +124,21 @@ def run_scenario(scenario: str, run_id: str, fmt: str = "csv") -> tuple[list[dic
             slm_result = enrich(storage, contract_filename, profiler_payload)
             parquet_filename = storage.promote_to_parquet(filename, "bronze", "silver", contract=contract)
             cast_report = dict(getattr(storage, "last_cast_report", {}) or {})
-            from src.connectors.databricks_uploader import publish_table
-            pub = publish_table(storage.read_path("silver", parquet_filename),
-                                table_name=Path(filename).stem, contract=contract, run_id=run_id)
-            publications.append(pub)
+            reject_report = dict(getattr(storage, "last_reject_report", {}) or {})
+            gate = evaluate_gate(table, reject_report)
+            if gate["status"] == "BLOCKED":
+                publications.append({"table": table, "status": "BLOCKED", "layer": "silver",
+                                     "error": gate["detail"], "rows": 0})
+            else:
+                from src.connectors.databricks_uploader import publish_table
+                pub = publish_table(storage.read_path("silver", parquet_filename),
+                                    table_name=Path(filename).stem, contract=contract, run_id=run_id)
+                publications.append(pub)
         
         # Gold: métricas agregadas
-        m = collect(run_id, val_result, profiler_payload, slm_result, METRICS_DIR, contract=contract, cast_report=cast_report, fmt = fmt)
+        m = collect(run_id, val_result, profiler_payload, slm_result, METRICS_DIR, 
+                    contract=contract, cast_report=cast_report, fmt = fmt,
+                    reject_report=reject_report, gate=gate)
         scenario_metrics.append(m)
 
     return scenario_metrics, publications
@@ -106,20 +150,22 @@ def print_summary(all_metrics: list[dict]) -> None:
     print("  RESUMO DA EXECUÇÃO")
     print(f"{'='*66}")
 
-    header = f"{'Tabela':<30} {'Cenario':<14} {'Status':<10} {'Score':>6}"
+    header = f"{'Tabela':<30} {'Cenario':<14} {'Status':<10} {'Publicacao':<12} {'Score':>6}"
     print(header)
-    print("-" * 66)
+    print("-" * 78)
 
     icons = {"PASS": "[PASS]", "WARNING": "[WARN]", "DLQ": "[DLQ]"}
+    gate_icons = {"BLOCKED": "[BLOQUEADO]", "PASS_WITH_REJECTS": "[C/ REJEICAO]", "PASS": "[LIBERADA]"}
     for m in all_metrics:
         icon = icons.get(m["validation_status"], "⚪")
+        gate = gate_icons.get(m.get("gate_status"), "[LIBERADA]")
         print(
-            f"{m['table']:<30} {m['scenario']:<14} "
-            f"{icon} {m['validation_status']:<8} {m['quality_score']:>6.1f}/100"
+            f"{m['table']:<26} {m['scenario']:<13} "
+            f"{icon} {m['validation_status']:<8} {gate:<12} {m['quality_score']:>6.1f}/100"
         )
 
     avg = round(sum(m["quality_score"] for m in all_metrics) / len(all_metrics), 1)
-    print("-" * 66)
+    print("-" * 78)
     print(f"{'Score medio':>55} {avg:>6.1f}/100")
     print()
 
@@ -128,7 +174,7 @@ def main():
     parser = argparse.ArgumentParser(description="Pipeline Projeto Nimbus — PoC Local")
     parser.add_argument(
         "--scenario",
-        choices=["baseline", "non_breaking", "breaking", "all"],
+        choices=["baseline", "non_breaking", "breaking", "type_drift", "all"],
         default="all",
         help="Cenario a executar (padrao: all)",
     )
@@ -149,7 +195,7 @@ def main():
     print(f"  Ollama : {__import__('config').OLLAMA_HOST}")
 
     scenarios = (
-        ["baseline", "non_breaking", "breaking"]
+        ["baseline", "non_breaking", "breaking", "type_drift"]
         if args.scenario == "all"
         else [args.scenario]
     )
@@ -177,6 +223,7 @@ def main():
     print(f"  Relatorio MD  : {report_path}")
     attempted = [p for p in publications if p["status"] != "DISABLED"]
     failed = [p for p in publications if p["status"] == "ERROR"]
+    blocked = [p for p in publications if p["status"] == "BLOCKED"]
     if attempted:
         for layer in ("bronze", "silver"):
           rows = [p for p in attempted if p.get("layer", "silver") == layer]
@@ -185,9 +232,11 @@ def main():
             print(f"Databricks: {layer}: {ok}/{len(rows)} tabelas publicadas")
     for p in failed:
         print(f" [DATABRICKS] {p.get('layer', 'silver')}/{p['table']}: {p['error']}")
+    for p in blocked:
+        print(f" [GATE] {p['table']} nao publicada: {p['error']}")
     print("\n  Pipeline concluida.\n")
 
-    return 1 if failed else 0
+    return 1 if (failed or blocked) else 0
 
 
 if __name__ == "__main__":

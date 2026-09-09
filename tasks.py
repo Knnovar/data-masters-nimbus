@@ -41,8 +41,13 @@ def cmd_breaking(args):
     fmt = _get_opt(args, "--format") or "all"
     return run(["python", "run_pipeline.py", "--scenario", "breaking", "--format", fmt])
 
+def cmd_type_drift(args):
+    fmt = _get_opt(args, "--format") or "all"
+    return run(["python", "run_pipeline.py", "--score", "type_drift", "--format", fmt])
+
 def cmd_all_formats(args):
     return run(["python", "run_pipeline.py", "--scenario", "baseline", "--format", "all"])
+
 
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────
@@ -260,6 +265,7 @@ COMMANDS = {
     "baseline"          : (cmd_baseline,          "Cenario baseline, todos os formatos (use --format csv|json|fixed p/ restringir)"),
     "non-breaking"      : (cmd_non_breaking,      "Cenario non_breaking, todos os formatos (use --format p/ restringir)"),
     "breaking"          : (cmd_breaking,          "Cenario breaking/DLQ, todos os formatos (use --format p/ restringir)"),
+    "type_drift"        : (cmd_all_formats,       "Cenario type_drift: valor fora do tipo do Manifest, gate bloqueia (exit 1)"),
     "all-formats"       : (cmd_all_formats,       "Atalho: baseline nos 3 formatos (equivalente a baseline sem --format)"),
     "metrics"           : (cmd_metrics,           "Resumo do ultimo run"),
     "metrics-all"       : (cmd_metrics_all,       "Historico completo de runs"),

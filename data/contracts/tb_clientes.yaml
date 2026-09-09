@@ -24,6 +24,7 @@ business_context: Tabela mestre de clientes utilizada por todos os produtos de c
   responsavel. Atualizada diariamente pelo batch noturno do CORE_BANCARIO_TOTVS.
 tolerance:
   max_null_pct: 25
+  max_reject_pct: 1
   allow_duplicates: false
 dependencies:
 - tb_agencias

@@ -66,7 +66,7 @@ class BronzeUploader(DatabricksUploader):
         for key, value in payload.items():
             if isinstance(value, list) and re.match(r"^\w+$", str(key)):
                 return key
-            return None
+        return None
 
     def _read_files_expr(self, folder, fmt, pattern=None):
         opts = ["format => '{}'".format(fmt), "inferColumnTypes => false",
@@ -82,6 +82,7 @@ class BronzeUploader(DatabricksUploader):
     def register_raw(self, table_name, volume_folder, fmt, run_id=None, pattern=None,
                      json_root_key=None):
         full = "{}.{}.{}".format(self._catalog, self._schema, self.bronze_table(table_name))
+        self._sql("CREATE SCHEMA IF NOT EXISTS {}.{}".format(self._catalog, self._schema))
         source = self._read_files_expr(volume_folder, fmt, pattern)
         if fmt == 'json' and json_root_key:
             select = ("SELECT _rec.*, {part}, _ingest_file, _ingest_time, "
@@ -92,18 +93,11 @@ class BronzeUploader(DatabricksUploader):
                       "FROM {src}").format(part=self.PARTITION_COLUMN, run=self._esc(run_id or ""),
                                            key=json_root_key, src=source)
         else:
-            select = ("SELECT *, _medatada.file_name AS _ingest_file, "
+            select = ("SELECT *, _metadata.file_name AS _ingest_file, "
             "_metadata.file_modification_time AS _ingest_time,"
             "'{run}' AS _ingest_run_id "
             "FROM {src}").format(run=self._esc(run_id or ""), src=source)
-        self._sql("CREATE SCHEMA IF NOT EXISTS {}.{}".format(full, select))
-        self._sql(
-            "CREATE OR REPLACE TABLE {} AS SELECT *, "
-            "_metadata.file_name AS _ingest_file, "
-            "_metadata.file_modification_time AS _ingest_time, "
-            "'{}' AS _ingest_run_id "
-            "FROM {}".format(full, self._esc(run_id or ""), self._read_files_expr(volume_folder, fmt, pattern))
-        )
+        self._sql("CREATE OR REPLACE TABLE {} AS {}".format(full, select))
         print("[BRONZE] Tabela registrada: {} <- {}".format(full, volume_folder))
         return full
 

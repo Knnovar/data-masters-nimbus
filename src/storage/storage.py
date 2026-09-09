@@ -6,6 +6,7 @@ import pandas as pd
 
 class StorageBase(ABC):
     last_cast_report: dict = {}
+    last_reject_report: dict = {}
     @abstractmethod
     def write(self, layer, filename, df): pass
     @abstractmethod
@@ -26,6 +27,12 @@ class StorageBase(ABC):
     def read_path(self, layer, filename): pass
 
 def _parquet_name(filename): return Path(filename).stem + ".parquet"
+
+def _csv_name(filename): return Path(filename).stem + ".csv"
+
+def _strict_typing():
+    import config
+    return getattr(config, "STRICT_TYPING", True)
 
 def _read_file(path):
     ext = path.suffix.lower()
@@ -107,6 +114,7 @@ class LocalStorage(StorageBase):
 
     def promote_to_parquet(self, filename, from_layer, to_layer, contract=None):
         self.last_cast_report = {}
+        self.last_reject_report = {}
         src = self._path(from_layer, filename)
         df  = _read_file(src)
         arrow_schema = None
@@ -116,7 +124,14 @@ class LocalStorage(StorageBase):
             manifest_cols = {c.name.lower() for c in contract.schema}
             extra_cols    = [c for c in df.columns if c.lower() not in manifest_cols]
             cast_report = {}
-            df, cast_warnings = apply_manifest_schema(df, contract, report=cast_report)
+            if _strict_typing():
+                from src.storage.strict_cast import apply_strict_schema
+                df, rejected, cast_warnings, reject_summary = apply_strict_schema(df, contract, report=cast_report)
+                self.last_reject_report = reject_summary
+                if len(rejected):
+                    self.write("quarantine", "reject_" + _csv_name(filename), rejected)
+            else:  
+                df, cast_warnings = apply_manifest_schema(df, contract, report=cast_report)
             self.last_cast_report=cast_report
             arrow_schema      = manifest_to_arrow_schema(contract, extra_columns=extra_cols)
             metadata          = build_parquet_metadata(contract, cast_warnings)
@@ -213,9 +228,21 @@ class MinIOStorage(StorageBase):
         self._client.remove_object(self._bucket(from_layer), filename)
 
     def promote_to_parquet(self, filename, from_layer, to_layer, contract=None):
+        self.last_cast_report = {}
+        self.last_reject_report = {}
         tmp = self._tmp / filename
         self._client.fget_object(self._bucket(from_layer), filename, str(tmp))
         df=_read_file(tmp)
+        if contract is not None and _strict_typing():
+            from src.storage.strict_cast import apply_strict_schema
+            cast_report = {}
+            df, rejected, cast_warnings, reject_summary = apply_strict_schema(df, contract, report=cast_report)
+            self.last_cast_report   = cast_report
+            self.last_reject_report = reject_summary
+            if len(rejected):
+                self.write("quarantine", "reject_" + _csv_name(filename), rejected)
+            for w in cast_warnings:
+                print(" [SCHEMA] [{}] {}".format(filename, w))
         pq = self.write_parquet(to_layer, filename, df)
         self._client.remove_object(self._bucket(from_layer), filename)
         return pq

@@ -76,6 +76,14 @@ def _exit_code(status):
     """0=PASS/SKIPPED, 1=WARNING, 2=DLQ/ERROR"""
     return {"PASS": 0, "WARNING": 1, "DLQ": 2, "ERROR": 2, "SKIPPED": 0}.get(status, 1)
 
+def _metric_exit_code(m):
+    """Pior codigo entre validacao estrutural e gate de tipagem.
+    
+    Bloqueio do gate vale 2: a tabela nao pode ser publicada, mesmo com a 
+    validacao em PASS (e exatamente o caso do cenario type_drift).
+    """
+    ec = _exit_code(m["validation_status"])
+    return max(ec, 2) if m.get("gate_status") == "BLOCKED" else ec
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Tasks
@@ -157,7 +165,7 @@ def task_generate_data(scenario, run_id, fmt="csv"):
     Bloqueia: JOB-DM-002-VALIDATE
 
     Args:
-        scenario: Cenario de dados ('baseline', 'non_breaking', 'breaking').
+        scenario: Cenario de dados ('baseline', 'non_breaking', 'breaking', 'type_drift').
         run_id: Identificador da run para rastreio.
         fmt: Formato de saida ('csv', 'json', 'fixed').
     """
@@ -238,8 +246,20 @@ def task_profile(validated):
     table = validated["table"]
     if validated["validation_status"] == "DLQ":
         _log("JOB-DM-003", "PROFILE/{}".format(table), "SKIPPED", "upstream DLQ")
-        return {**validated, "profiler_payload": 
-            payload, "cast_report": dict(getattr(storage, "last_cast_report", {}) or {})}
+        return {
+            **validated,
+            "profiler_payload" : {"table": table, "rows": 0, "profiling_ms": 0, "columns": {}},
+            "cast_report"      : {},        
+            "reject_report"    : {},
+            "gate"             : {
+                "status"     : "BLOCKED",
+                "reason"     : "VALIDATION_DLQ",
+                "detail"     : "quarentena na validacao ({})".format(
+                    validated.get("evolution_type") or "regra de contrato"),
+                "reject_pct" : None,
+                "limit_pct"  : None,
+                },
+            }
 
     _log("JOB-DM-003", "PROFILE/{}".format(table), "STARTED",
          "reading bronze/{}".format(validated["filename"]))
@@ -262,10 +282,21 @@ def task_profile(validated):
                      "contrato nao carregado: {}".format(ce))
         parquet_filename = storage.promote_to_parquet(
             validated["filename"], "bronze", "silver", contract=contract)
-        _log("JOB-DM-003", "PROFILE/{}".format(table), "ENDED_OK",
-             "rows={} ms={} promoted=bronze->silver".format(
-                 payload["rows"], payload["profiling_ms"]))
-        return {**validated, "profiler_payload": payload}
+        cast_report = dict(getattr(storage, "last_cast_report", {}) or {})
+        reject_report = dict(getattr(storage, "last_reject_report", {}) or ())
+
+        from run_pipeline import evaluate_gate
+        gate = evaluate_gate(table, reject_report)
+
+        _log("JOB-DM-003", "PROFILE/{}".format(table), 
+             "ENDED_NOTOK" if gate["status"] == "BLOCKED" else "ENDED_OK",
+             "rows={} ms={} promoted=bronze->silver gate={}".format(
+                 payload["rows"], payload["profiling_ms"], gate["status"]))
+        return {**validated, 
+                "profiler_payload": payload,
+                "cast_report"     : cast_report,
+                "reject_report"   : reject_report,
+                "gate"            : gate}
     except Exception as e:
         _log("JOB-DM-003", "PROFILE/{}".format(table), "ENDED_NOTOK", str(e))
         raise
@@ -337,8 +368,10 @@ def task_collect_metrics(enriched, run_id):
         enriched.get("profiler_payload", {}),
         enriched.get("slm_result", {}),
         METRICS_DIR,
-        contract        = contract,
-        cast_report     =enriched.get("cast_report") or {},    
+        contract        = _load_contract(enriched.get("contract_filename")),
+        cast_report     =enriched.get("cast_report") or {},
+        reject_report   =enriched.get("reject_report") or {},    
+        gate            =enriched.get("gate"),  
     )
     _log("JOB-DM-005", "METRICS/{}".format(table), "ENDED_OK",
          "score={}".format(metrics["quality_score"]))
@@ -413,7 +446,7 @@ def pipeline_flow(scenario="baseline", run_id=None, fmt="csv"):
         all_metrics.append(metrics)
 
     report_path  = task_report(all_metrics, run_id)
-    worst_exit   = max(_exit_code(m["validation_status"]) for m in all_metrics)
+    worst_exit   = max(_metric_exit_code(m) for m in all_metrics)
 
     _print_summary(all_metrics, run_id)
     _log("PIPELINE", "FLOW",
@@ -434,13 +467,16 @@ def _print_summary(all_metrics, run_id):
     print("\n" + "=" * 66)
     print("  RUN: {}".format(run_id))
     print("=" * 66)
-    print("  {:<30} {:<14} {:<10} {:>6}".format("Tabela", "Cenario", "Status", "Score"))
+    gate_tag = {"BLOCKED": "[BLOQUEADO]", "PASS_WITH_REJECTS": "[C/ REJEICAO]", 
+               "PASS": "[LIBERADA]"} 
+    print("  {:<26} {:<13} {:<10} {:<12} {:>6}".format("Tabela", "Cenario", "Status", "Publicacao", "Score"))
     print("  " + "-" * 62)
     for m in all_metrics:
         tag = status_tag.get(m["validation_status"], "[?]")
-        print("  {:<30} {:<14} {} {:<8} {:>6.1f}/100".format(
+        print("  {:<26} {:<13} {} {:<8} {:<12} {:>6.1f}/100".format(
             m["table"], m["scenario"], tag,
-            m["validation_status"], m["quality_score"]))
+            m["validation_status"],
+            gate_tag.get(m.get("gate_status"), "[LIBERADA]"), m["quality_score"]))
     avg = round(sum(m["quality_score"] for m in all_metrics) / len(all_metrics), 1) if all_metrics else 0
     print("  " + "-" * 62)
     print("  {:<55} {:>6.1f}/100\n".format("Score medio", avg))
@@ -452,7 +488,7 @@ def _print_summary(all_metrics, run_id):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Projeto Nimbus Pipeline")
     parser.add_argument(
-        "--scenario", choices=["baseline", "non_breaking", "breaking", "all"],
+        "--scenario", choices=["baseline", "non_breaking", "breaking", "type_drift", "all"],
         default="all",
     )
     parser.add_argument(
@@ -471,7 +507,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     scenarios = (
-        ["baseline", "non_breaking", "breaking"]
+        ["baseline", "non_breaking", "breaking", "type_drift"]
         if args.scenario == "all"
         else [args.scenario]
     )

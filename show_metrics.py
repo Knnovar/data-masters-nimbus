@@ -344,7 +344,7 @@ def main():
     parser = argparse.ArgumentParser(description="Dashboard de metricas - Projeto Nimbus")
     parser.add_argument("--all",      action="store_true", help="Exibe todos os runs (padrao: ultimo por tabela/cenario)")
     parser.add_argument("--table",    default=None,        help="Filtra por tabela (ex: tb_clientes)")
-    parser.add_argument("--scenario", default=None,        help="Filtra por cenario (baseline|non_breaking|breaking)")
+    parser.add_argument("--scenario", default=None,        help="Filtra por cenario (baseline|non_breaking|breaking|type_drift)")
     parser.add_argument("--issues",   action="store_true", help="Exibe apenas registros com problemas")
     parser.add_argument("--slm",      action="store_true", help="Exibe status do enriquecimento SLM")
     parser.add_argument("--csv",      default=None,        help="Exporta para CSV (ex: --csv metricas.csv)")

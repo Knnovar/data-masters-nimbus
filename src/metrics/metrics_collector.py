@@ -48,6 +48,8 @@ def collect(
     contract        = None,
     cast_report     : dict | None = None,
     fmt             : str = 'csv',
+    reject_report   : dict | None = None,
+    gate            : dict | None = None,
 ) -> dict:
     """Salva métricas individuais de uma tabela e retorna o dict."""
 
@@ -64,6 +66,13 @@ def collect(
         "table"              : val_result.table,
         "scenario"           : val_result.scenario,
         "format"             : fmt,
+        "gate_status"        : (gate or {}).get("status", "PASS"),
+        "gate_reason"        : (gate or {}).get("reason"),
+        "gate_detail"        : (gate or {}).get("detail"),
+        "rows_rejected"      : (reject_report or {}).get("rows_rejected", 0),
+        "reject_pct"         : (reject_report or {}).get("reject_pct"),
+        "reject_limit_pct"   : (reject_report or {}).get("limit_pct"),
+        "rejects_by_column"  : (reject_report or {}).get("by_column"),
         "validation_status"  : val_result.status,
         "evolution_type"     : val_result.evolution_type,
         "rows_total"         : val_result.rows_total,
@@ -144,6 +153,33 @@ def generate_report(all_metrics: list[dict], reports_dir: Path) -> Path:
         low = [(n, d) for n, d in dims.items() if d.get("value") is not None and d["value"] < 100]
         for name, d in low:
             lines.append(f"- ``{m['table']}` / **{name}** = {d['value']}: {d.get('detail', '')}")
+
+    gated = [m for m in all_metrics
+             if m.get("rows_rejected") or m.get("gate_status") == "BLOCKED"]
+    if gated:
+        lines +=[
+            "\n---\n",
+            "## Gate de Tipagem (Manifest soberano)\n",
+            "| Tabela | Cenario | Publicacao | Linhas rejeitadas | % | Tolerancia | Colunas |",
+            "|--------|---------|------------|-------------------|---|------------|---------|",
+        ]
+        for m in gated:
+            by_col = ", ".join(f"`{c}`: {n}" for c, n in (m.get("rejects_by_column") or {}).items()) or "-"
+            pct    = m.get("reject_pct")
+            limit  = m.get("reject_limit_pct")
+            lines.append(
+                f"| `{m['table']}` | {m['scenario']} | {m.get('gate_status', 'PASS')} "
+                f"| {m.get('rows_rejected', 0)} | {'n/d' if pct is None else f'{pct:.2f}%'} "
+                f"| {'n/d' if limit is None else f'{limit:.2f}%'} | {by_col} |"
+            )
+        lines += [
+            "",
+            "> Linha rejeitada = valor preenchido fora do tipo declarado no Manifest. "
+            "A linha inteira vai para `quarantine/reject_<tabela>.csv` com `_reject_columns`, "
+            "`_reject_values` e `_reject_reason`; acima da tolerancia do contrato "
+            "(`tolerancia.max_reject_pct`) a publicacao e bloqueada .", 
+
+        ]
     lines += [
         "\n---\n",
         "## Desempenho da SLM\n",

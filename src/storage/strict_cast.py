@@ -90,7 +90,7 @@ def _blank_scalar(val) -> bool:
 
 def reject_limit(contract) -> float:
 
-    total = getattr(contract, "tolerance", None)
+    tol = getattr(contract, "tolerance", None)
     if tol is None:
         return 0.0
     declared = getattr(tol, "max_reject_pct", None)
@@ -112,7 +112,7 @@ def apply_strict_schema(df: pd.DataFrame, contract, report: Optional[dict] = Non
     limit = reject_limit(contract)
 
     for col_def in contract.schema:
-        if col_def.name.lower() not in {c.lower for c in df.columns}:
+        if col_def.name.lower() not in {c.lower() for c in df.columns}:
             if not (col_def.nullable if col_def.nullable is not None else True):
                 warnings.append("MISSING_REQUIRED: '{}' nao encontrada no dado.".format(col_def.name))
                 if report is not None:
@@ -146,8 +146,8 @@ def apply_strict_schema(df: pd.DataFrame, contract, report: Optional[dict] = Non
     rejected_idx = [i for i in df.index if reason_cols[i]]
     if rejected_idx:
         rejected_df = original.loc[rejected_idx].copy()
-        rejected_df["_rejected_columns"] = [",".join(reason_cols[i]) or i in rejected_idx]
-        rejected_df["_rejected_values"] = ["|".join(reason_vals[i]) or i in rejected_idx]
+        rejected_df["_reject_columns"] = [",".join(reason_cols[i]) for i in rejected_idx]
+        rejected_df["_reject_values"] = ["|".join(reason_vals[i]) for i in rejected_idx]
         rejected_df["_reject_reason"]   = "TYPE_NOT_CONFORMANT"
         typed = typed.drop(index=rejected_idx)
     else:
