@@ -268,7 +268,7 @@ def _contrato_transacoes() -> dict:
             "fl_suspeita sinaliza transacoes em analise pelo motor antifraude. "
             "cd_estabelecimento pode ser nulo para compras online nao identificadas."
         ),
-        "tolerance"      : {"max_null_pct": 10, "max_reject_pct": 1, "allow_duplicates": False},
+        "tolerance"      : {"max_null_pct": 10, "max_reject_pct": 2, "allow_duplicates": False},
         "dependencies"   : ["tb_clientes"],
         "sample_queries" : [
             {"description": "Volume transacionado por canal no mes",

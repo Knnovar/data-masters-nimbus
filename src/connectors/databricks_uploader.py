@@ -357,6 +357,11 @@ def get_uploader():
         schema       = getattr(cfg, "DATABRICKS_SILVER_SCHEMA",      getattr(cfg, "DATABRICKS_SCHEMA", "silver")),
     )
 
+def databricks_configured():
+    import config as cfg
+    return bool(getattr(cfg, "DATABRICKS_HOST", "")
+                and getattr(cfg, "DATABRICKS_WAREHOUSE_ID", ""))
+
 def publish_table(silver_path, table_name, contract=None, run_id=None, dat_ref=None):
     """Publica uma tabela no Databricks e devolve o status - nunca levanta.
     
@@ -366,6 +371,9 @@ def publish_table(silver_path, table_name, contract=None, run_id=None, dat_ref=N
     import config as cfg
     if not getattr(cfg, "DATABRICKS_AUTO_UPLOAD", False):
         return {"table": table_name, "status": "DISABLED", "target": None, "error": None}
+    if not databricks_configured():
+        return {"table": table_name, "status": "SKIPPED", "target":None, 
+                "error": "sem DATABRICKS_HOST/WAREHOUSE_ID - publicacao ignorada"}
     try:
         full = upload_silver_table(silver_path, table_name=table_name, contract=contract, dat_ref=dat_ref, run_id=run_id)
 

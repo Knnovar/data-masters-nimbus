@@ -221,7 +221,8 @@ def main():
 
     print(f"  Metricas JSON : {summary_path}")
     print(f"  Relatorio MD  : {report_path}")
-    attempted = [p for p in publications if p["status"] != "DISABLED"]
+    attempted = [p for p in publications if p["status"] not in ("DISABLED", "SKIPPED", "BLOCKED")]
+    skipped = [p for p in publications if p["status"] == "SKIPPED"]
     failed = [p for p in publications if p["status"] == "ERROR"]
     blocked = [p for p in publications if p["status"] == "BLOCKED"]
     if attempted:
@@ -230,6 +231,8 @@ def main():
           if rows:  
             ok = sum( 1 for p in rows if p["status"] in ("OK", "UPLOADED"))
             print(f"Databricks: {layer}: {ok}/{len(rows)} tabelas publicadas")
+    if skipped:
+        print(f"Databricks: {len(skipped)} publicacao(oes) ignorada(s): {skipped[0]['error']}")
     for p in failed:
         print(f" [DATABRICKS] {p.get('layer', 'silver')}/{p['table']}: {p['error']}")
     for p in blocked:

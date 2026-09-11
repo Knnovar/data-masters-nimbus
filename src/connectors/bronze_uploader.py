@@ -1,7 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
 import json, re
-from src.connectors.databricks_uploader import DatabricksUploader, dat_ref_from_run_id
+from src.connectors.databricks_uploader import DatabricksUploader, dat_ref_from_run_id, databricks_configured
 
 _FORMAT_BY_EXT = {
     ".csv" : "csv",
@@ -164,6 +164,10 @@ def publish_bronze(local_path, table_name, run_id=None, dat_ref=None):
         if not getattr(cfg, "DATABRICKS_BRONZE_UPLOAD", False):
             return{"table": table_name, "layer": "bronze", "status": "DISABLED",
                    "target": None, "error": None}
+        if not databricks_configured():
+            return{"table": table_name, "layer":"bronze", "status": "SKIPPED",
+                   "target": None,
+                   "error": "sem DATABRICKS_HOST/WAREHOUSE_ID - publicacao ignorada"}
         if dat_ref is None and run_id:
             dat_ref = dat_ref_from_run_id(run_id)
         try:

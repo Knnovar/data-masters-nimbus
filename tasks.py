@@ -27,6 +27,7 @@ def run(cmd: list[str]) -> int:
 def cmd_run(args):
     # Executa todos os cenarios (baseline/non_breaking/breaking) nos
     # tres formatos suportados (csv/json/fixed) — execucao completa.
+    # Sai com exit 1 quando o gate bloqueia alguma publicacao (type_drift).
     return run(["python", "run_pipeline.py", "--scenario", "all", "--format", "all"])
 
 def cmd_baseline(args):

@@ -10,6 +10,9 @@ from src.storage.schema_utils import (
 
 REJECT_TRACE_COLUMNS = ["_reject_columns", "_reject_values", "_reject_reason"]
 
+REASON_TYPE = "TYPE_NOT_CONFORMANT"
+REASON_DUPLICATE = "DUPLICATE_PK"
+
 _INT_TYPES = ("integer", "int", "long")
 _FLOAT_TYPES = ("float", "double", "decimal", "numeric")
 _BOOL_TYPES = ("boolean", "bool")
@@ -148,25 +151,74 @@ def apply_strict_schema(df: pd.DataFrame, contract, report: Optional[dict] = Non
         rejected_df = original.loc[rejected_idx].copy()
         rejected_df["_reject_columns"] = [",".join(reason_cols[i]) for i in rejected_idx]
         rejected_df["_reject_values"] = ["|".join(reason_vals[i]) for i in rejected_idx]
-        rejected_df["_reject_reason"]   = "TYPE_NOT_CONFORMANT"
+        rejected_df["_reject_reason"]   = REASON_TYPE
         typed = typed.drop(index=rejected_idx)
     else:
         rejected_df = original.iloc[0:0].copy()
         for c in REJECT_TRACE_COLUMNS:
             rejected_df[c] = []
 
-
-    rows_rejected = len(rejected_idx)
+    dup_df, dup_idx = _split_duplicate_pk(original, typed, contract)
+    if dup_idx:
+        typed = typed.drop(index=dup_idx)
+        rejected_df = pd.concat([rejected_df, dup_df])
+        warnings.append(
+            "REJECT: chave primaria duplicada - {} linha(s) repetida(s) enviada(s) "
+            "para quarentena (rimeira ocorrencia foi mantida).".format(len(dup_idx))
+        )
+    rows_rejected = len(rejected_idx) + len(dup_idx)
     reject_pct = round(rows_rejected / rows_total * 100, 2) if rows_total else 0.0
     summary = {
         "rows_total": rows_total,
         "rows_rejected": rows_rejected,
         "rows_kept": rows_total - rows_rejected,
+        "rows_type": len(rejected_idx),
+        "rows_duplicate": len(dup_idx),
         "reject_pct": reject_pct,
         "limit_pct": limit,
         "by_column": by_column,
         "within_limit": reject_pct <= limit,
     }
     return typed.reset_index(drop=True), rejected_df.reset_index(drop=True), warnings, summary 
+
+def _split_duplicate_pk(original: pd.DataFrame, typed: pd.DataFrame, contract):
+    """ Separa as ocorrencias repetidas de chave primaria das linhas que ficaram.
+    
+    Respeita `tolerance.allow_duplicates`: quando o contrato permite duplicata,
+    nada e removido. A primeira ocorrencia sempre fica - quem sai e a repeticao.
+    
+    Returns:
+        (dup_dp, dup_idx): as linhas repetidas com as colunas de rastreio e a
+        lista de indices removidos (vazia quando nao ha o que remover).
+    """
+
+    empty = (original.iloc[0:0].copy(), [])
+
+    tol = getattr(contract, "tolerance", None)
+    if tol is not None and getattr(tol, "allow_duplicates", False):
+        return empty
+
+    getter = getattr(contract, "get_primary_keys", None)
+    if callable(getter):
+        declared = list(getter())
+    else:
+        declared = [c.name for c in contract.schema if getattr(c, "primary_key", False)]
+    lowered = {c.lower(): c for c in typed.columns}
+    pk_cols = [lowered[c.lower()] for c in declared if c.lower() in lowered]
+    if not pk_cols or typed.empty:
+        return empty
+
+    dup_mask = typed.duplicated(subset=pk_cols, keep="first")
+    dup_idx = list(typed.index[dup_mask])
+    if not dup_idx:
+        return empty
+
+    dup_df = original.loc[dup_idx].copy()
+    dup_df["_reject_columns"] = ",".join(pk_cols)
+    dup_df["_reject_values"] = [
+        "|".join(str(original.at[i, c]) for c in pk_cols) for i in dup_idx
+    ]
+    dup_df["_reject_reason"] = REASON_DUPLICATE
+    return dup_df, dup_idx 
 
 

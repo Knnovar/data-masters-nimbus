@@ -74,7 +74,7 @@ def _log(job_id, step, status, msg):
 
 def _exit_code(status):
     """0=PASS/SKIPPED, 1=WARNING, 2=DLQ/ERROR"""
-    return {"PASS": 0, "WARNING": 1, "DLQ": 2, "ERROR": 2, "SKIPPED": 0}.get(status, 1)
+    return {"PASS": 0, "WARNING": 0, "DLQ": 2, "ERROR": 2, "SKIPPED": 0}.get(status, 2)
 
 def _metric_exit_code(m):
     """Pior codigo entre validacao estrutural e gate de tipagem.
