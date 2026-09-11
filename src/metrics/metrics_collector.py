@@ -72,7 +72,7 @@ def collect(
         "rows_rejected"      : (reject_report or {}).get("rows_rejected", 0),
         "reject_pct"         : (reject_report or {}).get("reject_pct"),
         "reject_limit_pct"   : (reject_report or {}).get("limit_pct"),
-        "rejects_by_column"  : (reject_report or {}).get("by_column"),
+        "rejects_by_column"  : (reject_report or {}).get("by_column", {}),
         "validation_status"  : val_result.status,
         "evolution_type"     : val_result.evolution_type,
         "rows_total"         : val_result.rows_total,
@@ -157,7 +157,7 @@ def generate_report(all_metrics: list[dict], reports_dir: Path) -> Path:
     gated = [m for m in all_metrics
              if m.get("rows_rejected") or m.get("gate_status") == "BLOCKED"]
     if gated:
-        lines +=[
+        lines += [
             "\n---\n",
             "## Gate de Tipagem (Manifest soberano)\n",
             "| Tabela | Cenario | Publicacao | Linhas rejeitadas | % | Tolerancia | Colunas |",
@@ -177,7 +177,7 @@ def generate_report(all_metrics: list[dict], reports_dir: Path) -> Path:
             "> Linha rejeitada = valor preenchido fora do tipo declarado no Manifest. "
             "A linha inteira vai para `quarantine/reject_<tabela>.csv` com `_reject_columns`, "
             "`_reject_values` e `_reject_reason`; acima da tolerancia do contrato "
-            "(`tolerancia.max_reject_pct`) a publicacao e bloqueada .", 
+            "(`tolerance.max_reject_pct`) a publicacao e bloqueada.", 
 
         ]
     lines += [

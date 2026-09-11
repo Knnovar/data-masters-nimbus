@@ -72,7 +72,7 @@ nimbus/
 `-- data/                     Camadas medallion (persiste no host via Docker volume)
 ```
 
-O fluxo de dados: arquivo bruto entra no Bronze no formato original, passa pela validação de contrato e profiling DuckDB, é promovido para o Silver já em Parquet com os tipos do Manifest. Bronze preserva o original em `_archive/`. Arquivos com quebra de contrato vão para quarentena sem interromper o restante.
+O fluxo de dados: arquivo bruto entra no Bronze no formato original, passa pela validação de contrato e profiling DuckDB, é promovido para o Silver já em Parquet com os tipos do Manifest. Bronze preserva o original em `_archive/`. Arquivos com quebra de contrato vão para quarentena sem interromper o restante. O Manifest é o contrato soberano: cada coluna é convertida para o tipo declarado e cada linha que não converte é rejeitada individualmente, com o valor original preservado em `data/quarentine/reject_<tabela>.csv` junto de `reject_columns`, `_reject_values` e `_reject_reason`. Duplicatas de chave primária seguem o mesmo caminho (`DUPLICATE_PK`): a primeira ocorrência é mantida, as repetições vão para a quarentena. O percentual rejeitado é comparado com `tolerance.ax_reject_pct` do Manifest - dentro do limite a tabela publica com `PASS_WITH_REJECTS`, acima do limite a publicação é **bloqueada** e a execução sai com exit code 2. Arquivos com quebra de contrato continuam indo para quarentena inteiros, sem interromper as demais tabelas.
 
 ---
 

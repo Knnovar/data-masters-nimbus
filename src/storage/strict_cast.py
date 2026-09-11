@@ -144,7 +144,7 @@ def apply_strict_schema(df: pd.DataFrame, contract, report: Optional[dict] = Non
             fail_pct = round(n_fail / rows_total * 100, 2) if rows_total else 0.0
             report[col_def.name] = {"declared": mt, "cast_ok": fail_pct <= limit,
                                     "fail_pct": fail_pct, "missing": False,
-                                    "reject_rows": n_fail}
+                                    "rejected_rows": n_fail}
 
     rejected_idx = [i for i in df.index if reason_cols[i]]
     if rejected_idx:
@@ -164,7 +164,7 @@ def apply_strict_schema(df: pd.DataFrame, contract, report: Optional[dict] = Non
         rejected_df = pd.concat([rejected_df, dup_df])
         warnings.append(
             "REJECT: chave primaria duplicada - {} linha(s) repetida(s) enviada(s) "
-            "para quarentena (rimeira ocorrencia foi mantida).".format(len(dup_idx))
+            "para quarentena (primeira ocorrencia foi mantida).".format(len(dup_idx))
         )
     rows_rejected = len(rejected_idx) + len(dup_idx)
     reject_pct = round(rows_rejected / rows_total * 100, 2) if rows_total else 0.0

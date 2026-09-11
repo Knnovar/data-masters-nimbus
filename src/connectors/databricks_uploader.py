@@ -104,7 +104,7 @@ class DatabricksUploader:
         import time
         for attempt in range(1, self.SQL_RETRY_ATTEMPTS + 1):
             try:
-                return self._sql_once(stmt, wait-wait)
+                return self._sql_once(stmt, wait=wait)
             except RuntimeError as err:
                 last = attempt == self.SQL_RETRY_ATTEMPTS
                 if last or not self._is_transient_sql_error(err):

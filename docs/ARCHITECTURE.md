@@ -23,7 +23,11 @@ Arquivo bruto
      |
   Profiling (DuckDB)
      |
-  [ SILVER ]
+  Gate de tipagem (Manifest) --- linha nao conformante -> [ QUARENTENA ] (linha)
+     |                           duplicata de PK ------->
+     |
+     +-- reject_pct <= max_reject_pct --> [ SILVER ] (PASS / PASS_WITH_REJECTS)
+     `-- reject_pct >  max_reject_pct --> BLOQUEADO (exit 2, nada publica)
      |
   SLM documenta
      |

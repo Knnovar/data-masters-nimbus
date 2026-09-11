@@ -44,7 +44,7 @@ def cmd_breaking(args):
 
 def cmd_type_drift(args):
     fmt = _get_opt(args, "--format") or "all"
-    return run(["python", "run_pipeline.py", "--score", "type_drift", "--format", fmt])
+    return run(["python", "run_pipeline.py", "--scenario", "type_drift", "--format", fmt])
 
 def cmd_all_formats(args):
     return run(["python", "run_pipeline.py", "--scenario", "baseline", "--format", "all"])
@@ -262,11 +262,11 @@ def _get_opt(args: list[str], flag: str) -> str | None:
 
 
 COMMANDS = {
-    "run"               : (cmd_run,              "Executa TODOS os cenarios x TODOS os formatos (csv/json/fixed)"),
+    "run"               : (cmd_run,               "Executa TODOS os cenarios x TODOS os formatos (csv/json/fixed)"),
     "baseline"          : (cmd_baseline,          "Cenario baseline, todos os formatos (use --format csv|json|fixed p/ restringir)"),
     "non-breaking"      : (cmd_non_breaking,      "Cenario non_breaking, todos os formatos (use --format p/ restringir)"),
     "breaking"          : (cmd_breaking,          "Cenario breaking/DLQ, todos os formatos (use --format p/ restringir)"),
-    "type_drift"        : (cmd_all_formats,       "Cenario type_drift: valor fora do tipo do Manifest, gate bloqueia (exit 1)"),
+    "type_drift"        : (cmd_type_drift,        "Cenario type_drift: valor fora do tipo do Manifest, gate bloqueia (exit 2)"),
     "all-formats"       : (cmd_all_formats,       "Atalho: baseline nos 3 formatos (equivalente a baseline sem --format)"),
     "metrics"           : (cmd_metrics,           "Resumo do ultimo run"),
     "metrics-all"       : (cmd_metrics_all,       "Historico completo de runs"),
@@ -281,8 +281,8 @@ COMMANDS = {
     "prefect-run"       : (cmd_prefect_run,       "Dispara run baseline via Prefect"),
     "test"              : (cmd_test,              "Roda a suite de testes"),
     "test-databricks"   : (cmd_test_databricks,   "Diagnostico em 4 niveis: token, warehouse, schema, Volumes"),
-    "upload-silver"     : (cmd_upload_silver,      "Upload Silver -> Volumes -> Delta -> metastore (--table, --no-comments, --dry-run)"),
-    "upload-bronze"     :(cmd_upload_bronze,        "Upload do arquivo bruto -> Volume bronze -> tabela no schema bronze (--table)"),
+    "upload-silver"     : (cmd_upload_silver,     "Upload Silver -> Volumes -> Delta -> metastore (--table, --no-comments, --dry-run)"),
+    "upload-bronze"     :(cmd_upload_bronze,      "Upload do arquivo bruto -> Volume bronze -> tabela no schema bronze (--table)"),
     "setup"             : (cmd_setup,             "Instala dependencias"),
     "clean"             : (cmd_clean,             "Remove __pycache__"),
     "clean-data"        : (cmd_clean_data,        "Remove dados gerados (pede confirmacao)"),

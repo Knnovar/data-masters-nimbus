@@ -53,7 +53,7 @@ def evaluate_gate(table: str, reject_report: dict) -> dict:
         return {"status": "PASS", "reason": "NO_REJECT_REPORT",
                 "detail": "sem relatorio de rejeicao (tipagem tolerante)",
                 "reject_pct": None, "limit_pct": None}
-    detail = "{} linha(s) rejeitada(s) ({:.2f}%)".format(
+    detail = "{} linha(s) rejeitada(s) ({:.2f}% | tolerancia {:.2f}%)".format(
         rejected, reject_pct, limit_pct or 0.0)
     if not reject_report.get("within_limit", True) and getattr(config, "QUALITY_GATE", True):
         print("     [GATE] [{}] BLOQUEADO: {}".format(table, detail))
@@ -62,7 +62,7 @@ def evaluate_gate(table: str, reject_report: dict) -> dict:
     if rejected:
         print("     [GATE] [{}] LIBERADO com rejeicao: {}".format(table, detail))
         return {"status": "PASS_WITH_REJECTS", "reason": "REJECT_WITHIN_TOLERANCE", "detail": detail,
-                "reject_pct": reject_pct, "limt_pct": limit_pct}
+                "reject_pct": reject_pct, "limit_pct": limit_pct}
     
     return{"status": "PASS", "reason": "CONFORMANT", "detail": "nenhuma linha rejeitada",
            "reject_pct": 0.0, "limit_pct": limit_pct}
@@ -150,7 +150,7 @@ def print_summary(all_metrics: list[dict]) -> None:
     print("  RESUMO DA EXECUÇÃO")
     print(f"{'='*66}")
 
-    header = f"{'Tabela':<30} {'Cenario':<14} {'Status':<10} {'Publicacao':<12} {'Score':>6}"
+    header = f"{'Tabela':<26} {'Cenario':<13} {'Status':<15} {'Publicacao':<12} {'Score':>6}"
     print(header)
     print("-" * 78)
 
@@ -169,23 +169,25 @@ def print_summary(all_metrics: list[dict]) -> None:
     print(f"{'Score medio':>55} {avg:>6.1f}/100")
     print()
 
-
-def main():
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Pipeline Projeto Nimbus — PoC Local")
     parser.add_argument(
-        "--scenario",
-        choices=["baseline", "non_breaking", "breaking", "type_drift", "all"],
-        default="all",
-        help="Cenario a executar (padrao: all)",
-    )
+             "--scenario",
+             choices=["baseline", "non_breaking", "breaking", "type_drift", "all"],
+             default="all",
+             help="Cenario a executar (padrao: all)",
+         )
     parser.add_argument(
-        "--format",
-        choices=["csv", "json", "fixed", "all"],
-        default="csv",
-        dest="fmt",
-        help="Formato de saida (csv|json|fixed|all). Padrao: csv",
-    )
-    args = parser.parse_args()
+             "--format",
+             choices=["csv", "json", "fixed", "all"],
+             default="csv",
+             dest="fmt",
+             help="Formato de saida (csv|json|fixed|all). Padrao: csv",
+         )
+    return parser
+
+def main():
+    args = build_parser().parse_args()
 
     print(BANNER)
 
@@ -239,7 +241,7 @@ def main():
         print(f" [GATE] {p['table']} nao publicada: {p['error']}")
     print("\n  Pipeline concluida.\n")
 
-    return 1 if (failed or blocked) else 0
+    return 2 if (failed or blocked) else 0
 
 
 if __name__ == "__main__":

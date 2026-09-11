@@ -89,13 +89,13 @@ class BronzeUploader(DatabricksUploader):
                       "'{run}' AS _ingest_run_id FROM ("
                       "SELECT explode(`{key}`) AS _rec, {part}, "
                       "_metadata.file_name AS _ingest_file, "
-                      "_metadata.file_modification_time AS _inget_time "
-                      "FROM {src}").format(part=self.PARTITION_COLUMN, run=self._esc(run_id or ""),
+                      "_metadata.file_modification_time AS _ingest_time "
+                      "FROM {src})").format(part=self.PARTITION_COLUMN, run=self._esc(run_id or ""),
                                            key=json_root_key, src=source)
         else:
             select = ("SELECT *, _metadata.file_name AS _ingest_file, "
             "_metadata.file_modification_time AS _ingest_time,"
-            "'{run}' AS _ingest_run_id "
+            " '{run}' AS _ingest_run_id "
             "FROM {src}").format(run=self._esc(run_id or ""), src=source)
         self._sql("CREATE OR REPLACE TABLE {} AS {}".format(full, select))
         print("[BRONZE] Tabela registrada: {} <- {}".format(full, volume_folder))
