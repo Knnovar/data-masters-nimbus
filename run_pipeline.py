@@ -66,6 +66,53 @@ def evaluate_gate(table: str, reject_report: dict) -> dict:
     
     return{"status": "PASS", "reason": "CONFORMANT", "detail": "nenhuma linha rejeitada",
            "reject_pct": 0.0, "limit_pct": limit_pct}
+class SilverCollisionGuard:
+    """Avisa quando a mesma tabela Silver e reescrita na mesma run.
+    
+    A Silver e por entidade de negocio e idempotente por dat_ref: tanto o
+    Parquet local quanto o part-<dat_ref> do Volume sao sobrescritos. Em
+    --format all os tres formatos promovem a mesma entidade, entao a ultima
+    carga vence em silencio. O guard nao impede a sobrescrita - declara quem 
+    sobrescreveu quem, para a contagem da Silver nunca ficar sem explicacao."""
+    def __init__(self):
+        self._seen: dict[str, str] = {}
+        self.warnings: list[str] = []
+
+    def check(self, table_name: str, filename: str) -> str | None:
+        origem = Path(filename).name
+        anterior = self._seen.get(table_name)
+        self._seen[table_name] = origem
+        if anterior is None or anterior == origem:
+            return None
+        msg = "silver/{} reescrita nesta run: {} sobrescreve {}".format(
+            table_name, origem, anterior
+        )
+        print("     [SILVER] [WARN] {}".format(msg))
+        self.warnings.append(msg)
+        return msg
+    
+_SILVER_GUARDS: dict[str, SilverCollisionGuard] = {}
+
+def silver_guard(run_id: str) -> SilverCollisionGuard:
+    """Guard por run: compartilhado entre cenarios, formatos e os dois runners."""
+    return _SILVER_GUARDS.setdefault(run_id, SilverCollisionGuard())
+
+def publish_quarantine_files(storage, filename: str, run_id: str,
+                             reject_report: dict | None = None,
+                             dlq: bool = False) -> list[dict]:
+    from src.connectors.bronze_uploader import publish_quarantine
+    candidates = []
+    if (reject_report or {}).get("rows_rejected"):
+        candidates.append("reject_"+ Path(filename).stem + ".csv")
+    if dlq:
+        candidates.append(filename)
+    out = []
+    for name in candidates:
+        if not storage.exists("quarantine", name):
+            continue
+        out.append(publish_quarantine(storage.read_path("quarantine", name),
+                                      table_name=Path(filename).stem, run_id=run_id))
+    return out
 
 def run_scenario(scenario: str, run_id: str, fmt: str = "csv") -> tuple[list[dict], list[dict]]:
     """Executa um único cenário end-to-end usando a camada Storage."""
@@ -122,7 +169,8 @@ def run_scenario(scenario: str, run_id: str, fmt: str = "csv") -> tuple[list[dic
             profiler_payload = profile(csv_path)
 
             slm_result = enrich(storage, contract_filename, profiler_payload)
-            parquet_filename = storage.promote_to_parquet(filename, "bronze", "silver", contract=contract)
+            silver_guard(run_id).check(Path(filename).stem, filename)
+            parquet_filename = storage.promote_to_parquet(filename, "bronze", "silver", contract=contract, run_id=run_id)
             cast_report = dict(getattr(storage, "last_cast_report", {}) or {})
             reject_report = dict(getattr(storage, "last_reject_report", {}) or {})
             gate = evaluate_gate(table, reject_report)
@@ -134,6 +182,10 @@ def run_scenario(scenario: str, run_id: str, fmt: str = "csv") -> tuple[list[dic
                 pub = publish_table(storage.read_path("silver", parquet_filename),
                                     table_name=Path(filename).stem, contract=contract, run_id=run_id)
                 publications.append(pub)
+
+            publications.extend(publish_quarantine_files(
+                storage,filename, run_id, reject_report=reject_report, dlq=val_result.status == "DLQ"
+            ))
         
         # Gold: métricas agregadas
         m = collect(run_id, val_result, profiler_payload, slm_result, METRICS_DIR, 
@@ -239,6 +291,12 @@ def main():
         print(f" [DATABRICKS] {p.get('layer', 'silver')}/{p['table']}: {p['error']}")
     for p in blocked:
         print(f" [GATE] {p['table']} nao publicada: {p['error']}")
+    colisoes = silver_guard(run_id).warnings
+    if colisoes:
+        print(f" [SILVER] {len(colisoes)} tabela(s) reescrita(s) nesta run "
+              f"(idempotencia por dat_ref; ver _ingest_format/_ingest_file na Silver):")
+        for msg in colisoes:
+            print(f"        {msg}")
     print("\n  Pipeline concluida.\n")
 
     return 2 if (failed or blocked) else 0

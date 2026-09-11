@@ -187,6 +187,7 @@ def task_generate_data(scenario, run_id, fmt="csv"):
                 "contract_filename": p["contract_filename"],
                 "scenario"         : scenario,
                 "format"           : fmt,
+                "run_id"           : run_id,
             }
             for p in produced
         ]
@@ -280,8 +281,14 @@ def task_profile(validated):
             except Exception as ce:
                 _log("JOB-DM-003", "PROFILE/{}".format(table), "WARN",
                      "contrato nao carregado: {}".format(ce))
+        from run_pipeline import silver_guard
+        collision = silver_guard(validated.get("run_id") or "").check(
+            Path(validated["filename"].stem, validated["filename"])
+        )
+        if collision:
+            _log("JOB-DM-003", "PROFILE/{}".format(table), "WARN", collision)
         parquet_filename = storage.promote_to_parquet(
-            validated["filename"], "bronze", "silver", contract=contract)
+            validated["filename"], "bronze", "silver", contract=contract, run_id=validated.get("run_id"))
         cast_report = dict(getattr(storage, "last_cast_report", {}) or {})
         reject_report = dict(getattr(storage, "last_reject_report", {}) or ())
 

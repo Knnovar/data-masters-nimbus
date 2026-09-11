@@ -97,7 +97,7 @@ class BronzeUploader(DatabricksUploader):
 
     def register_raw(self, table_name, source_path, fmt, run_id=None, dat_ref=None,
                      json_root_key=None):
-        full = "{}.{}.{}".format(self._catalog, self._schema, self.bronze_table(table_name))
+        full = "{}.{}.{}".format(self._catalog, self._schema, self.bronze_table(table_name, fmt))
         self._sql("CREATE SCHEMA IF NOT EXISTS {}.{}".format(self._catalog, self._schema))
         source = self._read_files_expr(source_path, fmt)
         part = self.PARTITION_COLUMN
@@ -175,7 +175,7 @@ class BronzeUploader(DatabricksUploader):
             self.describe_bronze(tbl, fmt)
         return full
 
-def QuarantineUploader(BronzeUploader):
+class QuarantineUploader(BronzeUploader):
     TABLE_COMMENT = ("Quarentena do Nimbus: linhas barradas antes da silver, com as colunas "
                      "_reject_columns, _reject_values, e _reject_reason "
                      "(TYPE_NOT_CONFORMANT, DUPLICATE_PK ou regra de contrato). "
@@ -183,7 +183,7 @@ def QuarantineUploader(BronzeUploader):
     def bronze_table(self, table_name, fmt=None):
         return "quarantine_{}".format(BronzeUploader.bronze_table(self, table_name, fmt))
 
-    def volume_dir(self, table_name):
+    def _volume_dir(self, table_name):
         return "{}/_quarantine".format(BronzeUploader._volume_dir(self, table_name))
 
 
@@ -230,7 +230,7 @@ def get_quarantine_uploader():
         schema       = getattr(cfg, "DATABRICKS_BRONZE_SCHEMA",        "bronze"), 
     )
 
-def pulish_quarantine(local_path, table_name, run_id=None, dat_ref=None):
+def publish_quarantine(local_path, table_name, run_id=None, dat_ref=None):
     import config as cfg
     result = {"table": table_name, "layer": "quarantine", "status": None,
               "target": None, "error": None}
@@ -239,7 +239,7 @@ def pulish_quarantine(local_path, table_name, run_id=None, dat_ref=None):
     
     if not enabled:
         return dict(result, status="DISABLED")
-    if databricks_configured():
+    if not databricks_configured():
         return dict(result, status="SKIPPED",
                     error="sem DATABRICKS_HOST/WAREHOUSE_ID - publicacao ignorada")
     if local_path is None or not Path(local_path).exists():
@@ -252,7 +252,7 @@ def pulish_quarantine(local_path, table_name, run_id=None, dat_ref=None):
         return dict(result, status="OK" if full else "UPLOADED", target=full)
     except Exception as e:
         print("[QUARANTINE] Publicacao falhou em {}: {}".format(table_name, e))
-        return dict(result, error="ERROR", error=str(e))
+    return dict(result, status="ERROR", error=str(e))
     
     
 

@@ -1,9 +1,35 @@
 """src/storage/storage.py — Abstração medallion com suporte a Parquet governado pelo Manifest."""
 import io, json, shutil
 from abc import ABC, abstractmethod
+from datetime import datetime, timezone
 from pathlib import Path
 import pandas as pd
 
+LINEAGE_COLUMNS = ["_ingest_file", "_ingest_format", "_ingest_time", "_ingest_run_id"]
+
+_FORMAT_BY_SUFFIX = {
+    ".csv": "csv", ".tsv": "tsv",
+    ".json": "json", ".jsonl": "json", ".ndjson": "json",
+    ".txt": "fixed", ".dat": "fixed", ".pos": "fixed", ".fix": "fixed",
+    ".parquet": "parquert",
+}
+
+def ingest_format(filename) -> str:
+    return _FORMAT_BY_SUFFIX.get(Path(filename).suffix.lower(), "outro")
+
+def add_lineage_columns(df, filename, run_id=None):
+    """Acrescenta a linhagem tecnica ao Dataframe ja tipado.
+    
+    Aplicada depois do cast, de proposito: estas colunas nao sao declaradas no
+    Manifest e nao devem aparecer como EXTRA_COLUMN nem passar pelo caster.
+    """
+
+    df = df.copy()
+    df["_ingest_file"]      = Path(filename).name
+    df["_ingest_format"]    = ingest_format(filename)
+    df["_ingest_time"]      = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    df["_ingest_run_id"]    = run_id or ""
+    return df
 class StorageBase(ABC):
     last_cast_report: dict = {}
     last_reject_report: dict = {}
@@ -16,7 +42,7 @@ class StorageBase(ABC):
     @abstractmethod
     def move(self, filename, from_layer, to_layer): pass
     @abstractmethod
-    def promote_to_parquet(self, filename, from_layer, to_layer, contract=None): pass
+    def promote_to_parquet(self, filename, from_layer, to_layer, contract=None, run_id=None): pass
     @abstractmethod
     def list(self, layer): pass
     @abstractmethod
@@ -112,7 +138,7 @@ class LocalStorage(StorageBase):
         shutil.move(str(src), str(dst))
         print("   [MOVE] {}: {} -> {}".format(filename, from_layer.upper(), to_layer.upper()))
 
-    def promote_to_parquet(self, filename, from_layer, to_layer, contract=None):
+    def promote_to_parquet(self, filename, from_layer, to_layer, contract=None, run_id=None):
         self.last_cast_report = {}
         self.last_reject_report = {}
         src = self._path(from_layer, filename)
@@ -133,10 +159,11 @@ class LocalStorage(StorageBase):
             else:  
                 df, cast_warnings = apply_manifest_schema(df, contract, report=cast_report)
             self.last_cast_report=cast_report
-            arrow_schema      = manifest_to_arrow_schema(contract, extra_columns=extra_cols)
+            arrow_schema      = manifest_to_arrow_schema(contract, extra_columns=extra_cols + LINEAGE_COLUMNS)
             metadata          = build_parquet_metadata(contract, cast_warnings)
             for w in cast_warnings:
                 print("   [SCHEMA] [{}] {}".format(filename, w))
+        df = add_lineage_columns(df, filename, run_id)
         pq = self._write_parquet_internal(to_layer, filename, df, arrow_schema, metadata)
         archive_dir = src.parent / "_archive"
         archive_dir.mkdir(exist_ok=True)
@@ -227,7 +254,7 @@ class MinIOStorage(StorageBase):
                                  CopySource(self._bucket(from_layer), filename))
         self._client.remove_object(self._bucket(from_layer), filename)
 
-    def promote_to_parquet(self, filename, from_layer, to_layer, contract=None):
+    def promote_to_parquet(self, filename, from_layer, to_layer, contract=None, run_id=None):
         self.last_cast_report = {}
         self.last_reject_report = {}
         tmp = self._tmp / filename
@@ -243,6 +270,7 @@ class MinIOStorage(StorageBase):
                 self.write("quarantine", "reject_" + _csv_name(filename), rejected)
             for w in cast_warnings:
                 print(" [SCHEMA] [{}] {}".format(filename, w))
+        df = add_lineage_columns(df, filename, run_id)
         pq = self.write_parquet(to_layer, filename, df)
         self._client.remove_object(self._bucket(from_layer), filename)
         return pq

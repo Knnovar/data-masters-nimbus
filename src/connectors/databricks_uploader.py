@@ -7,6 +7,13 @@ from datetime import datetime,timezone
 from typing import Optional
 import requests
 
+_LINEAGE_COLUMNS = {
+    "_ingest_file"  : {"description": "Arquivo de origem que produziu a linha."},
+    "_ingest_format": {"description": "Formato do arquivo de origem (csv|json|fixed|parquet)."},
+    "_ingest_time"  : {"description": "Data/hora UTC da promocao Bronze -> Silver"},
+    "_ingest_run_id": {"description": "run_id do pipeline Nimbus que produziu a linha."},
+}
+
 class DiagnoseResult:
     def __init__(self): self.levels = {}
     def add(self, level, ok, message): self.levels[level] = {"ok": ok, "message": message}
@@ -241,7 +248,7 @@ class DatabricksUploader:
         except Exception as e:
             print(f"[DATABRICKS] Nao foi possivel ler metadata: {e}")
             return 0
-        col_info = {}
+        col_info = dict(_LINEAGE_COLUMNS)
         if contract:
             for col in contract.schema:
                 desc  = col.description or ""
