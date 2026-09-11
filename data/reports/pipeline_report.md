@@ -1,5 +1,5 @@
 # Pipeline Projeto Nimbus - Relatorio de Execucao
-**Data:** 2026-09-08 23:25:26  |  **Run ID:** `run_20260908_231442_7de358`
+**Data:** 2026-09-11 17:57:41  |  **Run ID:** `run_20260911_174314_628a80`
 
 ---
 
@@ -7,15 +7,15 @@
 
 | Tabela | Cenário | Status | Linhas | Dups | Nulos (avg%) | Profiling (ms) | SLM (ms) | Score |
 |--------|---------|--------|--------|------|--------------|----------------|----------|-------|
-| `tb_clientes` | baseline | [PASS] PASS | 500 | 0 | 2.29% | 1283.5 | [OK] 69126.8 | **94.8** |
-| `tb_transacoes` | baseline | [WARN] WARNING | 2,030 | 30 | 0.81% | 4293.4 | [OK] 51948.0 | **86.0** |
-| `tb_contratos_credito` | baseline | [PASS] PASS | 300 | 0 | 0.0% | 903.4 | [OK] 65300.7 | **100.0** |
-| `tb_clientes` | baseline | [PASS] PASS | 500 | 0 | 0.0% | 16.6 | [OK] 62114.5 | **100.0** |
-| `tb_transacoes` | baseline | [WARN] WARNING | 2,030 | 30 | 0.0% | 25.7 | [OK] 54588.5 | **94.1** |
-| `tb_contratos_credito` | baseline | [PASS] PASS | 300 | 0 | 0.0% | 10.7 | [OK] 58992.9 | **100.0** |
-| `tb_clientes` | baseline | [PASS] PASS | 500 | 0 | 0.0% | 6.2 | [OK] 65774.4 | **100.0** |
-| `tb_transacoes` | baseline | [WARN] WARNING | 2,030 | 30 | 1.6% | 20.1 | [OK] 52612.6 | **92.1** |
-| `tb_contratos_credito` | baseline | [PASS] PASS | 300 | 0 | 0.0% | 7.4 | [OK] 63884.6 | **100.0** |
+| `tb_clientes` | baseline | [PASS] PASS | 500 | 0 | 2.29% | 1235.0 | [OK] 72340.9 | **94.8** |
+| `tb_transacoes` | baseline | [WARN] WARNING | 2,030 | 30 | 0.81% | 4081.8 | [OK] 52407.6 | **86.0** |
+| `tb_contratos_credito` | baseline | [PASS] PASS | 300 | 0 | 0.0% | 948.1 | [OK] 73221.5 | **100.0** |
+| `tb_clientes` | baseline | [PASS] PASS | 500 | 0 | 0.0% | 11.0 | [OK] 58075.0 | **100.0** |
+| `tb_transacoes` | baseline | [WARN] WARNING | 2,030 | 30 | 0.0% | 24.6 | [OK] 53726.4 | **94.1** |
+| `tb_contratos_credito` | baseline | [PASS] PASS | 300 | 0 | 0.0% | 10.5 | [OK] 61972.6 | **100.0** |
+| `tb_clientes` | baseline | [PASS] PASS | 500 | 0 | 0.0% | 6.0 | [OK] 50915.7 | **100.0** |
+| `tb_transacoes` | baseline | [WARN] WARNING | 2,030 | 30 | 1.6% | 10.5 | [OK] 54974.6 | **92.1** |
+| `tb_contratos_credito` | baseline | [PASS] PASS | 300 | 0 | 0.0% | 7.4 | [OK] 64923.6 | **100.0** |
 
 ---
 
@@ -60,7 +60,7 @@
 | `tb_transacoes` | baseline | PASS_WITH_REJECTS | 30 | 1.48% | 2.00% | - |
 | `tb_transacoes` | baseline | PASS_WITH_REJECTS | 30 | 1.48% | 2.00% | - |
 
-> Linha rejeitada = valor preenchido fora do tipo declarado no Manifest. A linha inteira vai para `quarantine/reject_<tabela>.csv` com `_reject_columns`, `_reject_values` e `_reject_reason`; acima da tolerancia do contrato (`tolerancia.max_reject_pct`) a publicacao e bloqueada .
+> Linha rejeitada = valor preenchido fora do tipo declarado no Manifest. A linha inteira vai para `quarantine/reject_<tabela>.csv` com `_reject_columns`, `_reject_values` e `_reject_reason`; acima da tolerancia do contrato (`tolerance.max_reject_pct`) a publicacao e bloqueada.
 
 ---
 
@@ -68,15 +68,15 @@
 
 | Tabela | Modelo | Wall (ms) | Carga (ms) | Prompt (Tok/ms) | Saida (tok/ms) | Tok/s | Cobertura | Truncado |
 |--------|--------|-----------|------------|-----------------|----------------|-------|-----------|----------|
-| `tb_clientes` | phi4 | 69,127 | 3 | 2487/1,061 | 1667/65,664 | **25.4** | 100.0% | nao |
-| `tb_transacoes` | phi4 | 51,948 | 2 | 2175/910 | 1249/48,710 | **25.6** | 100.0% | nao |
-| `tb_contratos_credito` | phi4 | 65,301 | 2 | 2718/6,420 | 1431/56,646 | **25.3** | 100.0% | nao |
-| `tb_clientes` | phi4 | 62,114 | 2 | 2401/2,073 | 1475/57,880 | **25.5** | 100.0% | nao |
-| `tb_transacoes` | phi4 | 54,588 | 2 | 2106/1,910 | 1288/50,261 | **25.6** | 100.0% | nao |
-| `tb_contratos_credito` | phi4 | 58,993 | 2 | 2687/4,347 | 1330/52,433 | **25.4** | 100.0% | nao |
-| `tb_clientes` | phi4 | 65,774 | 2 | 1941/640 | 1607/62,727 | **25.6** | 100.0% | nao |
-| `tb_transacoes` | phi4 | 52,613 | 2 | 1795/653 | 1281/49,608 | **25.8** | 100.0% | nao |
-| `tb_contratos_credito` | phi4 | 63,885 | 2 | 2494/1,025 | 1538/60,507 | **25.4** | 100.0% | nao |
+| `tb_clientes` | phi4 | 72,341 | 2 | 2475/2,077 | 1767/68,051 | **26.0** | 100.0% | nao |
+| `tb_transacoes` | phi4 | 52,408 | 2 | 2152/3,443 | 1225/46,769 | **26.2** | 100.0% | nao |
+| `tb_contratos_credito` | phi4 | 73,222 | 2 | 2686/1,925 | 1783/69,005 | **25.8** | 100.0% | nao |
+| `tb_clientes` | phi4 | 58,075 | 2 | 2402/2,021 | 1389/53,840 | **25.8** | 100.0% | nao |
+| `tb_transacoes` | phi4 | 53,726 | 2 | 2106/873 | 1310/50,434 | **26.0** | 100.0% | nao |
+| `tb_contratos_credito` | phi4 | 61,973 | 2 | 2686/1,916 | 1485/57,806 | **25.7** | 100.0% | nao |
+| `tb_clientes` | phi4 | 50,916 | 2 | 1949/624 | 1259/47,938 | **26.3** | 100.0% | nao |
+| `tb_transacoes` | phi4 | 54,975 | 2 | 1801/621 | 1355/52,018 | **26.0** | 100.0% | nao |
+| `tb_contratos_credito` | phi4 | 64,924 | 2 | 2494/1,763 | 1548/60,944 | **25.4** | 100.0% | nao |
 
 > Compare modelos com `python show_metrics.py --models` (agrega todas as runs por `slm_model`).
 

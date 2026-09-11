@@ -2,142 +2,126 @@
 
 ## Visão Geral
 
-A tabela `tb_clientes` é o cadastro mestre de clientes pessoa física e jurídica, utilizada por todos os produtos de crédito e relacionamento do banco. A segmentação (`cd_segmento`) determina o produto ofertado e o gestor responsável. A tabela é atualizada diariamente pelo batch noturno do sistema `CORE_BANCARIO_TOTVS`.
-
-### Propriedades da Tabela
-
-- **Owner**: squad-dados-cadastrais
-- **Versão**: 1.0.0
-- **Status do Manifesto**: DRAFT
-- **Fonte**: Sistema `CORE_BANCARIO_TOTVS`, formato CSV, codificação UTF-8, sistema operacional Unix, atualização diária.
-- **Contato**: squad-dados-cadastrais@banco.com.br
-- **Classificação de Dados**: Confidencial
-- **Período de Retenção**: 10 anos
-- **Regulamentações**: LGPD, BACEN 4658
-
-### Tolerâncias
-
-- **Máximo de Nulos**: 25%
-- **Máximo de Rejeições**: 1%
-- **Duplicatas Permitidas**: Não
-
-### Dependências
-
-- `tb_agencias`
-- `tb_segmentos`
+A tabela `tb_clientes` é um cadastro mestre de clientes pessoa física e jurídica. Ela é utilizada por todos os produtos de crédito e relacionamento do banco. A segmentação dos clientes determina o produto oferecido e o gestor responsável. A tabela é atualizada diariamente pelo batch noturno do sistema CORE_BANCARIO_TOTVS.
 
 ## Colunas
 
 ### `cd_cliente`
-
 - **Tipo**: String
 - **Nullable**: Não
-- **Chave Primária**: Sim
-- **Descrição**: Código único do cliente no sistema legado. Gerado sequencialmente pelo `CORE_BANCARIO`.
+- **Descrição**: Código único do cliente no sistema legado. Gerado sequencialmente pelo CORE_BANCARIO.
+- **Comportamento Esperado**: Cada cliente deve ter um código único. Não deve haver valores nulos ou duplicados.
 - **Estatísticas**:
-  - **% de Nulos**: 0%
-  - **Contagem Única**: 499
-- **Comportamento Esperado**: Deve ser único e não nulo.
+  - Percentual de nulos: 0.0%
+  - Contagem única: 500
+- **Anomalias**: Nenhuma observada.
 
 ### `nr_cpf_cnpj`
-
 - **Tipo**: String
 - **Nullable**: Não
 - **Descrição**: CPF (11 dígitos) ou CNPJ (14 dígitos) sem máscara.
-- **Regulamentações**: LGPD_SENSITIVE
-- **Estatísticas**: Não disponíveis no perfil de dados.
-- **Comportamento Esperado**: Deve ser único e não nulo, seguindo o padrão de CPF ou CNPJ.
+- **Comportamento Esperado**: Deve conter um CPF ou CNPJ válido e único para cada cliente.
+- **Estatísticas**:
+  - Percentual de nulos: 0.0%
+  - Contagem única: 500
+  - Sensível: Sim
+  - Faixa: `[MASCARADO]`
+- **Anomalias**: Nenhuma observada.
+- **Implicações de Compliance**: Deve ser tratado conforme LGPD devido à sua natureza sensível.
 
 ### `nm_cliente`
-
 - **Tipo**: String
 - **Nullable**: Não
 - **Descrição**: Nome completo do cliente conforme cadastro na Receita Federal.
-- **Regulamentações**: LGPD_SENSITIVE
+- **Comportamento Esperado**: Deve conter o nome completo do cliente.
 - **Estatísticas**:
-  - **% de Nulos**: 0%
-  - **Contagem Única**: 495
-  - **Valores Comuns**: "Juan Rocha", "João Miguel da Luz", "Clarice Pires" (cada um com 2 ocorrências)
-- **Comportamento Esperado**: Deve ser único e não nulo.
+  - Percentual de nulos: 0.0%
+  - Contagem única: 499
+  - Sensível: Sim
+- **Anomalias**: 1 duplicata observada.
+- **Implicações de Compliance**: Deve ser tratado conforme LGPD devido à sua natureza sensível.
 
 ### `dt_nascimento`
-
-- **Tipo**: Date
+- **Tipo**: String
 - **Nullable**: Sim
 - **Descrição**: Data de nascimento. Nula para clientes PJ.
-- **Regulamentações**: LGPD_SENSITIVE
-- **Estatísticas**: Não disponíveis no perfil de dados.
-- **Comportamento Esperado**: Deve ser nulo para clientes PJ.
+- **Comportamento Esperado**: Deve conter a data de nascimento para clientes PF. Deve ser nula para clientes PJ.
+- **Estatísticas**:
+  - Percentual de nulos: 0.0%
+  - Contagem única: 495
+  - Sensível: Sim
+- **Anomalias**: Nenhuma observada.
+- **Implicações de Compliance**: Deve ser tratado conforme LGPD devido à sua natureza sensível.
 
 ### `cd_segmento`
-
 - **Tipo**: String
 - **Nullable**: Não
-- **Descrição**: Segmento de relacionamento. Domínio: VAREJO, PRIME, PRIVATE, PJ_PEQUENO, PJ_MEDIO.
+- **Descrição**: Segmento de relacionamento. Dominio: VAREJO, PRIME, PRIVATE, PJ_PEQUENO, PJ_MEDIO.
+- **Comportamento Esperado**: Deve conter um valor válido do domínio especificado.
+- **Estatísticas**:
+  - Percentual de nulos: 0.0%
+  - Contagem única: 5
+- **Anomalias**: Nenhuma observada.
 - **Regras de Negócio**:
   - PRIME: `vl_renda_mensal >= 10000`
   - PRIVATE: `vl_renda_mensal >= 30000`
-- **Estatísticas**:
-  - **% de Nulos**: 0%
-  - **Contagem Única**: 496
-  - **Valores Comuns**: "PJ_MEDIO" (com múltiplas ocorrências)
-- **Comportamento Esperado**: Deve seguir as regras de negócio associadas a cada segmento.
+  - Sempre nulo para `cd_segmento` IN (PJ_PEQUENO, PJ_MEDIO)
 
 ### `cd_agencia`
-
 - **Tipo**: String
 - **Nullable**: Não
 - **Descrição**: Código numérico de 4 dígitos da agência de relacionamento principal.
+- **Comportamento Esperado**: Deve conter um código de agência válido.
 - **Estatísticas**:
-  - **% de Nulos**: 0%
-  - **Contagem Única**: 473
-  - **Valores Comuns**: "AGENC-" (15 ocorrências)
-- **Comportamento Esperado**: Deve ser um código numérico válido de 4 dígitos.
+  - Percentual de nulos: 0.0%
+  - Contagem única: 473
+- **Anomalias**: 27 duplicatas observadas.
 
 ### `vl_renda_mensal`
-
-- **Tipo**: Float
+- **Tipo**: String
 - **Nullable**: Sim
 - **Descrição**: Renda mensal declarada em BRL. Nula para clientes PJ.
-- **Regras de Negócio**: Sempre nulo para `cd_segmento` IN (PJ_PEQUENO, PJ_MEDIO)
-- **Regulamentações**: SCR_CANDIDATE
-- **Estatísticas**: Não disponíveis no perfil de dados.
-- **Comportamento Esperado**: Deve ser nulo para segmentos PJ_PEQUENO e PJ_MEDIO.
+- **Comportamento Esperado**: Deve conter a renda mensal para clientes PF. Deve ser nula para clientes PJ.
+- **Estatísticas**:
+  - Percentual de nulos: 0.0%
+  - Contagem única: 398
+- **Anomalias**: 103 valores `nan` observados.
+- **Implicações de Compliance**: Candidato a SCR (Sensitive Content Review).
 
 ### `fl_ativo`
-
-- **Tipo**: Boolean
+- **Tipo**: String
 - **Nullable**: Não
 - **Descrição**: Indica se o cliente possui relacionamento ativo com o banco.
-- **Estatísticas**: Não disponíveis no perfil de dados.
-- **Comportamento Esperado**: Deve ser verdadeiro ou falso.
+- **Comportamento Esperado**: Deve ser `True` ou `False`.
+- **Estatísticas**:
+  - Percentual de nulos: 0.0%
+  - Contagem única: 2
+- **Anomalias**: Nenhuma observada.
 
 ### `dt_cadastro`
-
-- **Tipo**: Date
+- **Tipo**: String
 - **Nullable**: Não
 - **Descrição**: Data de abertura do cadastro no sistema.
-- **Estatísticas**: Não disponíveis no perfil de dados.
-- **Comportamento Esperado**: Deve ser uma data válida.
-
-## Anomalias Observadas
-
-- **Duplicatas de Nome**: O nome "Juan Rocha", "João Miguel da Luz" e "Clarice Pires" aparecem mais de uma vez, o que pode indicar duplicatas.
-- **Código de Agência**: O valor "AGENC-" aparece 15 vezes, o que pode indicar dados incorretos ou incompletos.
+- **Comportamento Esperado**: Deve conter a data de cadastro do cliente.
+- **Estatísticas**:
+  - Percentual de nulos: 0.0%
+  - Contagem única: 462
+- **Anomalias**: Nenhuma observada.
 
 ## Implicações de Compliance
 
-- **LGPD**: Dados sensíveis como CPF/CNPJ, nome e data de nascimento estão sujeitos a regulamentações de proteção de dados.
-- **BACEN 4658**: Requisitos de segurança e privacidade de dados financeiros.
+- **LGPD**: A tabela contém dados sensíveis como CPF/CNPJ, nome e data de nascimento, que devem ser tratados conforme a Lei Geral de Proteção de Dados.
+- **BACEN 4658**: A tabela deve ser mantida conforme as diretrizes do Banco Central do Brasil.
+- **Data Classification**: Confidencial
+- **Retenção**: 10 anos
 
 ## Pontos de Atenção
 
-1. **Duplicatas de Nome**: Verificar e corrigir duplicatas nos nomes dos clientes.
-2. **Código de Agência**: Investigar a presença do código "AGENC-" para garantir a integridade dos dados.
-3. **Segmentação de Renda**: Assegurar que a segmentação de renda esteja correta conforme as regras de negócio.
-4. **Dados Sensíveis**: Manter a conformidade com a LGPD para dados sensíveis.
-5. **Atualização Diária**: Garantir que a atualização diária do batch noturno esteja funcionando corretamente para manter a precisão dos dados.
+1. **Duplicatas**: Observadas nas colunas `nm_cliente` e `cd_agencia`.
+2. **Valores `nan`**: Observados na coluna `vl_renda_mensal`.
+3. **Compliance**: A tabela contém dados sensíveis que devem ser tratados conforme LGPD e BACEN 4658.
+4. **Regras de Negócio**: Verificar a consistência das regras de negócio relacionadas ao segmento e renda mensal.
+5. **Atualização Diária**: Garantir que o processo de atualização diária esteja funcionando corretamente para manter a integridade dos dados.
 
 ---
-
 > **[AI_METADATA_STATUS: DRAFT]** — Documentação gerada por SLM. Requer validação humana pelo Data Steward responsável antes de uso em produção.

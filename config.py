@@ -51,3 +51,4 @@ DATABRICKS_BRONZE_SCHEMA = os.environ.get("DATABRICKS_BRONZE_SCHEMA",   "bronze"
 DATABRICKS_AUTO_UPLOAD  = os.environ.get("DATABRICKS_AUTO_UPLOAD",  "True").lower() in ("true", "1", "yes")
 DATABRICKS_BRONZE_VOLUME = os.environ.get("DATABRICKS_BRONZE_VOLUME", "landing")
 DATABRICKS_BRONZE_UPLOAD = os.environ.get("DATABRICKS_BRONZE_UPLOAD", "True").lower() in ("true", "1", "yes")
+DATABRICKS_QUARANTINE_UPLOAD = os.environ.get("DATABRICKS_QUARANTINE_UPLOAD", "True").lower() in ("true", "1", "yes")
