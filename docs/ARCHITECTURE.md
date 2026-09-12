@@ -111,7 +111,7 @@ python prefect_flow.py --no-prefect --scenario baseline --run-id %%JOBRUNID%%
 
 ## Métricas e quality score
 
-A cada execução, `metrics_collector.py` calcula um score de 0 a 100 por tabela combinando quatro dimensões: o status da validação (40 pontos), a taxa de nulos em colunas obrigatórias (30 pontos), a taxa de duplicatas (20 pontos) e a cobertura de descrições no schema (10 pontos). Esses scores ficam em JSON em `data/metrics/` e são consultáveis via `python show_metrics.py`.
+A cada execução, `quality_score.py` calcula um score de 0 a 100 por tabela combinando quatro dimensões: conformidade de tipos contra o Manifest (40%),completude em relação à tolerância de nulo do contrato (25%), unicidade da chave primária (20%) e estabilidade de schema(15%). O `metrics_collector.py`grava os registros pelo storage configurado - `data/metrics/` e `data/reports/` no backend local, buckets `nimbus-metrics` e `nimbus-reports` com `USE_MINIO=true` - e o `python show_metrics.py` lê do mesmo backend, sem depender do filesystem.
 
 ---
 

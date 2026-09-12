@@ -23,21 +23,21 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from config import METRICS_DIR
+from src.storage.storage import get_storage
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Carregamento
 # ─────────────────────────────────────────────────────────────────────────────
 
-def load_all_metrics(metrics_dir: Path) -> list[dict]:
+def load_all_metrics(storage) -> list[dict]:
     """Carrega todos os registros de metricas, excluindo arquivos summary."""
     records = []
-    for path in sorted(metrics_dir.glob("*.json")):
-        if "summary" in path.name:
+    for name in sorted(n for n in storage.list("metrics") if n.endswith(".json")):
+        if "summary" in name:
             continue
         try:
-            with open(path, encoding="utf-8") as f:
+            with open(storage.read_path("metrics", name), encoding="utf-8") as f:
                 data = json.load(f)
             # Arquivo individual de tabela
             if isinstance(data, dict):
@@ -352,7 +352,7 @@ def main():
     parser.add_argument("--score",  action="store_true", help="Decompoe o quality score nas 4 dimensoes")
     args = parser.parse_args()
 
-    records = load_all_metrics(METRICS_DIR)
+    records = load_all_metrics(get_storage())
 
     if not records:
         print("[INFO] Nenhuma metrica encontrada. Execute o pipeline primeiro:")

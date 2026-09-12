@@ -20,13 +20,12 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from config import METRICS_DIR, REPORTS_DIR, DATA_DIR
 from src.storage.storage import get_storage
 from src.generators.data_generator import generate_all
 from src.validation.validator import validate
 from src.profiler.duckdb_profiler import profile
 from src.slm.ollama_enrichment import enrich
-from src.metrics.metrics_collector import collect, generate_report
+from src.metrics.metrics_collector import collect, generate_report, save_summary
 
 BANNER = """
 ╔══════════════════════════════════════════════════════════════════╗
@@ -204,7 +203,7 @@ def run_scenario(scenario: str, run_id: str, fmt: str = "csv") -> tuple[list[dic
             ))
         
         # Gold: métricas agregadas
-        m = collect(run_id, val_result, profiler_payload, slm_result, METRICS_DIR, 
+        m = collect(run_id, val_result, profiler_payload, slm_result,
                     contract=contract, cast_report=cast_report, fmt = fmt,
                     reject_report=reject_report, gate=gate)
         scenario_metrics.append(m)
@@ -310,12 +309,11 @@ def main():
     report_path = generate_report(all_metrics, REPORTS_DIR)
 
     # Salva JSON consolidado
-    summary_path = METRICS_DIR / f"{run_id}_summary.json"
-    with open(summary_path, "w", encoding="utf-8") as f:
-        json.dump(all_metrics, f, ensure_ascii=False, indent=2)
+    report_name = generate_report(all_metrics)
+    summary_name = save_summary(run_id, all_metrics)
 
-    print(f"  Metricas JSON : {summary_path}")
-    print(f"  Relatorio MD  : {report_path}")
+    print(f"  Metricas JSON : {summary_name}")
+    print(f"  Relatorio MD  : {report_name}")
     attempted = [p for p in publications if p["status"] not in ("DISABLED", "SKIPPED", "BLOCKED")]
     skipped = [p for p in publications if p["status"] == "SKIPPED"]
     failed = [p for p in publications if p["status"] == "ERROR"]

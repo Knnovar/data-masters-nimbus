@@ -28,7 +28,6 @@ Uso:
 """
 
 import argparse
-import json
 import os
 import sys
 import uuid
@@ -38,13 +37,12 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config import METRICS_DIR, REPORTS_DIR
 from src.storage.storage import get_storage
 from src.generators.data_generator import generate_all
 from src.validation.validator import validate
 from src.profiler.duckdb_profiler import profile
 from src.slm.ollama_enrichment import enrich
-from src.metrics.metrics_collector import collect, generate_report
+from src.metrics.metrics_collector import collect, generate_report, save_summary
 from src.ingestion.normalizer import normalize
 
 # Prefect e opcional — sem ele os decoradores viram no-ops transparentes
@@ -405,7 +403,6 @@ def task_collect_metrics(enriched, run_id):
         val_result,
         enriched.get("profiler_payload", {}),
         enriched.get("slm_result", {}),
-        METRICS_DIR,
         contract        = _load_contract(enriched.get("contract_filename")),
         cast_report     =enriched.get("cast_report") or {},
         reject_report   =enriched.get("reject_report") or {},    
@@ -424,14 +421,11 @@ def task_report(all_metrics, run_id):
     Roda mesmo se alguns jobs anteriores retornaram WARNING.
     """
     _log("JOB-DM-006", "REPORT", "STARTED", "tables={}".format(len(all_metrics)))
-    report_path = generate_report(all_metrics, REPORTS_DIR)
+    report_name = generate_report(all_metrics)
+    save_summary(run_id, all_metrics)
 
-    summary_path = METRICS_DIR / "{}_summary.json".format(run_id)
-    with open(summary_path, "w", encoding="utf-8") as f:
-        json.dump(all_metrics, f, ensure_ascii=False, indent=2)
-
-    _log("JOB-DM-006", "REPORT", "ENDED_OK", "report={}".format(report_path.name))
-    return str(report_path)
+    _log("JOB-DM-006", "REPORT", "ENDED_OK", "report={}".format(report_name))
+    return report_name
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -445,8 +439,12 @@ def task_report(all_metrics, run_id):
 )
 def pipeline_flow(scenario="baseline", run_id=None, fmt="csv"):
     """
-    DAG completo. Cada tabela passa pelos jobs 002-005 em sequencia.
-    Com Prefect server ativo, as tres tabelas rodam em paralelo automaticamente.
+    DAG completo. Cada tabela passa pelos jobs 002-005 em sequencia, e as tabelas
+    tambem sao percorridas em sequencia (um laco).
+
+    Exit code devolvido em "exit_code": 0 = publicado, 2 = bloqueado por
+    gate/quarentena (levanta GateBlocked para marcar a run como falha no Prefect),
+    1 = erro inesperaco (excecao nao tratada).
 
     DAG de dependencias:
         [001-GENERATE]

@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from src.metrics import quality_score
 from src.validation.validator import ValidationResult
+from src.storage.storage import get_storage
 
 def _slm_metrics(slm_result: dict) -> dict:
     """Achata perf/output do enriquecimento para comparar modelos entre runs.
@@ -44,7 +45,6 @@ def collect(
     val_result      : ValidationResult,
     profiler_payload: dict,
     slm_result      : dict,
-    metrics_dir     : Path,
     contract        = None,
     cast_report     : dict | None = None,
     fmt             : str = 'csv',
@@ -92,11 +92,21 @@ def collect(
     }
 
     # Persiste JSON por run
-    path = metrics_dir / f"{run_id}_{val_result.table}_{fmt}.json"
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(record, f, ensure_ascii=False, indent=2)
-
+    get_storage().write_text(
+        "metrics",
+        f"{run_id}_{val_result.table}_{fmt}.json",
+        json.dumps(record, ensure_ascii=False, indent=2),
+    )
     return record
+
+def save_summary(run_id: str, all_metrics: list[dict]) -> str:
+    """Grava o consolidado da run na camada de metricas e devolve o nome do objeto."""
+    filename = f"{run_id}_summary.json"
+    get_storage().write_text(
+        "metrics", filename, json.dumps(all_metrics, ensure_ascii=False, indent=2)
+    )
+    return filename
+    
 
 
 def generate_report(all_metrics: list[dict], reports_dir: Path) -> Path:
@@ -231,9 +241,8 @@ def generate_report(all_metrics: list[dict], reports_dir: Path) -> Path:
         "> Requer validação humana pelo Data Steward antes de uso em produção.",
     ]
 
-    report_path = reports_dir / "pipeline_report.md"
-    with open(report_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
+    report_name = "pipeline_report.md"
+    get_storage().write_text("reports", report_name, "\n".join(lines))
 
-    print(f"\n   [REPORT] Relatorio salvo em: {report_path}")
-    return report_path
+    print(f"\n   [REPORT] Relatorio salvo em: {report_name}")
+    return report_name
