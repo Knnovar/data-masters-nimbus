@@ -103,8 +103,8 @@ class TestUploadRaw(unittest.TestCase):
 
     def test_returns_volume_folder(self):
         with patch.object(self.u._session, "put", return_value=_ok()):
-            folder = self.u.upload_raw(self.csv, "tb_clientes", dat_ref="2024-01-01")
-        self.assertEqual(folder, "/Volumes/nimbus/bronze/landing/tb_clientes")
+            target = self.u.upload_raw(self.csv, "tb_clientes", dat_ref="2024-01-01")
+        self.assertEqual(target, "/Volumes/nimbus/bronze/landing/tb_clientes/dat_ref=2024-01-01/tb_clientes.csv")
 
     def test_api_error_raises(self):
         with patch.object(self.u._session, "put", return_value=_ok(status_code=403)):
@@ -121,10 +121,11 @@ class TestRegisterRaw(unittest.TestCase):
     def test_ctas_uses_read_files(self):
         stmts = []
         def cap(s, **kw): stmts.append(s); return _sql_ok()
+        path = "/Volumes/nimbus/bronze/landing/tb_clientes/dat_ref=2024-01-01/tb_clientes.csv"
         with patch.object(self.u, "_sql", side_effect=cap):
-            self.u.register_raw("tb_clientes", "/Volumes/nimbus/bronze/landing/tb_clientes", "csv")
+            self.u.register_raw("tb_clientes", path, "csv")
         ctas = next(s for s in stmts if "CREATE OR REPLACE TABLE" in s)
-        self.assertIn("read_files", ctas)
+        self.assertIn("read_files('{}'".format(path), ctas)
         self.assertIn("inferColumnTypes => false", ctas)
         self.assertIn("header => true", ctas)
 
@@ -239,6 +240,8 @@ class TestPublishBronze(unittest.TestCase):
 
     def test_never_raises(self):
         with patch("config.DATABRICKS_BRONZE_UPLOAD", True), \
+             patch("config.DATABRICKS_HOST", HOST), \
+             patch("config.DATABRICKS_WAREHOUSE_ID", WID), \
              patch("src.connectors.bronze_uploader.get_bronze_uploader",
                    side_effect=Exception("boom")):
             result = publish_bronze(self.csv, "tb_clientes")
@@ -249,16 +252,21 @@ class TestPublishBronze(unittest.TestCase):
         up = MagicMock()
         up.upload_and_register_raw.return_value = "nimbus.bronze.tb_clientes"
         with patch("config.DATABRICKS_BRONZE_UPLOAD", True), \
+             patch("config.DATABRICKS_HOST", HOST), \
+             patch("config.DATABRICKS_WAREHOUSE_ID", WID), \
              patch("src.connectors.bronze_uploader.get_bronze_uploader", return_value=up):
             result = publish_bronze(self.csv, "tb_clientes", run_id="run_20240115_120000_abc")
         self.assertEqual(result["status"], "OK")
         self.assertEqual(result["target"], "nimbus.bronze.tb_clientes")
-        self.assertEqual(up.upload_and_register_raw.call_args.kwargs["dat_ref"], "2024-01-15")
+        up.upload_and_register_raw.assert_called_once()
+        self.assertEqual(up.upload_and_register_raw.call_args[1]["dat_ref"], "2024-01-15")
 
     def test_uploaded_when_no_table(self):
         up = MagicMock()
         up.upload_and_register_raw.return_value = None
         with patch("config.DATABRICKS_BRONZE_UPLOAD", True), \
+             patch("config.DATABRICKS_HOST", HOST), \
+             patch("config.DATABRICKS_WAREHOUSE_ID", WID), \
              patch("src.connectors.bronze_uploader.get_bronze_uploader", return_value=up):
             result = publish_bronze(self.csv, "tb_clientes")
         self.assertEqual(result["status"], "UPLOADED")
