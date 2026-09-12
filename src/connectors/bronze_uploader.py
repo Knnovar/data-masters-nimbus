@@ -255,7 +255,7 @@ def publish_quarantine(local_path, table_name, run_id=None, dat_ref=None):
         return dict(result, status="OK" if full else "UPLOADED", target=full)
     except Exception as e:
         print("[QUARANTINE] Publicacao falhou em {}: {}".format(table_name, e))
-    return dict(result, status="ERROR", error=str(e))
+        return dict(result, status="ERROR", error=str(e))
     
     
 

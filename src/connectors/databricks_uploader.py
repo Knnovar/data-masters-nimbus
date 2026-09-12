@@ -293,8 +293,8 @@ class DatabricksUploader:
         steward = getattr(contract, "steward", None)
         if steward and steward.email: tags["steward"] = steward.email
         # Evidencia de HITL: quem promoveu o manifesto e quando (so existe se VALIDATED)
-        if getattr(contract, "validateb_by", None): tags["validated_by"] = contract.validated_by
-        if getattr(contract, "validateb_at", None): tags["validated_at"] = contract.validated_at
+        if getattr(contract, "validated_by", None): tags["validated_by"] = contract.validated_by
+        if getattr(contract, "validated_at", None): tags["validated_at"] = contract.validated_at
         source = getattr(contract, "source", None)
         if source and source.system: tags["source_system"] = source.system
         return tags
