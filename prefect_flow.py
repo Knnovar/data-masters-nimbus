@@ -536,8 +536,7 @@ def _print_summary(all_metrics, run_id):
     print("\n" + "=" * 66)
     print("  RUN: {}".format(run_id))
     print("=" * 66)
-    gate_tag = {"BLOCKED": "[BLOQUEADO]", "PASS_WITH_REJECTS": "[C/ REJEICAO]", 
-               "PASS": "[LIBERADA]"} 
+    from run_pipeline import gate_label
     print("  {:<26} {:<13} {:<10} {:<12} {:>6}".format("Tabela", "Cenario", "Status", "Publicacao", "Score"))
     print("  " + "-" * 62)
     for m in all_metrics:
@@ -545,7 +544,7 @@ def _print_summary(all_metrics, run_id):
         print("  {:<26} {:<13} {} {:<8} {:<12} {:>6.1f}/100".format(
             m["table"], m["scenario"], tag,
             m["validation_status"],
-            gate_tag.get(m.get("gate_status"), "[LIBERADA]"), m["quality_score"]))
+            gate_label(m), m["quality_score"]))
     avg = round(sum(m["quality_score"] for m in all_metrics) / len(all_metrics), 1) if all_metrics else 0
     print("  " + "-" * 62)
     print("  {:<55} {:>6.1f}/100\n".format("Score medio", avg))

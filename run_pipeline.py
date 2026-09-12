@@ -211,6 +211,26 @@ def run_scenario(scenario: str, run_id: str, fmt: str = "csv") -> tuple[list[dic
 
     return scenario_metrics, publications
 
+_GATE_LABELS = {
+    "MANIFEST_NOT_VALIDATED": "[GOVERNANCA]",
+    "VALIDATION_DLQ"        : "[QUARENTENA]",
+    "REJECT_ABOVE_TOLERANCE": "[QUALIDADE]",
+}
+
+def gate_label(metrics: dict) -> str:
+    """Rotulo da coluna publicacao: distingue o motivo de bloqueio
+    
+    Tres coisas diferentes apareciam como [BLOQUEADO]: manifesto nao validado
+    (governanca), tabela em quarentena por schema (DLQ) e rejeicao acima da
+    tolerancia (qualidade). A acao do steward e diferente em cada caso.
+    """
+
+    status = metrics.get("gate_status")
+    if status == "BLOCKED":
+        return _GATE_LABELS.get(metrics.get("gate_reason"), "[BLOQUEADO]")
+    if status == "PASS_WITH_REJECTS":
+        return "[C/ REJEICAO]"
+    return "[LIBERADA]"
 
 def print_summary(all_metrics: list[dict]) -> None:
     """Imprime tabela de resultados no terminal."""
@@ -223,10 +243,9 @@ def print_summary(all_metrics: list[dict]) -> None:
     print("-" * 78)
 
     icons = {"PASS": "[PASS]", "WARNING": "[WARN]", "DLQ": "[DLQ]"}
-    gate_icons = {"BLOCKED": "[BLOQUEADO]", "PASS_WITH_REJECTS": "[C/ REJEICAO]", "PASS": "[LIBERADA]"}
     for m in all_metrics:
         icon = icons.get(m["validation_status"], "⚪")
-        gate = gate_icons.get(m.get("gate_status"), "[LIBERADA]")
+        gate = gate_label(m)
         print(
             f"{m['table']:<26} {m['scenario']:<13} "
             f"{icon} {m['validation_status']:<8} {gate:<12} {m['quality_score']:>6.1f}/100"
