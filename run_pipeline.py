@@ -35,15 +35,31 @@ BANNER = """
 ╚══════════════════════════════════════════════════════════════════╝
 """
 
-def evaluate_gate(table: str, reject_report: dict) -> dict:
+def evaluate_gate(table: str, reject_report: dict, contract=None) -> dict:
     """Decide se a tabela pode ser publicada.
+
+    Dois criterios, nesta Ordem:
     
-    O criterio e a taxa de linhas rejeitadas por tipo divergente do Manifest
-    contra a tolerancia declarada no contrato (`tolerance.max_reject_pct`, com 
-    fallback para `max_null_pct`). Rejeicao dentro da tolerancia publica com 
-    aviso; acima dela bloqueia a publicacao e o exit code da run.
+    1. Governanca (opcional, `REQUIRE_VALIDATED_MANIFEST`): manifesto ainda em
+    DRAFT nao publica, porque o schema da Silver e a documentacao do catalogo
+    nao passaram pela validacao do Data Steward. Desligado por padrao.
+    2. Qualidade: taxa de linhas rejeitadas por tipo divergente do Manifest contra
+    a tolerancia declarada no contrato(`tolerance.max_reject_pct`, com fallback
+    para `max_null_pct`). Rejeicao dentro da tolerancia publica com aviso; acima
+    dela bloqueia a publicacao e o exit code da run
     """
     import config
+
+    if getattr(config, "REQUIRE_VALIDATED_MANIFEST", False) and contract is not None \
+        and not contract.is_validated():
+        detail = "manifesto em {} - promova com: python -m src.manifest.manifest_validator" \
+                 " --file <contrato.yaml> --steward 'Nome'".format(
+                     getattr(contract, "manifest_status", "DRAFT")
+                 )
+        print("     [GATE] [{}] BLOQUEADO: {}".format(table, detail))
+        return{"status": "BLOCKED", "reason": "MANIFEST_NOT_VALIDATED", "detail": detail,
+               "reject_pct": reject_report.get("reject_pct"),
+               "limit_pct": reject_report.get("limit_pct")}
 
     reject_pct = reject_report.get("reject_pct")
     limit_pct = reject_report.get("limit_pct")
@@ -173,7 +189,7 @@ def run_scenario(scenario: str, run_id: str, fmt: str = "csv") -> tuple[list[dic
             parquet_filename = storage.promote_to_parquet(filename, "bronze", "silver", contract=contract, run_id=run_id)
             cast_report = dict(getattr(storage, "last_cast_report", {}) or {})
             reject_report = dict(getattr(storage, "last_reject_report", {}) or {})
-            gate = evaluate_gate(table, reject_report)
+            gate = evaluate_gate(table, reject_report, contract=contract)
             if gate["status"] == "BLOCKED":
                 publications.append({"table": table, "status": "BLOCKED", "layer": "silver",
                                      "error": gate["detail"], "rows": 0})

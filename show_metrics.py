@@ -209,8 +209,8 @@ def view_issues(records: list[dict]) -> None:
             print(f"       [ERR]  {issue}")
         for warn in r.get("warnings",[]):
             # Omite o aviso de DRAFT para nao poluir o dashboard
-            if "DRAFT" not in warn:
-                print(f"       [WARN] {warn}")
+            tag_warn = "[HITL]" if "DRAFT" in warn else "[WARN]"
+            print(f"       [WARN] {warn}")
 
 
 def view_slm(records: list[dict]) -> None:

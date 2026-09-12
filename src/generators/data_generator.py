@@ -504,7 +504,35 @@ def _build_writer(fmt: str, table_name: str, df: pd.DataFrame) -> BaseWriter:
         f"Formato nao suportado: '{fmt}'. Opcoes validas: {', '.join(SUPPORTED_FORMATS)}"
     )
 
-
+def _preserve_validation(storage, contract_filename: str, contract: dict) -> dict:
+    """Nao rebaixa para DRAFT um contrato ja promovido pelo Data Steward.
+    
+    O gerador reescreve o YAML a cada run. Sem isso, a promocao feita por
+    `manifest_validator --steward` seria perdida na run seguinte e o contrato
+    voltaria para DRAFT. A promocao so e preservada quando a versao do contrato
+    nao mudou: versao nova significa schema novo, que precisa de nova validacao 
+    humana (mesma semantica do manifest_writer, que nunca sobrescreve VALIDATED).
+    """
+    if not storage.exists("contracts", contract_filename):
+        return contract
+    try:
+        with open(storage.read_path("contracts", contract_filename), encoding="utf-8") as f:
+            existing = yaml.safe_load(f) or {}
+    except Exception as e:
+        print(f"    [CONTRACT][WARN] {contract_filename} nao relido: (e)")
+        return contract
+    if existing.get("manifest_status") != "VALIDATED":
+        return contract
+    if existing.get("version") != contract.get("version"):
+        print(f" [CONTRACT] {contract_filename}: versao mudou "
+              f"({existing.get('version')} -> {contract.get('version')}) -"
+              f"volta para DRAFT, requer nova validacao do steward")
+        return contract
+    print(f"    [CONTRACT] {contract_filename}: VALIDATED preservado "
+          f"(por {existing.get('validated_by')})")
+    return {**contract,
+        "manifest_status": "VALIDATED",
+        "validated_by": existing.get("validated_at")}
 def generate_all(
     storage,
     scenario: ScenarioType = "baseline",
@@ -556,8 +584,10 @@ def generate_all(
         base_name             = f"{table_name}{suffix}"
         filename, file_content = writer.serialize(df, base_name)
 
+        contrat = _preserve_validation(storage, contract_filename, contract)
         # Persiste via storage (agnostico de backend)
-        storage.write_text("bronze", filename, file_content)
+        storage.write_text("contracts", contract_filename, 
+                           yaml.dump(contract, allow_unicode=True, sort_keys=False))
 
         # Para fixed-width, grava sidecar com colspecs para leitura posterior
         if fmt == "fixed" and hasattr(writer, "layout_sidecar"):

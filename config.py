@@ -37,6 +37,12 @@ SLM_NUM_PREDICT = int(os.environ.get("SLM_NUM_PREDICT", "1500"))
 STRICT_TYPING = os.environ.get("STRICT_TYPING", "true").lower() in ("true", "1", "yes")
 QUALITY_GATE = os.environ.get("QUALITY_GATE", "true").lower() in ("true", "1", "yes")
 
+#Gate de governanca: Exige Manifesto promovido pelo Data Steward (manifest_status
+#VALIDATED) para publicar a Silver. Desligado por padrao - com ele ligado, contrato
+# em DRAFT bloqueia a publicacao e o exit code, com o gate de rejeicao.
+REQUIRE_VALIDATED_MANIFEST = os.environ.get(
+    "REQUIRE_VALIDATED_MANIFEST", "false").lower() in ("false", '1', "yes")
+
 NULL_TOLERANCE_PCT  = float(os.environ.get("NULL_TOLERANCE_PCT",  "30.0"))
 DUPLICATE_TOLERANCE = float(os.environ.get("DUPLICATE_TOLERANCE", "0.02"))
 

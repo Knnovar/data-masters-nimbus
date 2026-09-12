@@ -293,7 +293,7 @@ def task_profile(validated):
         reject_report = dict(getattr(storage, "last_reject_report", {}) or ())
 
         from run_pipeline import evaluate_gate
-        gate = evaluate_gate(table, reject_report)
+        gate = evaluate_gate(table, reject_report, contract=contract)
 
         _log("JOB-DM-003", "PROFILE/{}".format(table), 
              "ENDED_NOTOK" if gate["status"] == "BLOCKED" else "ENDED_OK",

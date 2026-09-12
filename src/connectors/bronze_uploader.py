@@ -47,7 +47,10 @@ class BronzeUploader(DatabricksUploader):
     def upload_raw(self, local_path, table_name=None, dat_ref=None, run_id=None):
         src = Path(local_path)
         if not src.exists():
-            raise FileNotFoundError("Nao encontrado: {}".format(local_path))
+            parent = src.parent
+            vizinhos = sorted(p.name for p in parent.iterdir()) if parent.is_dir() else []
+            arquivado = parent / "_archive" / src.name
+            raise FileNotFoundError("Nao encontrado: {} | diretorio={} conteudo={} | copia em _archive: {}".format(local_path, parent, vizinhos, arquivado.exists()))
 
         tbl = table_name or src.stem
         folder = self._volume_dir(tbl)

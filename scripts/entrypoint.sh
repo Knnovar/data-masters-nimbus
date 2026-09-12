@@ -20,18 +20,23 @@ log "Aguardando Ollama em ${OLLAMA_HOST}..."
 until curl -sf "${OLLAMA_HOST}/api/tags" > /dev/null 2>&1; do echo -n "."; sleep 3; done
 ok "Ollama pronto"
 
-log "Verificando modelo: ${OLLAMA_MODEL}"
-if curl -sf "${OLLAMA_HOST}/api/tags" | grep -q "\"${OLLAMA_MODEL%%:*}"; then
-    ok "Modelo ${OLLAMA_MODEL} ja disponivel"
+if ["${SKIP_SLM:-false}" = "true"]; then
+    log "SKIP_SLM=true - pull do modelo igorado"
 else
-    log "Baixando ${OLLAMA_MODEL} (primeira execucao — pode demorar)..."
-    if curl -sf --max-time 1800 "${OLLAMA_HOST}/api/pull" \
-        -d "{\"name\": \"${OLLAMA_MODEL}\", \"stream\": false}" \
-        -H "Content-Type: application/json" > /dev/null; then
-    ok "Modelo ${OLLAMA_MODEL} pronto"
+    log "Verificando modelo: ${OLLAMA_MODEL}"
+    if curl -sf "${OLLAMA_HOST}/api/tags" | grep -q "\"${OLLAMA_MODEL%%:*}"; then
+        ok "Modelo ${OLLAMA_MODEL} ja disponivel"
     else
-        warn "Pull de ${OLLAMA_MODEL} falhou - seguindo com SKIP_SLM=true"
-        export SKIP_SLM=true
+        log "Baixando ${OLLAMA_MODEL} (primeira execucao — pode demorar)..."
+        if curl -sf --max-time 1800 "${OLLAMA_HOST}/api/pull" \
+            -d "{\"name\": \"${OLLAMA_MODEL}\", \"stream\": false}" \
+            -H "Content-Type: application/json" > /dev/null; then
+        ok "Modelo ${OLLAMA_MODEL} pronto"
+        else
+            warn "Pull de ${OLLAMA_MODEL} falhou - seguindo com SKIP_SLM=true"
+            export SKIP_SLM=true
+        fi
+    fi
 fi
 
 log "Iniciando servidor Prefect..."
@@ -47,7 +52,7 @@ log "Registrando deployments..."
 python setup_prefect.py && ok "Deployments registrados" || warn "Falha nos deployments — continuando"
 
 log "Iniciando worker Prefect..."
-prefect worker start --pool nimbus-local &
+prefect worker start --pool data-masters-local &
 sleep 5
 
 log "=============================================="

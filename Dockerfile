@@ -9,6 +9,6 @@ RUN pip install --upgrade pip && pip install -r requirements.txt && pip install 
 COPY . .
 RUN mkdir -p data/landing data/processed data/gold data/quarantine \
              data/contracts data/metrics data/reports data/landing/_archive
-RUN chmod +x scripts/entrypoint.sh
+RUN sed -i 's/\r$//' scripts/entrypoint.sh && chmod +x scripts/entrypoint.sh
 EXPOSE 4200
 ENTRYPOINT ["scripts/entrypoint.sh"]
