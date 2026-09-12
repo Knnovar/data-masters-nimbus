@@ -2,7 +2,7 @@ table: tb_transacoes
 description: Movimentacoes financeiras de todos os canais de atendimento.
 owner: squad-transacoes
 version: 2.3.1
-manifest_status: DRAFT
+manifest_status: VALIDATED
 source:
   system: SWITCH_TRANSACIONAL
   format: csv
@@ -72,3 +72,5 @@ schema:
   type: string
   nullable: false
   description: 'Canal de origem. Dominio: APP, INTERNET, AGENCIA, ATM, POS.'
+validated_by: Renan Apolinario
+validated_at: '2026-09-12T00:59:41'

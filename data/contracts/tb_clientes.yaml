@@ -2,7 +2,7 @@ table: tb_clientes
 description: Cadastro mestre de clientes pessoa fisica e juridica.
 owner: squad-dados-cadastrais
 version: 1.0.0
-manifest_status: DRAFT
+manifest_status: VALIDATED
 source:
   system: CORE_BANCARIO_TOTVS
   format: csv
@@ -89,3 +89,5 @@ schema:
   type: date
   nullable: false
   description: Data de abertura do cadastro no sistema.
+validated_by: Renan Apolinario
+validated_at: '2026-09-12T00:58:20'

@@ -1,5 +1,5 @@
 # Pipeline Projeto Nimbus - Relatorio de Execucao
-**Data:** 2026-09-12 00:39:27  |  **Run ID:** `run_20260912_003926_2b9529`
+**Data:** 2026-09-12 01:05:08  |  **Run ID:** `run_20260912_005951_5ad4e9`
 
 ---
 
@@ -7,19 +7,19 @@
 
 | Tabela | Cenário | Status | Linhas | Dups | Nulos (avg%) | Profiling (ms) | SLM (ms) | Score |
 |--------|---------|--------|--------|------|--------------|----------------|----------|-------|
-| `tb_clientes` | baseline | [DLQ] DLQ | 0 | 0 | 0% | 0 | [SKIP] 0 | **60.0** |
-| `tb_transacoes` | baseline | [DLQ] DLQ | 0 | 0 | 0% | 0 | [SKIP] 0 | **60.0** |
-| `tb_contratos_credito` | baseline | [DLQ] DLQ | 0 | 0 | 0% | 0 | [SKIP] 0 | **60.0** |
+| `tb_clientes` | baseline | [PASS] PASS | 500 | 0 | 2.29% | 1301.0 | [OK] 56953.9 | **94.8** |
+| `tb_transacoes` | baseline | [WARN] WARNING | 2,030 | 30 | 0.81% | 4360.5 | [OK] 56475.6 | **86.0** |
+| `tb_contratos_credito` | baseline | [PASS] PASS | 300 | 0 | 0.0% | 884.6 | [OK] 75726.2 | **100.0** |
 
 ---
 
 ## Qualidade Geral da Execução
 
-- **Score medio:** `60.0/100`
+- **Score medio:** `93.6/100`
 - **Tabelas processadas:** 3
-- **Com DLQ:** 3
-- **Com WARNING:** 0
-- **Documentadas por SLM:** 0
+- **Com DLQ:** 0
+- **Com WARNING:** 1
+- **Documentadas por SLM:** 3
 
 ---
 
@@ -27,13 +27,13 @@
 
 | Tabela | Conformidade (40%) | Completude (25%) | Unicidade (20%) | Estabilidade (15%) | Score |
 |--------|--------------------|------------------|-----------------|--------------------|-------|
-| `tb_clientes` | 0.0 | 100.0 | 100.0 |  100.0 | **60.0** |
-| `tb_transacoes` | 0.0 | 100.0 | 100.0 |  100.0 | **60.0** |
-| `tb_contratos_credito` | 0.0 | 100.0 | 100.0 |  100.0 | **60.0** |
+| `tb_clientes` | 100.0 | 79.4 | 100.0 |  100.0 | **94.8** |
+| `tb_transacoes` | 100.0 | 67.5 | 70.4 |  100.0 | **86.0** |
+| `tb_contratos_credito` | 100.0 | 100.0 | 100.0 |  100.0 | **100.0** |
 
-- ``tb_clientes` / **conformity** = 0.0: tabela em quarentena (breaking change)
-- ``tb_transacoes` / **conformity** = 0.0: tabela em quarentena (breaking change)
-- ``tb_contratos_credito` / **conformity** = 0.0: tabela em quarentena (breaking change)
+- ``tb_clientes` / **completeness** = 79.4: nulos em obrigatorias: 0.00% | anulaveis a 41% da tolerancia (25%)
+- ``tb_transacoes` / **completeness** = 67.5: nulos em obrigatorias: 0.00% | anulaveis a 65% da tolerancia (10%)
+- ``tb_transacoes` / **uniqueness** = 70.4: 30 duplicatas na PK ['id_transacao'] (1.48%)
 
 ---
 
@@ -41,9 +41,8 @@
 
 | Tabela | Cenario | Publicacao | Linhas rejeitadas | % | Tolerancia | Colunas |
 |--------|---------|------------|-------------------|---|------------|---------|
-| `tb_clientes` | baseline | BLOCKED | 0 | n/d | n/d | - |
-| `tb_transacoes` | baseline | BLOCKED | 0 | n/d | n/d | - |
-| `tb_contratos_credito` | baseline | BLOCKED | 0 | n/d | n/d | - |
+| `tb_transacoes` | baseline | PASS_WITH_REJECTS | 30 | 1.48% | 2.00% | - |
+| `tb_contratos_credito` | baseline | BLOCKED | 0 | 0.00% | 1.00% | - |
 
 > Linha rejeitada = valor preenchido fora do tipo declarado no Manifest. A linha inteira vai para `quarantine/reject_<tabela>.csv` com `_reject_columns`, `_reject_values` e `_reject_reason`; acima da tolerancia do contrato (`tolerance.max_reject_pct`) a publicacao e bloqueada.
 
@@ -51,24 +50,27 @@
 
 ## Desempenho da SLM
 
-Nenhuma inferencia bem-sucedida nesta execucao. 
+| Tabela | Modelo | Wall (ms) | Carga (ms) | Prompt (Tok/ms) | Saida (tok/ms) | Tok/s | Cobertura | Truncado |
+|--------|--------|-----------|------------|-----------------|----------------|-------|-----------|----------|
+| `tb_clientes` | phi4 | 56,954 | 2 | 2496/2,136 | 1326/52,602 | **25.2** | 100.0% | nao |
+| `tb_transacoes` | phi4 | 56,476 | 2 | 2181/1,516 | 1344/52,669 | **25.5** | 100.0% | nao |
+| `tb_contratos_credito` | phi4 | 75,726 | 4 | 2685/1,935 | 1796/71,579 | **25.1** | 100.0% | nao |
 
+> Compare modelos com `python show_metrics.py --models` (agrega todas as runs por `slm_model`).
 
 ---
 
 ## Detalhes por Tabela
 
 ### `tb_clientes`
-**Issues criticos:**
-- [ERR] Arquivo ilegivel: [Errno 2] No such file or directory: 'C:\\Programação\\data-masters-nimbus\\data-masters-nimbus\\data\\landing\\tb_clientes.csv'
 
 ### `tb_transacoes`
-**Issues criticos:**
-- [ERR] Arquivo ilegivel: [Errno 2] No such file or directory: 'C:\\Programação\\data-masters-nimbus\\data-masters-nimbus\\data\\landing\\tb_transacoes.csv'
+**Warnings:**
+- [WARN] 30 duplicatas detectadas (1.5%)
 
 ### `tb_contratos_credito`
-**Issues criticos:**
-- [ERR] Arquivo ilegivel: [Errno 2] No such file or directory: 'C:\\Programação\\data-masters-nimbus\\data-masters-nimbus\\data\\landing\\tb_contratos_credito.csv'
+**Warnings:**
+- [WARN] Manifesto em status DRAFT — documentacao gerada sem validacao humana. Execute: python -m src.manifest.manifest_validator --file <contrato.yaml> --steward 'Nome'
 
 ---
 > AVISO: Toda documentacao gerada pela SLM possui status **[AI_METADATA_STATUS: DRAFT]**.

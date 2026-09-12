@@ -154,7 +154,7 @@ def run_scenario(scenario: str, run_id: str, fmt: str = "csv") -> tuple[list[dic
 
         from src.connectors.bronze_uploader import publish_bronze
         publications.append(publish_bronze(storage.read_path("bronze", filename),
-                                           table_name=Path(filename).stem, run_id=run_id))
+                                                   table_name=Path(filename).stem, run_id=run_id))
 
         # Silver: validação (DLQ → quarantine, OK → permanece no bronze)
         val_result = validate(storage, filename, contract_filename, scenario=scenario)
@@ -199,8 +199,8 @@ def run_scenario(scenario: str, run_id: str, fmt: str = "csv") -> tuple[list[dic
                                     table_name=Path(filename).stem, contract=contract, run_id=run_id)
                 publications.append(pub)
 
-            publications.extend(publish_quarantine_files(
-                storage,filename, run_id, reject_report=reject_report, dlq=val_result.status == "DLQ"
+        publications.extend(publish_quarantine_files(
+            storage,filename, run_id, reject_report=reject_report, dlq=val_result.status == "DLQ"
             ))
         
         # Gold: métricas agregadas

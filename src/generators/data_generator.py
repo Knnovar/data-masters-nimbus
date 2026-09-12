@@ -519,7 +519,7 @@ def _preserve_validation(storage, contract_filename: str, contract: dict) -> dic
         with open(storage.read_path("contracts", contract_filename), encoding="utf-8") as f:
             existing = yaml.safe_load(f) or {}
     except Exception as e:
-        print(f"    [CONTRACT][WARN] {contract_filename} nao relido: (e)")
+        print(f"    [CONTRACT][WARN] {contract_filename} nao relido: {e}")
         return contract
     if existing.get("manifest_status") != "VALIDATED":
         return contract
@@ -532,7 +532,8 @@ def _preserve_validation(storage, contract_filename: str, contract: dict) -> dic
           f"(por {existing.get('validated_by')})")
     return {**contract,
         "manifest_status": "VALIDATED",
-        "validated_by": existing.get("validated_at")}
+        "validated_by": existing.get("validated_by"),
+        "validated_at": existing.get("validated_at")}
 def generate_all(
     storage,
     scenario: ScenarioType = "baseline",
@@ -584,8 +585,9 @@ def generate_all(
         base_name             = f"{table_name}{suffix}"
         filename, file_content = writer.serialize(df, base_name)
 
-        contrat = _preserve_validation(storage, contract_filename, contract)
+        contract = _preserve_validation(storage, contract_filename, contract)
         # Persiste via storage (agnostico de backend)
+        storage.write_text("bronze", filename, file_content)
         storage.write_text("contracts", contract_filename, 
                            yaml.dump(contract, allow_unicode=True, sort_keys=False))
 
