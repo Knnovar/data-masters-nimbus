@@ -2,84 +2,107 @@
 
 ## Visão Geral
 
-A tabela `tb_transacoes` registra todas as movimentações financeiras realizadas por diferentes canais de atendimento. Ela é essencial para o monitoramento e análise de transações, incluindo a identificação de transações suspeitas pelo motor antifraude. A tabela é mantida pelo `squad-transacoes` e está em conformidade com as regulamentações BACEN_4658 e PCI_DSS, sendo classificada como confidencial e com uma retenção de dados de 7 anos.
+A tabela `tb_transacoes` registra todas as movimentações financeiras realizadas através de diferentes canais de atendimento. Ela é gerida pela equipe `squad-transacoes` e está em sua versão `2.3.1`. O sistema de origem é o `SWITCH_TRANSACIONAL`, e os dados são armazenados em formato CSV com codificação UTF-8. A atualização dos dados é event-driven, e o contato para suporte é `squad-transacoes@banco.com.br`.
 
-## Colunas
+### Contexto de Negócio
+
+O propósito da tabela é documentar todas as transações financeiras por canal. A coluna `fl_suspeita` indica se uma transação está sendo analisada pelo motor antifraude. A coluna `cd_estabelecimento` pode ser nula para compras online não identificadas, o que ocorre em aproximadamente 6% dos casos.
+
+### Classificação Regulatória
+
+A tabela está sujeita às regulamentações `BACEN_4658` e `PCI_DSS`, com classificação de dados como confidencial. Os dados devem ser retidos por 7 anos.
+
+### Tolerância
+
+- **Máximo de Nulos**: 10%
+- **Máximo de Rejeições**: 2%
+- **Duplicatas**: Não permitidas
+
+### Dependências
+
+- `tb_clientes`
+
+### Consultas de Amostra
+
+1. **Volume Transacionado por Canal no Mês**:
+   ```sql
+   SELECT cd_canal, COUNT(*) as qtd, SUM(vl_transacao) as total FROM tb_transacoes GROUP BY cd_canal
+   ```
+
+2. **Transações Suspeitas Recentes**:
+   ```sql
+   SELECT * FROM tb_transacoes WHERE fl_suspeita = true ORDER BY dt_transacao DESC LIMIT 100
+   ```
+
+## Esquema de Colunas
 
 ### `id_transacao`
 - **Tipo**: `string`
 - **Nullable**: Não
-- **Descrição**: UUID da transação gerado pelo switch transacional no momento da operação.
-- **Propósito de Negócio**: Identificador único para cada transação.
-- **Comportamento Esperado**: Deve ser único para cada transação.
-- **Anomalias**: 2% de duplicatas observadas, o que excede o limite permitido de 0% de duplicatas.
+- **Descrição**: UUID da transação, gerado pelo switch transacional no momento da operação.
+- **Comportamento Esperado**: Valor único para cada transação.
+- **Anomalias**: 0.5% de duplicatas observadas.
 
 ### `cd_cliente`
 - **Tipo**: `string`
 - **Nullable**: Não
 - **Descrição**: Referência ao cliente em `tb_clientes`.
-- **Propósito de Negócio**: Identifica o cliente associado à transação.
-- **Comportamento Esperado**: Deve corresponder a um cliente válido na tabela `tb_clientes`.
-- **Anomalias**: Alta frequência de valores repetidos, indicando transações múltiplas por cliente.
+- **Comportamento Esperado**: Valor único para cada cliente.
+- **Anomalias**: Alta frequência de valores repetidos, indicando múltiplas transações por cliente.
 
 ### `dt_transacao`
-- **Tipo**: `string`
+- **Tipo**: `string` (deveria ser `date`)
 - **Nullable**: Não
 - **Descrição**: Data da transação no fuso horário America/Sao_Paulo.
-- **Propósito de Negócio**: Registro do momento exato da transação.
-- **Comportamento Esperado**: Deve estar no formato de data e corresponder ao fuso horário especificado.
-- **Anomalias**: Dados de tipo `VARCHAR` em vez de `date`, o que pode causar problemas de análise.
+- **Comportamento Esperado**: Formato de data válido.
+- **Anomalias**: Tipo de dado incorreto (`VARCHAR` em vez de `DATE`).
 
 ### `vl_transacao`
-- **Tipo**: `string`
+- **Tipo**: `string` (deveria ser `float`)
 - **Nullable**: Não
 - **Descrição**: Valor em BRL. Positivo para débitos, negativo para estornos.
-- **Propósito de Negócio**: Representa o valor monetário da transação.
-- **Comportamento Esperado**: Deve ser um número válido em BRL.
-- **Anomalias**: Dados de tipo `VARCHAR` em vez de `float`, o que pode causar problemas de análise.
+- **Comportamento Esperado**: Números positivos ou negativos representando valores monetários.
+- **Anomalias**: Tipo de dado incorreto (`VARCHAR` em vez de `FLOAT`).
 
 ### `tp_transacao`
 - **Tipo**: `string`
 - **Nullable**: Não
 - **Descrição**: Tipo da operação. Dominio: COMPRA, SAQUE, TED, PIX, PAGAMENTO_BOLETO, ESTORNO.
-- **Propósito de Negócio**: Identifica o tipo de transação realizada.
-- **Comportamento Esperado**: Deve corresponder a um dos tipos de operação definidos.
-- **Anomalias**: Nenhuma anomalia observada.
+- **Comportamento Esperado**: Valores dentro do domínio especificado.
+- **Anomalias**: Nenhuma observada.
 
 ### `cd_estabelecimento`
 - **Tipo**: `string`
 - **Nullable**: Sim
 - **Descrição**: CNPJ do estabelecimento. Nulo para compras online não identificadas (~6%).
-- **Propósito de Negócio**: Identifica o estabelecimento associado à transação.
-- **Comportamento Esperado**: Deve ser um CNPJ válido ou nulo para transações online não identificadas.
-- **Anomalias**: 6.5% de valores nulos, ligeiramente acima do esperado (~6%).
+- **Comportamento Esperado**: CNPJ válido ou nulo.
+- **Anomalias**: 6.7% de valores nulos, dentro do esperado.
 
 ### `fl_suspeita`
-- **Tipo**: `string`
+- **Tipo**: `string` (deveria ser `boolean`)
 - **Nullable**: Não
 - **Descrição**: Flag do motor antifraude. True indica transação em análise (~4% do volume).
-- **Propósito de Negócio**: Indica se a transação está sob análise por suspeita de fraude.
-- **Comportamento Esperado**: Deve ser `true` ou `false`.
-- **Anomalias**: 3.8% das transações marcadas como suspeitas, dentro do esperado (~4%).
+- **Comportamento Esperado**: Valores `true` ou `false`.
+- **Anomalias**: Tipo de dado incorreto (`VARCHAR` em vez de `BOOLEAN`).
 
 ### `cd_canal`
 - **Tipo**: `string`
 - **Nullable**: Não
 - **Descrição**: Canal de origem. Dominio: APP, INTERNET, AGENCIA, ATM, POS.
-- **Propósito de Negócio**: Identifica o canal através do qual a transação foi realizada.
-- **Comportamento Esperado**: Deve corresponder a um dos canais definidos.
-- **Anomalias**: Nenhuma anomalia observada.
-
-## Considerações Regulatórias
-
-A tabela está sujeita às regulamentações BACEN_4658 e PCI_DSS, o que implica requisitos rigorosos de segurança e privacidade dos dados. A classificação de confidencialidade exige medidas adequadas de proteção de dados.
+- **Comportamento Esperado**: Valores dentro do domínio especificado.
+- **Anomalias**: Nenhuma observada.
 
 ## Pontos de Atenção
 
-1. **Duplicatas em `id_transacao`**: A presença de duplicatas viola a restrição de unicidade e pode comprometer a integridade dos dados.
-2. **Tipo de Dados Incorreto**: As colunas `dt_transacao` e `vl_transacao` estão registradas como `VARCHAR` em vez de `date` e `float`, respectivamente, o que pode causar problemas de análise e processamento.
-3. **Frequência de Nulos em `cd_estabelecimento`**: A porcentagem de nulos está ligeiramente acima do esperado, o que pode indicar problemas na identificação de estabelecimentos para transações online.
-4. **Compliance Regulatória**: Devido à classificação de confidencialidade, é crucial garantir que as medidas de segurança estejam alinhadas com as regulamentações BACEN_4658 e PCI_DSS.
+1. **Tipos de Dados Incorretos**: As colunas `dt_transacao`, `vl_transacao` e `fl_suspeita` têm tipos de dados incorretos (`VARCHAR` em vez de `DATE`, `FLOAT` e `BOOLEAN`, respectivamente). Isso pode afetar a integridade dos dados e a execução de consultas.
+
+2. **Duplicatas em `id_transacao`**: Apesar de ser a chave primária, foram encontradas duplicatas, o que viola a integridade referencial.
+
+3. **Frequência de Valores Repetidos em `cd_cliente`**: Alta frequência de valores repetidos pode indicar múltiplas transações por cliente, mas deve ser monitorada para evitar duplicações não intencionais.
+
+4. **Compliance Regulatória**: A tabela está sujeita a regulamentações `BACEN_4658` e `PCI_DSS`, exigindo que os dados sejam tratados com confidencialidade e segurança.
+
+5. **Retenção de Dados**: Os dados devem ser mantidos por 7 anos, conforme a política de retenção.
 
 ---
 

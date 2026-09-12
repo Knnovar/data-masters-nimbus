@@ -2,93 +2,120 @@
 
 ## Visão Geral
 
-A tabela `tb_clientes` é o cadastro mestre de clientes pessoa física e jurídica, utilizada por todos os produtos de crédito e relacionamento do banco. A segmentação (`cd_segmento`) determina o produto oferecido e o gestor responsável. A tabela é atualizada diariamente pelo batch noturno do sistema CORE_BANCARIO_TOTVS.
+A tabela `tb_clientes` é um cadastro mestre de clientes pessoa física e jurídica, utilizado por todos os produtos de crédito e relacionamento do banco. A segmentação (`cd_segmento`) determina o produto ofertado e o gestor responsável. A tabela é atualizada diariamente pelo batch noturno do sistema CORE_BANCARIO_TOTVS.
+
+### Propriedades da Tabela
+
+- **Owner**: squad-dados-cadastrais
+- **Versão**: 1.0.0
+- **Status do Manifesto**: VALIDADO
+- **Fonte**: Sistema CORE_BANCARIO_TOTVS, formato CSV, codificação UTF-8, sistema operacional Unix, atualização diária.
+- **Contato**: squad-dados-cadastrais@banco.com.br
+- **Classificação de Dados**: Confidencial
+- **Período de Retenção**: 10 anos
+- **Tags Regulatórias**: LGPD, BACEN_4658
+- **Validado por**: Renan Apolinario em 12 de setembro de 2026
 
 ## Colunas
 
 ### `cd_cliente`
-- **Tipo**: `VARCHAR`
+- **Tipo**: string
 - **Nullable**: Não
-- **Descrição**: Código único do cliente no sistema legado, gerado sequencialmente pelo CORE_BANCARIO.
-- **Comportamento Esperado**: Cada cliente possui um código único. Não há valores nulos e todos os códigos são distintos.
-- **Estatísticas**: 500 valores únicos, sem valores nulos.
+- **Descrição**: Código único do cliente no sistema legado. Gerado sequencialmente pelo CORE_BANCARIO.
+- **Propósito de Negócio**: Identificação única de cada cliente.
+- **Comportamento Esperado**: Cada valor deve ser único e não nulo.
+- **Estatísticas**: 500 valores únicos, 0% de nulos.
 
 ### `nr_cpf_cnpj`
-- **Tipo**: `VARCHAR`
+- **Tipo**: string
 - **Nullable**: Não
 - **Descrição**: CPF (11 dígitos) ou CNPJ (14 dígitos) sem máscara.
-- **Comportamento Esperado**: Sempre preenchido, sem valores nulos. Sensível conforme LGPD.
-- **Estatísticas**: 500 valores únicos, sem valores nulos. Sensível, valores mascarados com padrão "99999999999".
-- **Anomalias**: Nenhuma.
+- **Propósito de Negócio**: Identificação fiscal do cliente.
+- **Comportamento Esperado**: Sempre preenchido, com formato correto de CPF ou CNPJ.
+- **Estatísticas**: 500 valores únicos, 0% de nulos.
+- **Sensibilidade**: LGPD_SENSITIVE
+- **Formato**: `[MASCARADO]` (CPF: 99999999999, CNPJ: 99999999999999)
 
 ### `nm_cliente`
-- **Tipo**: `VARCHAR`
+- **Tipo**: string
 - **Nullable**: Não
 - **Descrição**: Nome completo do cliente conforme cadastro na Receita Federal.
-- **Comportamento Esperado**: Sempre preenchido, sem valores nulos. Sensível conforme LGPD.
-- **Estatísticas**: 496 valores únicos, sem valores nulos. Sensível, valores mascarados com padrões variados.
-- **Anomalias**: 4 duplicatas observadas.
+- **Propósito de Negócio**: Nome do cliente para identificação.
+- **Comportamento Esperado**: Sempre preenchido, com formato de nome completo.
+- **Estatísticas**: 495 valores únicos, 0% de nulos.
+- **Sensibilidade**: LGPD_SENSITIVE
+- **Formato**: `[MASCARADO]` (Ex: AAAAAA AAAAA, AA. AAAAA AA AAAA)
 
 ### `dt_nascimento`
-- **Tipo**: `VARCHAR`
+- **Tipo**: string
 - **Nullable**: Sim
 - **Descrição**: Data de nascimento. Nula para clientes PJ.
-- **Comportamento Esperado**: Pode ser nulo para clientes PJ. Sensível conforme LGPD.
-- **Estatísticas**: 495 valores únicos, sem valores nulos. Sensível, valores mascarados com padrão "9999-99-99".
-- **Anomalias**: 5 duplicatas observadas.
+- **Propósito de Negócio**: Data de nascimento do cliente.
+- **Comportamento Esperado**: Preenchido para PF, nulo para PJ.
+- **Estatísticas**: 496 valores únicos, 0% de nulos.
+- **Sensibilidade**: LGPD_SENSITIVE
+- **Formato**: `[MASCARADO]` (9999-99-99)
 
 ### `cd_segmento`
-- **Tipo**: `VARCHAR`
+- **Tipo**: string
 - **Nullable**: Não
 - **Descrição**: Segmento de relacionamento. Domínio: VAREJO, PRIME, PRIVATE, PJ_PEQUENO, PJ_MEDIO.
-- **Comportamento Esperado**: Sempre preenchido, sem valores nulos. Deve seguir regras de negócio para renda mensal.
-- **Estatísticas**: 5 valores únicos, sem valores nulos.
-- **Anomalias**: Verificar se `vl_renda_mensal` está nulo para `PJ_PEQUENO` e `PJ_MEDIO`.
+- **Propósito de Negócio**: Determina o produto ofertado e o gestor responsável.
+- **Comportamento Esperado**: Sempre preenchido, com valores dentro do domínio especificado.
+- **Estatísticas**: 5 valores únicos, 0% de nulos.
+- **Regras de Negócio**:
+  - PRIME: `vl_renda_mensal >= 10000`
+  - PRIVATE: `vl_renda_mensal >= 30000`
 
 ### `cd_agencia`
-- **Tipo**: `VARCHAR`
+- **Tipo**: string
 - **Nullable**: Não
 - **Descrição**: Código numérico de 4 dígitos da agência de relacionamento principal.
-- **Comportamento Esperado**: Sempre preenchido, sem valores nulos.
-- **Estatísticas**: 473 valores únicos, sem valores nulos.
-- **Anomalias**: 27 duplicatas observadas.
+- **Propósito de Negócio**: Identificação da agência responsável pelo cliente.
+- **Comportamento Esperado**: Sempre preenchido, com valores numéricos de 4 dígitos.
+- **Estatísticas**: 475 valores únicos, 0% de nulos.
+- **Anomalias**: Valores fora do intervalo esperado (1056.0 a 9984.0).
 
 ### `vl_renda_mensal`
-- **Tipo**: `VARCHAR`
+- **Tipo**: string
 - **Nullable**: Sim
 - **Descrição**: Renda mensal declarada em BRL. Nula para clientes PJ.
-- **Comportamento Esperado**: Pode ser nulo para clientes PJ. Sensível conforme SCR.
-- **Estatísticas**: 397 valores únicos, 20.6% de valores nulos.
-- **Anomalias**: Verificar se está nulo para `cd_segmento` em `PJ_PEQUENO` e `PJ_MEDIO`.
+- **Propósito de Negócio**: Indicador de renda para análise de crédito.
+- **Comportamento Esperado**: Preenchido para PF, nulo para PJ.
+- **Estatísticas**: 369 valores únicos, 19.2% de nulos.
+- **Sensibilidade**: SCR_CANDIDATE
+- **Formato**: `[MASCARADO]` (Ex: 1.234,56)
+- **Anomalias**: Valores nulos para segmentos PJ_PEQUENO e PJ_MEDIO.
 
 ### `fl_ativo`
-- **Tipo**: `VARCHAR`
+- **Tipo**: string
 - **Nullable**: Não
 - **Descrição**: Indica se o cliente possui relacionamento ativo com o banco.
-- **Comportamento Esperado**: Sempre preenchido, sem valores nulos.
-- **Estatísticas**: 2 valores únicos (True e False).
-- **Anomalias**: Nenhuma.
+- **Propósito de Negócio**: Status de ativação do cliente.
+- **Comportamento Esperado**: Sempre preenchido, com valores booleanos.
+- **Estatísticas**: 2 valores únicos, 0% de nulos.
 
 ### `dt_cadastro`
-- **Tipo**: `VARCHAR`
+- **Tipo**: string
 - **Nullable**: Não
 - **Descrição**: Data de abertura do cadastro no sistema.
-- **Comportamento Esperado**: Sempre preenchido, sem valores nulos.
-- **Estatísticas**: 462 valores únicos, sem valores nulos.
-- **Anomalias**: 38 duplicatas observadas.
+- **Propósito de Negócio**: Registro da data de cadastro do cliente.
+- **Comportamento Esperado**: Sempre preenchido, com formato de data.
+- **Estatísticas**: 468 valores únicos, 0% de nulos.
 
-## Considerações Regulatórias
+## Implicações de Compliance
 
-- **LGPD**: Dados sensíveis como `nr_cpf_cnpj`, `nm_cliente` e `dt_nascimento` estão sujeitos a regulamentações de proteção de dados.
-- **BACEN 4658**: A tabela deve ser mantida conforme as diretrizes do Banco Central.
-- **Classificação de Dados**: Confidencial, com retenção de 10 anos.
+- **LGPD**: A tabela contém dados sensíveis como CPF/CNPJ, nome, data de nascimento e renda mensal, exigindo medidas de proteção e anonimização adequadas.
+- **BACEN_4658**: Requisitos específicos de segurança e proteção de dados financeiros.
 
 ## Pontos de Atenção
 
-1. **Duplicatas**: Verificar duplicatas em `nm_cliente`, `dt_nascimento`, `cd_agencia` e `dt_cadastro`.
-2. **Valores Nulos**: `vl_renda_mensal` tem 20.6% de valores nulos; verificar se está correto para `PJ_PEQUENO` e `PJ_MEDIO`.
-3. **Regras de Negócio**: Assegurar que `vl_renda_mensal` está nulo para `cd_segmento` em `PJ_PEQUENO` e `PJ_MEDIO`.
-4. **Compliance**: Manter a conformidade com LGPD e BACEN 4658.
+1. **Alto Percentual de Nulos em `vl_renda_mensal`**: 19.2% de nulos, o que pode impactar análises de crédito.
+2. **Valores Fora de Faixa em `cd_agencia`**: Valores fora do intervalo esperado (1056.0 a 9984.0).
+3. **Duplicatas em `nm_cliente`**: 5 duplicatas identificadas, o que pode indicar problemas de integridade de dados.
+4. **Regras de Negócio Não Cumpridas**: Verificar se `vl_renda_mensal` está correto para segmentos PRIME e PRIVATE.
+5. **Formato de Dados**: Algumas colunas (`vl_renda_mensal`, `dt_cadastro`) estão em formato de string, o que pode afetar operações numéricas e de data.
 
 ---
+
 > **[AI_METADATA_STATUS: DRAFT]** — Documentação gerada por SLM. Requer validação humana pelo Data Steward responsável antes de uso em produção.

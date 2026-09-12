@@ -304,7 +304,7 @@ def task_profile(validated):
         cast_report = dict(getattr(storage, "last_cast_report", {}) or {})
         reject_report = dict(getattr(storage, "last_reject_report", {}) or {})
 
-        from run_pipeline import evaluate_gate
+        from run_pipeline import evaluate_gate, publish_quarantine_files
         gate = evaluate_gate(table, reject_report, contract=contract)
 
         pubs = list(validated.get("publications") or [])
