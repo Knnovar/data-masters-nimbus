@@ -61,8 +61,12 @@ except ImportError:
         fn = a[0] if a and callable(a[0]) else None
         def decorator(f): return f
         return fn if fn else decorator
-
-
+class GateBlocked(Exception):
+    def __init__(self, result):
+        self.result = result
+        super().__init__(
+            "publicacao bloqueada por gate/quarentena (exit_code=2, run_id = {})".format(result.get("run_id"))
+        )
 # ─────────────────────────────────────────────────────────────────────────────
 # Logging padronizado — formato parseavel pelo Control-M
 # ─────────────────────────────────────────────────────────────────────────────
@@ -491,7 +495,7 @@ def pipeline_flow(scenario="baseline", run_id=None, fmt="csv"):
          "ENDED_OK" if worst_exit < 2 else "ENDED_NOTOK",
          "exit_code={} report={}".format(worst_exit, report_path))
 
-    return {
+    result = {
         "run_id"     : run_id,
         "scenario"   : scenario,
         "exit_code"  : worst_exit,
@@ -499,6 +503,9 @@ def pipeline_flow(scenario="baseline", run_id=None, fmt="csv"):
         "metrics"    : all_metrics,
         "publications": publications,
     }
+    if worst_exit == 2:
+        raise GateBlocked(result)
+    return result
 
 def _publication_exit_code(publications, run_id):
     """Imprime o resumo de publicacao e devolve 2 se houve falha ou bloqueio.
@@ -574,6 +581,17 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    if args.no_prefect and _HAS_PREFECT:
+
+        pipeline_flow           = pipeline_flow.fn
+        task_extract_manifest   = task_extract_manifest.fn
+        task_generate_data      = task_generate_data.fn
+        task_validate           = task_validate.fn
+        task_profile            = task_profile.fn
+        task_enrich_slm         = task_enrich_slm.fn
+        task_collect_metrics    = task_collect_metrics.fn
+        task_report             = task_report.fn
+
     scenarios = (
         ["baseline", "non_breaking", "breaking", "type_drift"]
         if args.scenario == "all"
@@ -591,7 +609,11 @@ if __name__ == "__main__":
         # Expande "all" em todos os formatos suportados
         fmt_list = ["csv", "json", "fixed"] if args.fmt == "all" else [args.fmt]
         for fmt in fmt_list:
-            result = pipeline_flow(scenario=sc, run_id=run_id, fmt=fmt)
+            try:
+                result = pipeline_flow(scenario=sc, run_id=run_id, fmt=fmt)
+            except GateBlocked as blocked:
+                result == blocked.result
+                print("\n [BLOQUEIO] {} ({}): publicacao barrada pelo gate/quarentena " \
+                "- exit code 2 (resultado esperado)\n".format(sc, fmt))
             worst_global = max(worst_global, result["exit_code"])
-        continue
     sys.exit(worst_global)

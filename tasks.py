@@ -18,6 +18,8 @@ ROOT = Path(__file__).parent
 
 
 def run(cmd: list[str]) -> int:
+    if cmd and cmd[0] == "python":
+        cmd = [sys.executable] + cmd[1:]
     print(f"$ {' '.join(cmd)}\n")
     return subprocess.call(cmd, cwd=ROOT)
 
@@ -27,7 +29,9 @@ def run(cmd: list[str]) -> int:
 def cmd_run(args):
     # Executa todos os cenarios (baseline/non_breaking/breaking) nos
     # tres formatos suportados (csv/json/fixed) — execucao completa.
-    # Sai com exit 1 quando o gate bloqueia alguma publicacao (type_drift).
+    # Sai com exit 2 quando o gate bloqueia ou a quarentena bloqueia alguma publicacao
+    # (breaking/type_drift) - bloqueio esperado, nao erro de execucao.
+    # Exit 1 fica reservado para erro inesperado.
     return run(["python", "run_pipeline.py", "--scenario", "all", "--format", "all"])
 
 def cmd_baseline(args):
@@ -58,6 +62,12 @@ def cmd_metrics(args):
 
 def cmd_metrics_all(args):
     return run(["python", "show_metrics.py", "--all"])
+
+def cmd_score(args):
+    return run(["python", "show_metrics.py", "--score"])
+
+def cmd_models(args):
+    return run(["python", "show_metrics.py", "--models"])
 
 def cmd_issues(args):
     return run(["python", "show_metrics.py", "--issues"])
@@ -270,6 +280,8 @@ COMMANDS = {
     "all-formats"       : (cmd_all_formats,       "Atalho: baseline nos 3 formatos (equivalente a baseline sem --format)"),
     "metrics"           : (cmd_metrics,           "Resumo do ultimo run"),
     "metrics-all"       : (cmd_metrics_all,       "Historico completo de runs"),
+    "score"             : (cmd_score,             "Decompoe o quality score nas 4 dimensoes"),
+    "models"            : (cmd_models,            "Compara desempenho dos modelos SLM (ex: phi3.5 x phi4)"),
     "issues"            : (cmd_issues,            "Lista apenas problemas (DLQ/WARNING)"),
     "slm"               : (cmd_slm,               "Status do enriquecimento SLM"),
     "export"            : (cmd_export,            "Exporta metricas para CSV"),

@@ -88,7 +88,7 @@ O profiler gera por coluna: percentual de nulos, contagem de valores únicos, mi
 
 ## Orquestração
 
-O projeto oferece dois modos de execução com a mesma lógica de negócio. O `run_pipeline.py` é execução direta, sem dependência de orquestrador — adequado para desenvolvimento e para integração com scripts externos. O `prefect_flow.py` é a mesma pipeline decorada com `@task` e `@flow` do Prefect 2.x, com cada task mapeada para um job Control-M com exit codes padronizados.
+O projeto oferece dois modos de execução com a mesma lógica de negócio. O `run_pipeline.py` é execução direta, sem dependência de orquestrador — adequado para desenvolvimento e para integração com scripts externos. O `prefect_flow.py` é a mesma pipeline decorada com `@task` e `@flow` do Prefect 3.x, com cada task mapeada para um job Control-M com exit codes padronizados.
 
 | Task Prefect | Job Control-M | Exit codes |
 |---|---|---|
@@ -100,6 +100,7 @@ O projeto oferece dois modos de execução com a mesma lógica de negócio. O `r
 | `task_collect_metrics` | JOB-DM-005-METRICS | 0=OK |
 | `task_report` | JOB-DM-006-REPORT | 0=OK |
 
+Quando o gate de qualidade, a governança ou a quarentena barram a publicacao, o flow levanta `GateBlocked`: a run aparece como **Failed** no Prefect (UI, worker e deployment) e a CLI termina com exit code 2 - bloqueio esperado, distinto do exit 1 de erro inesperado.
 O modo `--no-prefect` executa o mesmo fluxo sem registrar nada no servidor Prefect, o que torna a integração com Control-M simples:
 
 ```bash

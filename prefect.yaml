@@ -13,7 +13,7 @@
 
 # ── Metadados do projeto ───────────────────────────────────────────────────
 name: data-masters
-prefect-version: "2.19.0"       # versão mínima — atualize se usar versão maior
+prefect-version: "3.0.0"       # versão mínima — atualize se usar versão maior
 
 # ── Localização do código ─────────────────────────────────────────────────
 # Para PoC local, pull é do sistema de arquivos.
@@ -26,10 +26,9 @@ pull:
 # Cada deployment representa um modo de execução do mesmo flow.
 # Para a PoC foram criados 5:
 #   1. baseline-manual     → disparo manual, cenário baseline
-#   2. all-manual          → disparo manual, todos os cenários
-#   3. scheduled-daily     → execução diária automática (baseline)
-#   4. non-breaking-watch  → para testar schema evolution
-#   5. breaking-watch      → para testar DLQ / quarentena
+#   2. scheduled-daily     → execução diária automática (baseline)
+#   3. non-breaking-watch  → para testar schema evolution
+#   4. breaking-watch      → para testar DLQ / quarentena
 
 deployments:
 
@@ -39,29 +38,13 @@ deployments:
     entrypoint: prefect_flow.py:pipeline_flow
     parameters:
       scenario: baseline
+      fmt: csv
     work_pool:
       name: data-masters-local
       work_queue_name: default
     tags:
       - data-masters
       - baseline
-      - manual
-
-  # ── 2. All scenarios — manual ────────────────────────────────────────────
-  # Nota: pipeline_flow aceita um cenário por vez.
-  # Para rodar os 3 cenários em sequência, use o run_pipeline.py diretamente
-  # ou dispare 3 runs separadas via CLI/UI.
-  - name: all-manual
-    description: "Disparo manual — todos os cenários em sequência via loop externo."
-    entrypoint: prefect_flow.py:pipeline_flow
-    parameters:
-      scenario: baseline        # ponto de partida; altere via UI antes de rodar
-    work_pool:
-      name: data-masters-local
-      work_queue_name: default
-    tags:
-      - data-masters
-      - all-scenarios
       - manual
 
   # ── 3. Agendamento diário ────────────────────────────────────────────────
@@ -72,6 +55,7 @@ deployments:
     entrypoint: prefect_flow.py:pipeline_flow
     parameters:
       scenario: baseline
+      fmt: csv
     schedules:
       - cron: "0 6 * * 1-5"    # seg–sex às 06:00 (horário local)
         timezone: "America/Sao_Paulo"
@@ -90,6 +74,7 @@ deployments:
     entrypoint: prefect_flow.py:pipeline_flow
     parameters:
       scenario: non_breaking
+      fmt: csv
     work_pool:
       name: data-masters-local
       work_queue_name: default
@@ -99,15 +84,16 @@ deployments:
       - manual
 
   # ── 5. Breaking change watch ─────────────────────────────────────────────
-  - name: breaking-watch
-    description: "Testa roteamento para quarentena (DLQ) em breaking change."
+  - name: type-drift-watch
+    description: "Testa o gate de tipagem do Manifest (publicacao bloqueada)."
     entrypoint: prefect_flow.py:pipeline_flow
     parameters:
-      scenario: breaking
+      scenario: type_drift
+      fmt: csv
     work_pool:
       name: data-masters-local
       work_queue_name: default
     tags:
       - data-masters
-      - dlq
+      - gate
       - manual

@@ -7,7 +7,7 @@ warn(){ echo -e "${YELLOW}[WARN]${NC} $*"; }
 
 SCENARIO=${DEFAULT_SCENARIO:-baseline}
 FORMAT=${DEFAULT_FORMAT:-all}
-OLLAMA_MODEL=${OLLAMA_MODEL:-phi3.5}
+OLLAMA_MODEL=${OLLAMA_MODEL:-phi4}
 OLLAMA_HOST=${OLLAMA_HOST:-http://ollama:11434}
 PREFECT_API_URL=${PREFECT_API_URL:-http://127.0.0.1:4200/api}
 MINIO_ENDPOINT=${MINIO_ENDPOINT:-minio:9000}
@@ -20,7 +20,7 @@ log "Aguardando Ollama em ${OLLAMA_HOST}..."
 until curl -sf "${OLLAMA_HOST}/api/tags" > /dev/null 2>&1; do echo -n "."; sleep 3; done
 ok "Ollama pronto"
 
-if ["${SKIP_SLM:-false}" = "true"]; then
+if [ "${SKIP_SLM:-false}" = "true"  ]; then
     log "SKIP_SLM=true - pull do modelo igorado"
 else
     log "Verificando modelo: ${OLLAMA_MODEL}"
@@ -60,7 +60,13 @@ log " Pipeline: cenario=${SCENARIO} | formato=${FORMAT}"
 log "=============================================="
 EXIT=0
 python run_pipeline.py --scenario "${SCENARIO}" --format "${FORMAT}" || EXIT=$?
-[ $EXIT -eq 0 ] && ok "Pipeline concluida" || warn "Pipeline com exit code ${EXIT}"
+if [ $EXIT -eq 0 ]; then
+    ok "Pipeline concluida e publicada (exit 0)"
+elif [ $EXIT -eq 2]; then
+    warn "Publicacao bloqueada por gate/quarentena (exit 2) - resultado esperado"
+else
+    warn "Erro inesperado na pipeline (exit ${EXIT})
+fi
 
 log "Container pronto para comandos:"
 log "  docker compose exec nimbus python tasks.py metrics"

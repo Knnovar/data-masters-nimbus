@@ -40,12 +40,15 @@ jobs:
        run: |
         python - <<'PY'
         import sys, unittest
-        MINIMO = 320
+        MINIMO = 450
         total = unittest.TestLoader().discover("tests", pattern="test*.py").countTestCases()
         print(f"testes descobertos: {total} (minimo {MINIMO})")
         sys.exit(0 if total >= MINIMO else 1)
         PY
-     
+      
+     - name: Sintaxe dos scripts de shell
+       run: bash -n scripts/entrypoint.sh
+
      - name: Pipeline end-to-end (todos os cenarios e formatos)
        run: python run_pipeline.py --scenario all --format all
      

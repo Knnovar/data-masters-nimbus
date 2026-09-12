@@ -68,7 +68,7 @@ nimbus/
 |   |-- metrics/              Metricas e relatorios
 |   `-- connectors/           Integracao Databricks via Files API + Unity Catalog
 |
-|-- tests/                    325 testes unitarios
+|-- tests/                    457 testes unitarios
 `-- data/                     Camadas medallion (persiste no host via Docker volume)
 ```
 
@@ -83,7 +83,7 @@ O fluxo de dados: arquivo bruto entra no Bronze no formato original, passa pela 
 ```bash
 cp .env.example .env
 # Evita timeout do Ollama na primeira execucao:
-docker run --rm -v ollama_models:/root/.ollama ollama/ollama pull phi3.5
+docker run --rm -v ollama_models:/root/.ollama ollama/ollama pull phi4
 docker compose up --build
 ```
 
@@ -113,8 +113,12 @@ O unico arquivo que o usuario precisa editar e o `.env`. O `config.py` le tudo v
 
 | Variavel | Padrao | O que controla |
 |---|---|---|
-| `OLLAMA_MODEL` | `phi3.5` | Modelo baixado automaticamente no primeiro boot |
+| `OLLAMA_MODEL` | `phi4` | Modelo baixado automaticamente no primeiro boot |
 | `SKIP_SLM` | `false` | Desativa enriquecimento semantico |
+| `USE_MINIO` | `false` | Troca o filesystem local pelo object storage MinIo |
+| `STRICT_TYPING` | `true` | Cast obrigatorio pelos tipos do Manifest |
+| `QUALITY_GATE` | `false` | Bloqueia Publicacao de tabela reprovada no score |
+| `REQUIRE_VALIDATED_MANIFEST` | `false` | Gate de governanca: exige Manifest VALIDATED para publicar |
 | `DATABRICKS_HOST` | (vazio) | URL do workspace |
 | `DATABRICKS_TOKEN` | (vazio) | PAT ou vazio para OAuth |
 | `DATABRICKS_WAREHOUSE_ID` | (vazio) | SQL Editor > nome do warehouse > copy ID |
@@ -125,6 +129,19 @@ O unico arquivo que o usuario precisa editar e o `.env`. O `config.py` le tudo v
 | `DATABRICKS_BRONZE_VOLUME` | `landing` | Volume UC do Bronze |
 | `DATABRICKS_AUTO_UPLOAD` | `true` | Publica Silver apos cada run |
 | `DATABRICKS_BRONZE_UPLOAD` | `true` | Publica o arquivo bruto apos a geracao |
+| `DATABRICKS_QUARANTINE_UPLOAD` | `true` |Publica rejeitos e arquivos em DLQ na quarentena |
+
+### Exit codes
+O mesmo contrato vale para `run_pipeline.py`, `prefect_flow.py` e o container - e e o que o 
+agendador usa para rotear:
+
+| Codigo | Significado | Acao do agendador |
+|---|---|---|
+| `0` | Execucao concluida e Silver publicada | Segue o fluxo normal |
+| `2` | Publicacao bloqueada por gate de qualidade, governanca ou quarentena/DLQ | Resultado esperado: roteia para o fluxo de tratamento, nao aciona plantao |
+| `1` | Erro inesperado de execucao | Falha real: aciona plantao |
+
+os cenarios `breaking` e`type_drift` terminam em `2` **por desenho** - e a gate funcionou, nao e uma falha de pipeline.
 
 GPU NVIDIA: descomente `deploy.resources` no `docker-compose.yml`.
 GPU AMD/ROCm: descomente o bloco de devices e adicione `AMD_GFX_VERSION` no `.env`.
@@ -149,7 +166,7 @@ CREATE VOLUME IF NOT EXISTS nimbus.silver.landing;
 | `python tasks.py baseline` | Cenario padrao, todos os formatos |
 | `python tasks.py breaking` | Simula quebra de contrato e testa DLQ |
 | `python tasks.py metrics` | Resumo do ultimo run |
-| `python tasks.py test` | 325 testes unitarios |
+| `python tasks.py test` | 457 testes unitarios |
 | `python tasks.py test-databricks` | Diagnostico de conectividade em 4 niveis |
 | `python tasks.py upload-bronze` | Upload do arquivo bruto -> Volume bronze |
 | `python tasks.py upload-silver` | Upload Parquet -> Volume silver -> Delta -> metastore |

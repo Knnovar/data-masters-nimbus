@@ -73,7 +73,7 @@ Para ativar o enriquecimento semântico, basta ter o Ollama em execução:
 
 ```bash
 ollama serve
-ollama pull phi3.5
+ollama pull phi4
 ```
 
 ---
@@ -82,4 +82,4 @@ ollama pull phi3.5
 
 Tudo o que pode ser ajustado fica em `config.py`:
 
-`OLLAMA_MODEL` define qual modelo é usado. O padrão é `qwen2.5-coder:7b`, mas `phi3.5` oferece melhor custo-benefício em máquinas sem GPU. `SKIP_SLM` desativa o enriquecimento completamente sem tocar no restante do pipeline — útil para testes rápidos onde a documentação não é relevante. `NULL_TOLERANCE_PCT` controla a partir de que percentual de nulos a SLM recebe um alerta explícito na coluna.
+`OLLAMA_MODEL` define qual modelo é usado. O padrão é `phi4`, mas `phi3.5` oferece melhor custo-benefício em máquinas sem GPU. `SKIP_SLM` desativa o enriquecimento completamente sem tocar no restante do pipeline — útil para testes rápidos onde a documentação não é relevante. `NULL_TOLERANCE_PCT` controla a partir de que percentual de nulos a SLM recebe um alerta explícito na coluna.

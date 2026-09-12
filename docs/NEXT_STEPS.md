@@ -32,7 +32,7 @@ python tasks.py baseline
 **Docker + Ollama — problema de timing.** Na primeira execução com `docker compose up --build`, o download do modelo pode ultrapassar o timeout do healthcheck. Solução imediata enquanto o fix definitivo não é implementado:
 
 ```bash
-docker run --rm -v ollama_models:/root/.ollama ollama/ollama pull phi3.5
+docker run --rm -v ollama_models:/root/.ollama ollama/ollama pull phi4
 docker compose up --build
 ```
 
