@@ -14,6 +14,10 @@ _FORMAT_BY_SUFFIX = {
     ".parquet": "parquert",
 }
 
+FIXED_SUFFIXES = {".txt", ".dat", ".pos", ".fix"}
+DATA_SUFFIXES = {".csv", ".tsv", ".json", ".jsonl", ".ndjson",
+                 ".txt", ".dat", ".pos", ".fix", ".parquet"}
+
 def ingest_format(filename) -> str:
     return _FORMAT_BY_SUFFIX.get(Path(filename).suffix.lower(), "outro")
 
@@ -60,6 +64,28 @@ def _strict_typing():
     import config
     return getattr(config, "STRICT_TYPING", True)
 
+def _apply_contract(storage, df, filename, contract):
+    if contract is None:
+        return df, None, None
+    from src.storage.schema_utils import (apply_manifest_schema,manifest_to_arrow_schema,build_parquet_metadata)
+    manifest_cols = {c.name.lower() for c in contract.schema}
+    extra_cols = [c for c in df.columns if c.lower() not in manifest_cols]
+    cast_report = {}
+    if _strict_typing():
+        from src.storage.strict_cast import apply_strict_schema
+        df, rejected, cast_warnings, reject_summary = apply_strict_schema(df, contract, report=cast_report)
+        storage.last_reject_report = reject_summary
+        if len(rejected):
+            storage.write("quarantine", "reject_" + _csv_name(filename), rejected)
+    else:
+        df, cast_warnings = apply_manifest_schema(df, contract, report=cast_report)
+    storage.last_cast_report = cast_report
+    arrow_schema = manifest_to_arrow_schema(contract, extra_columns=extra_cols + LINEAGE_COLUMNS)
+    metadata = build_parquet_metadata(contract, cast_warnings)
+    for w in cast_warnings:
+        print("     [SCHEMA] [{}] {}".format(filename, w))
+    return df, arrow_schema, metadata
+
 def _read_file(path):
     ext = path.suffix.lower()
     if ext == ".parquet": return pd.read_parquet(path)
@@ -79,7 +105,7 @@ def _read_file(path):
                     try: records.append(json.loads(line))
                     except: continue
         return pd.json_normalize(records, max_level=5).astype(str)
-    if ext in (".txt", ".dat", ".pos", ".fix"):
+    if ext in FIXED_SUFFIXES:
         sidecar = path.parent / (path.name + ".layout")
         if sidecar.exists():
             spec = json.loads(sidecar.read_text(encoding="utf-8"))
@@ -143,26 +169,7 @@ class LocalStorage(StorageBase):
         self.last_reject_report = {}
         src = self._path(from_layer, filename)
         df  = _read_file(src)
-        arrow_schema = None
-        metadata     = None
-        if contract is not None:
-            from src.storage.schema_utils import apply_manifest_schema, manifest_to_arrow_schema, build_parquet_metadata
-            manifest_cols = {c.name.lower() for c in contract.schema}
-            extra_cols    = [c for c in df.columns if c.lower() not in manifest_cols]
-            cast_report = {}
-            if _strict_typing():
-                from src.storage.strict_cast import apply_strict_schema
-                df, rejected, cast_warnings, reject_summary = apply_strict_schema(df, contract, report=cast_report)
-                self.last_reject_report = reject_summary
-                if len(rejected):
-                    self.write("quarantine", "reject_" + _csv_name(filename), rejected)
-            else:  
-                df, cast_warnings = apply_manifest_schema(df, contract, report=cast_report)
-            self.last_cast_report=cast_report
-            arrow_schema      = manifest_to_arrow_schema(contract, extra_columns=extra_cols + LINEAGE_COLUMNS)
-            metadata          = build_parquet_metadata(contract, cast_warnings)
-            for w in cast_warnings:
-                print("   [SCHEMA] [{}] {}".format(filename, w))
+        df, arrow_schema, metadata = _apply_contract(self, df, filename, contract)
         df = add_lineage_columns(df, filename, run_id)
         pq = self._write_parquet_internal(to_layer, filename, df, arrow_schema, metadata)
         archive_dir = src.parent / "_archive"
@@ -186,7 +193,7 @@ class LocalStorage(StorageBase):
 
     def list(self, layer):
         return [f.name for f in self._layers[layer].iterdir()
-                if f.suffix.lower() in {".csv",".parquet",".json",".jsonl",".txt",".dat"}]
+                if f.suffix.lower() in DATA_SUFFIXES]
 
     def exists(self, layer, filename): return self._path(layer, filename).exists()
 
@@ -217,16 +224,25 @@ class MinIOStorage(StorageBase):
             length=buf.getbuffer().nbytes, content_type="text/csv")
         print("   [WRITE] [{}] {} -> MinIO ({} linhas)".format(layer.upper(), filename, len(df)))
 
-    def write_parquet(self, layer, filename, df):
-        import pyarrow.parquet as pq
+    def write_parquet(self, layer, filename, df, arrow_schema=None, metadata=None):
+        import pyarrow as pa, pyarrow.parquet as pq
         pq_name = _parquet_name(filename)
         tmp = self._tmp / pq_name
-        df.to_parquet(tmp, index=False, engine="pyarrow", compression="snappy")
+        try:
+            pa.Table.from_pandas(df, schema=arrow_schema, safe=False)
+        except Exception:
+            table = pa.Table.from_pandas(df)
+        if metadata:
+            existing = table.schema.metadata or {}
+            table = table.replace_schema_metadata({**existing, **metadata})
+        pq.write_table(table, tmp, compression="snappy")
         data = tmp.read_bytes()
-        self._client.put_object(self._bucket(layer), pq_name, io.BytesIO(data),
-            length=len(data), content_type="application/octet-stream")
-        print("   [PARQUET] [{}] {} -> MinIO ({} linhas, {:.1f} KB)".format(
-            layer.upper(), pq_name, len(df), len(data)/1024))
+        self._client.put_object(self._bucket(layer), pq_name, io.BytesIO(data), length=len(data),
+                                content_type="application/octet-stream")
+        src = "manifest" if arrow_schema else "inferido"
+        print("     [PARQUET] [{}] {} -> MinIO ({} linhas, {:.1f} KB, schema={})".format(
+            layer.upper(), pq_name, len(df), len(data)/1024, src
+        ))
         return pq_name
 
     def write_text(self, layer, filename, content):
@@ -235,17 +251,16 @@ class MinIOStorage(StorageBase):
             length=buf.getbuffer().nbytes, content_type="text/plain")
 
     def read(self, layer, filename):
-        ext = Path(filename).suffix.lower()
-        if ext == ".parquet":
-            tmp = self._tmp / filename
-            self._client.fget_object(self._bucket(layer), filename, str(tmp))
-            return pd.read_parquet(tmp)
-        response = self._client.get_object(self._bucket(layer), filename)
-        return pd.read_csv(io.BytesIO(response.read()), low_memory=False, dtype=str)
+        """Le pelo mesmo dispatcher do backend local: CSV, JSON, JSONL e fixo."""
+        return _read_file(self.read_path(layer, filename))
 
     def read_path(self, layer, filename):
         tmp = self._tmp / filename
         self._client.fget_object(self._bucket(layer), filename, str(tmp))
+        if Path(filename).suffix.lower() in FIXED_SUFFIXES:
+            sidecar = filename + ".layout"
+            if self.exists(layer, sidecar):
+                self._client.fget_object(self._bucket(layer), sidecar, str(self._temp /sidecar))
         return tmp
 
     def move(self, filename, from_layer, to_layer):
@@ -257,27 +272,30 @@ class MinIOStorage(StorageBase):
     def promote_to_parquet(self, filename, from_layer, to_layer, contract=None, run_id=None):
         self.last_cast_report = {}
         self.last_reject_report = {}
-        tmp = self._tmp / filename
-        self._client.fget_object(self._bucket(from_layer), filename, str(tmp))
-        df=_read_file(tmp)
-        if contract is not None and _strict_typing():
-            from src.storage.strict_cast import apply_strict_schema
-            cast_report = {}
-            df, rejected, cast_warnings, reject_summary = apply_strict_schema(df, contract, report=cast_report)
-            self.last_cast_report   = cast_report
-            self.last_reject_report = reject_summary
-            if len(rejected):
-                self.write("quarantine", "reject_" + _csv_name(filename), rejected)
-            for w in cast_warnings:
-                print(" [SCHEMA] [{}] {}".format(filename, w))
+        tmp = self.read_path(from_layer, filename)
+        df = _read_file(tmp)
+        df, arrow_schema, metadata = _apply_contract(self, df, filename, contract)
         df = add_lineage_columns(df, filename, run_id)
-        pq = self.write_parquet(to_layer, filename, df)
-        self._client.remove_object(self._bucket(from_layer), filename)
+        pq = self.write_parquet(to_layer, filename, df, arrow_schema, metadata)
+        self._archive(from_layer, filename)
+        print("  [PROMOTE] {} -> {}/{} (snappy) | original em {}/_archive".format(
+            filename, to_layer.upper(), pq, from_layer
+        ))
         return pq
+
+    def _archive(self, layer, filename):
+        from minio.commonconfig import CopySource
+        bucket = self._bucket(layer)
+        for name in (filename, filename + ".layout"):
+            if not self.exists(layer, name):
+                continue
+            self._client.copy_object(bucket, "_archive" + name, CopySource(bucket, name))
+            self._client.remove_object(bucket, name)
+
 
     def list(self, layer):
         return [o.object_name for o in self._client.list_objects(self._bucket(layer))
-                if o.object_name.endswith((".csv",".parquet",".json"))]
+                if Path(o.object_name).suffix.lower() in DATA_SUFFIXES]
 
     def exists(self, layer, filename):
         try: self._client.stat_object(self._bucket(layer), filename); return True

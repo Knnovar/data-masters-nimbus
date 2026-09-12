@@ -232,6 +232,12 @@ def gate_label(metrics: dict) -> str:
         return "[C/ REJEICAO]"
     return "[LIBERADA]"
 
+def pipeline_exit_code(all_metrics: list[dict], publications: list[dict]) -> int:
+    dlq = [m for m in all_metrics if m["validation_status"] in ("DLQ", "ERROR")]
+    blocked = [m for m in all_metrics if m.get("gate_status") == "BLOCKED"]
+    failed = [p for p in publications if p["status"] == "ERROR"]
+    return 2 if (dlq or blocked or failed) else 0
+
 def print_summary(all_metrics: list[dict]) -> None:
     """Imprime tabela de resultados no terminal."""
     print(f"\n{'='*66}")
@@ -334,7 +340,11 @@ def main():
             print(f"        {msg}")
     print("\n  Pipeline concluida.\n")
 
-    return 2 if (failed or blocked) else 0
+    code = pipeline_exit_code(all_metrics, publications)
+    print(" Exit Code   :{} ({})".format(
+        code, "tabelas liberadas" if code == 0 else "bloqueio de gate/quarentena"
+    ))
+    return code
 
 
 if __name__ == "__main__":

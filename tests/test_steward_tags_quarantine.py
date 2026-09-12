@@ -93,7 +93,7 @@ class TestPublishQuarantine(unittest.TestCase):
                                         run_id="run_20240115_120000_abc")
         self.assertEqual(result["status"], "OK")
         self.assertEqual(result["target"], "nimbus.bronze.quarantine_tb_clientes")
-        self.assertEqual(up.upload_register_and_raw.call_args.kwargs["dat_ref"], "2024-01-15")
+        self.assertEqual(up.upload_and_register_raw.call_args.kwargs["dat_ref"], "2024-01-15")
 
     def test_arquivo_inexistente_nao_e_erro(self):
         with self._enabled():
