@@ -11,7 +11,7 @@ _FORMAT_BY_SUFFIX = {
     ".csv": "csv", ".tsv": "tsv",
     ".json": "json", ".jsonl": "json", ".ndjson": "json",
     ".txt": "fixed", ".dat": "fixed", ".pos": "fixed", ".fix": "fixed",
-    ".parquet": "parquert",
+    ".parquet": "parquet",
 }
 
 FIXED_SUFFIXES = {".txt", ".dat", ".pos", ".fix"}
@@ -229,7 +229,7 @@ class MinIOStorage(StorageBase):
         pq_name = _parquet_name(filename)
         tmp = self._tmp / pq_name
         try:
-            pa.Table.from_pandas(df, schema=arrow_schema, safe=False)
+            table = pa.Table.from_pandas(df, schema=arrow_schema, safe=False)
         except Exception:
             table = pa.Table.from_pandas(df)
         if metadata:
@@ -260,7 +260,7 @@ class MinIOStorage(StorageBase):
         if Path(filename).suffix.lower() in FIXED_SUFFIXES:
             sidecar = filename + ".layout"
             if self.exists(layer, sidecar):
-                self._client.fget_object(self._bucket(layer), sidecar, str(self._temp /sidecar))
+                self._client.fget_object(self._bucket(layer), sidecar, str(self._tmp / sidecar))
         return tmp
 
     def move(self, filename, from_layer, to_layer):
@@ -289,7 +289,7 @@ class MinIOStorage(StorageBase):
         for name in (filename, filename + ".layout"):
             if not self.exists(layer, name):
                 continue
-            self._client.copy_object(bucket, "_archive" + name, CopySource(bucket, name))
+            self._client.copy_object(bucket, "_archive/" + name, CopySource(bucket, name))
             self._client.remove_object(bucket, name)
 
 
