@@ -244,5 +244,5 @@ def generate_report(all_metrics: list[dict], reports_dir: Path) -> Path:
     report_name = "pipeline_report.md"
     get_storage().write_text("reports", report_name, "\n".join(lines))
 
-    print(f"\n   [REPORT] Relatorio salvo em: {report_name}")
+    print(f"\n   [REPORT] Relatorio salvo em: reports/{report_name}")
     return report_name

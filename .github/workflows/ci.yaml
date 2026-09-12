@@ -50,7 +50,15 @@ jobs:
        run: bash -n scripts/entrypoint.sh
 
      - name: Pipeline end-to-end (todos os cenarios e formatos)
-       run: python run_pipeline.py --scenario all --format all
+       run: |
+        set +e
+        python run_pipeline.py --scenario all --format all
+        EC=$?
+        set -e
+        echo  "exit code do pipeline: ${EC}"
+        if [ "${EC}" -ne 0 ] && [ "${EC}" -ne 2]; then
+          exit
+        fi
      
      - name: Views de metrica
        run: |

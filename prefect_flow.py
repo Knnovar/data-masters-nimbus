@@ -610,7 +610,7 @@ if __name__ == "__main__":
             try:
                 result = pipeline_flow(scenario=sc, run_id=run_id, fmt=fmt)
             except GateBlocked as blocked:
-                result == blocked.result
+                result = blocked.result
                 print("\n [BLOQUEIO] {} ({}): publicacao barrada pelo gate/quarentena " \
                 "- exit code 2 (resultado esperado)\n".format(sc, fmt))
             worst_global = max(worst_global, result["exit_code"])
