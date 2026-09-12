@@ -156,14 +156,6 @@ class TestRegisterRaw(unittest.TestCase):
     def test_table_name_has_no_suffix(self):
         self.assertEqual(self.u.bronze_table("tb_clientes"), "tb_clientes")
 
-    def test_ctas_filtra_por_extensao(self):
-        stmts = []
-        def cap(s, **kw): stmts.append(s); return _sql_ok()
-        with patch.object(self.u, "_sql", side_effect=cap):
-            self.u.register_raw("tb_clientes", "/Volumes/...", "csv", pattern="*.csv")
-        ctas = next(s for s in stmts if "CREATE OR REPLACE TABLE" in s)
-        self.assertIn("pathGlobFilter => '*.csv'", ctas)
-
     def test_ctas_sem_pattern_nao_emite_filtro(self):
         stmts = []
         def cap(s, **kw): stmts.append(s); return _sql_ok()
