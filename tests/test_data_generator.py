@@ -11,6 +11,8 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.generators.data_generator import (
+    seed_all,
+    _uuid4,
     _cpf,
     _nome,
     _cnpj,
@@ -24,6 +26,7 @@ from src.generators.data_generator import (
     _contrato_contratos_credito,
     generate_all
 )
+from src.ingestion.idempotency import file_sha256
 
 LAYERS = ["bronze", "silver", "gold", "quarantine", "contracts", "metrics", "reports"]
 
@@ -186,6 +189,74 @@ class TestGenerateAll(unittest.TestCase):
                     s = _storage()
                     produced = generate_all(s, scenario=scenario, fmt=fmt)
                     self.assertEqual(len(produced), 3)
+
+class TestGeracaoDeterministica(unittest.TestCase):
+    """Sem isto a idempotencia nao e demonstravel: a mesma dat_ref tem que
+    produzir o mesmo arquivo, byte a byte, e portanto o mesmo SHA-256."""
+
+    def test_seed_all_devolve_a_mesma_semente_para_a_mesma_chave(self):
+        self.assertEqual(seed_all("baseline", "csv", "2024-04-01"),
+                         seed_all("baseline", "csv", "2024-04-01"))
+
+    def test_chaves_diferentes_dao_sementes_diferentes(self):
+        self.assertNotEqual(seed_all("baseline", "csv", "2024-04-01"),
+                            seed_all("baseline", "csv", "2024-05-01"))
+        self.assertNotEqual(seed_all("baseline", "csv", "2024-04-01"),
+                            seed_all("type_drift", "csv", "2024-04-01"))
+
+    def test_uuid_vem_do_random_semeado_e_nao_da_entropia_do_sistema(self):
+        seed_all("baseline", "csv", "2024-04-01")
+        primeiro = _uuid4()
+        seed_all("baseline", "csv", "2024-04-01")
+        self.assertEqual(_uuid4(), primeiro)
+
+    def test_uuid_tem_formato_v4(self):
+        seed_all("baseline", "csv", "2024-04-01")
+        gerado = _uuid4()
+        self.assertEqual(len(gerado), 36)
+        self.assertEqual(gerado[14], "4")
+
+    def _hashes(self, storage, produced):
+        return {p["filename"]: file_sha256(storage.read_path("bronze", p["filename"]))
+                for p in produced}
+
+    def _gerar(self, **kwargs):
+        s = _storage()
+        produced = generate_all(s, **kwargs)
+        return self._hashes(s, produced)
+
+    def test_mesma_dat_ref_gera_o_mesmo_arquivo(self):
+        a = self._gerar(scenario="baseline", fmt="csv", dat_ref="2024-04-01")
+        b = self._gerar(scenario="baseline", fmt="csv", dat_ref="2024-04-01")
+        self.assertEqual(a, b)
+
+    def test_dat_ref_diferente_gera_arquivo_diferente(self):
+        a = self._gerar(scenario="baseline", fmt="csv", dat_ref="2024-04-01")
+        b = self._gerar(scenario="baseline", fmt="csv", dat_ref="2024-05-01")
+        self.assertEqual(set(a), set(b))
+        for nome in a:
+            with self.subTest(arquivo=nome):
+                self.assertNotEqual(a[nome], b[nome])
+
+    def test_cenario_diferente_na_mesma_dat_ref_gera_arquivo_diferente(self):
+        """E o que faz type_drift aparecer como ENTRADA DIVERGENTE no ledger."""
+        a = self._gerar(scenario="baseline", fmt="csv", dat_ref="2024-04-01")
+        b = self._gerar(scenario="type_drift", fmt="csv", dat_ref="2024-04-01")
+        self.assertNotEqual(a["tb_clientes.csv"], b["tb_clientes.csv"])
+
+    def test_determinismo_vale_para_json_e_fixo(self):
+        for fmt in ("json", "fixed"):
+            with self.subTest(fmt=fmt):
+                a = self._gerar(scenario="baseline", fmt=fmt, dat_ref="2024-04-01")
+                b = self._gerar(scenario="baseline", fmt=fmt, dat_ref="2024-04-01")
+                self.assertEqual(a, b)
+
+    def test_sem_dat_ref_a_geracao_nao_e_fixada(self):
+        """Compatibilidade: sem dat_ref o gerador segue o comportamento antigo."""
+        a = self._gerar(scenario="baseline", fmt="csv")
+        b = self._gerar(scenario="baseline", fmt="csv")
+        self.assertEqual(set(a), set(b))
+
 
 if __name__ == "__main__":
     unittest.main()
