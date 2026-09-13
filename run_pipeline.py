@@ -306,7 +306,7 @@ def main():
 
     # Relatório consolidado
     print_summary(all_metrics)
-    report_path = generate_report(all_metrics, REPORTS_DIR)
+
 
     # Salva JSON consolidado
     report_name = generate_report(all_metrics)

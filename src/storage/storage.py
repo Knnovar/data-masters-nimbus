@@ -198,7 +198,7 @@ class LocalStorage(StorageBase):
     def exists(self, layer, filename): return self._path(layer, filename).exists()
 
 class MinIOStorage(StorageBase):
-    def __init__(self, endpoint, acess_key, secret_key, layer_map, tmp_dir, 
+    def __init__(self, endpoint, access_key, secret_key, layer_map, tmp_dir, 
                  secure=False, region=None, create_buckets=True):
         try:
             from minio import Minio
@@ -206,9 +206,9 @@ class MinIOStorage(StorageBase):
             self._S3Error = S3Error
         except ImportError:
             raise ImportError("Execute: pip install minio")
-        self._client = Minio(endpoint, acess_key=acess_key, secret_key=secret_key,
+        self._client = Minio(endpoint, access_key=access_key, secret_key=secret_key,
                              secure=secure, region=region)
-        self._layer = layer_map
+        self._layers = layer_map
         self._tmp = tmp_dir
         self._tmp.mkdir(parents=True, exist_ok=True)
         for bucket in layer_map.values():
@@ -321,10 +321,14 @@ def get_storage():
             "metrics":    cfg.DATA_DIR / "metrics",
             "reports":    cfg.DATA_DIR / "reports",
         })
+    prefix = getattr(cfg, "BUCKET_PREFIX", "nimbus")
     return MinIOStorage(
         endpoint   = getattr(cfg, "MINIO_ENDPOINT",   "localhost:9000"),
         access_key = getattr(cfg, "MINIO_ACCESS_KEY", "minioadmin"),
         secret_key = getattr(cfg, "MINIO_SECRET_KEY", "minioadmin"),
-        layer_map  = {l: "nimbus-{}".format(l) for l in LAYERS},
+        layer_map  = {l: "{}-{}".format(prefix, l) for l in LAYERS},
         tmp_dir    = cfg.DATA_DIR / "_tmp_minio",
+        secure     = getattr(cfg, "MINIO_SECURE", False),
+        region     = getattr(cfg, "MINIO_REGION", None),
+        create_buckets = getattr(cfg, "MINIO_CREATE_BUCKETS", True),
     )

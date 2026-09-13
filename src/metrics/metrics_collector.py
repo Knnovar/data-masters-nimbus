@@ -109,7 +109,7 @@ def save_summary(run_id: str, all_metrics: list[dict]) -> str:
     
 
 
-def generate_report(all_metrics: list[dict], reports_dir: Path) -> Path:
+def generate_report(all_metrics: list[dict]) -> Path:
     """Gera relatório Markdown consolidado da execução."""
 
     now   = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
