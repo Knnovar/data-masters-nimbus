@@ -198,21 +198,28 @@ class LocalStorage(StorageBase):
     def exists(self, layer, filename): return self._path(layer, filename).exists()
 
 class MinIOStorage(StorageBase):
-    def __init__(self, endpoint, access_key, secret_key, layer_map, tmp_dir):
+    def __init__(self, endpoint, acess_key, secret_key, layer_map, tmp_dir, 
+                 secure=False, region=None, create_buckets=True):
         try:
             from minio import Minio
             from minio.error import S3Error
             self._S3Error = S3Error
         except ImportError:
             raise ImportError("Execute: pip install minio")
-        from minio import Minio
-        self._client = Minio(endpoint, access_key=access_key, secret_key=secret_key, secure=False)
-        self._layers = layer_map
-        self._tmp    = tmp_dir
+        self._client = Minio(endpoint, acess_key=acess_key, secret_key=secret_key,
+                             secure=secure, region=region)
+        self._layer = layer_map
+        self._tmp = tmp_dir
         self._tmp.mkdir(parents=True, exist_ok=True)
         for bucket in layer_map.values():
-            if not self._client.bucket_exists(bucket):
-                self._client.make_bucket(bucket)
+            if self._client.bucket_exists(bucket):
+                continue
+            if not create_buckets:
+                raise RuntimeError(
+                    "Bucket '{}' nao existe e MINIO_CREATE_BUCKETS=false: " \
+                    "crie o bucket pelo provedor antes de executar.".format(bucket)
+                )
+            self._client.make_bucket(bucket)
 
     def _bucket(self, layer):
         if layer not in self._layers: raise ValueError("Camada desconhecida: '{}'".format(layer))

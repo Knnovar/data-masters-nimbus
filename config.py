@@ -28,6 +28,10 @@ USE_MINIO = os.environ.get("USE_MINIO", "false").lower() in ("true", "1", "yes")
 MINIO_ENDPOINT   = os.environ.get("MINIO_ENDPOINT",   "localhost:9000")
 MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
 MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "minioadmin")
+MINIO_SECURE = os.environ.get("MINIO_SECURE", "false").lower() in ("true", "1", "yes")
+MINIO_REGION = os.environ.get("MINIO_REGION") or None
+BUCKET_PREFIX = os.environ.get("BUCKET_PREFIX", "nimbus")
+MINIO_CREATE_BUCKETS = os.environ.get("MINIO_CREATE_BUCKETS", "true").lower() in ("true", "1", "yes")
 
 OLLAMA_HOST  = os.environ.get("OLLAMA_HOST",  "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "phi4")
