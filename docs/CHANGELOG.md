@@ -140,6 +140,6 @@ docs; `collect()` passou a receber `fmt` no fluxo Prefect (toda metrica saia com
 score documentado com as dimensoes reais (conformidade 40 / completude 25 / unicidade 20 /
 estabilidade 15); `MIGRATION_PLAN` corrigido quanto ao Azure Blob, que nao atende a API S3.
 
-**Suite.** 592 testes unitarios, com os componentes novos cobertos: `test_idempotency.py`,
+**Suite.** 627 testes unitarios, com os componentes novos cobertos: `test_idempotency.py`,
 `test_quality_score.py`, `test_minio_storage.py`, `test_slm_metrics.py`, `test_prefect_flow.py` e
 determinismo em `test_data_generator.py`.

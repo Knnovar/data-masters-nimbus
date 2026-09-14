@@ -25,7 +25,9 @@ data/processed/
 # ── Pipeline — artefatos de execução (gerados a cada run) ────────────────────
 data/metrics/
 data/reports/
-data/contracts/
+
+# data/contracts/ entra na imagem: sem o Manifest o pipeline nao tem contrato
+# para validar dentro do container.
 
 # ── Prefect ───────────────────────────────────────────────────────────────────
 .prefect/

@@ -1,9 +1,9 @@
 # Testes — Projeto Nimbus
 
-592 testes unitarios usando `unittest` nativo do Python, sem dependencias externas de teste.
+627 testes unitarios usando `unittest` nativo do Python, sem dependencias externas de teste.
 
 ```
-Ran 592 tests
+Ran 627 tests
 OK (skipped=1)
 ```
 
@@ -44,7 +44,7 @@ SKIP_SLM=true python -m unittest discover -s tests -q     # sem Ollama
 | `test_bronze.py` | 26 | `BronzeUploader`, arquivo bruto no Volume, provenance, `publish_bronze` |
 | `test_exit_codes.py` | 8 | Contrato de exit code fim a fim |
 | `test_steward_tags_quarantine.py` | 7 | Tags de governanca e roteamento de quarentena |
-| **Total** | **592** | |
+| **Total** | **627** | |
 
 ---
 

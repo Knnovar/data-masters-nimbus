@@ -244,7 +244,7 @@ nimbus/
 |   |-- metrics/              Metricas, quality score e relatorios
 |   `-- connectors/           Integracao Databricks via Files API + Unity Catalog
 |
-|-- tests/                    592 testes unitarios
+|-- tests/                    627 testes unitarios
 `-- data/                     Camadas medallion (persiste no host via Docker volume)
 ```
 

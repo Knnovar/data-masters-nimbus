@@ -3,6 +3,10 @@
 *.csv text eol=lf
 *.txt text eol=lf
 *.json text eol=lf
-*.yam text eol=lf
+*.yaml text eol=lf
 *.yml text eol=lf
-*.parquet text eol=lf
+
+# Binarios: normalizar quebra de linha corrompe o arquivo.
+*.parquet binary
+*.xlsx binary
+*.sas7bdat binary
