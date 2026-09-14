@@ -223,13 +223,85 @@ qual contrato ele saiu — e um Manifest em DRAFT gera aviso no próprio arquivo
 
 ---
 
+## Versão do contrato: `manifest-version`
+
+O campo `version` não é decorativo nem manual: ele é derivado do **diff entre o Manifest atual e o
+baseline**, com a regra de compatibilidade escrita no código.
+
+```bash
+# analisa (nao altera o arquivo)
+python tasks.py manifest-version --file data/contracts/tb_clientes.yaml
+
+# aplica o bump e registra o historico
+python tasks.py manifest-version --file data/contracts/tb_clientes.yaml \
+  --apply --author "Joao Silva"
+
+# compara contra um arquivo especifico em vez do baseline automatico
+python tasks.py manifest-version --file data/contracts/tb_clientes.yaml \
+  --baseline data/contracts/tb_clientes_v1.yaml
+```
+
+### A regra de bump
+
+| Mudança | Nível | Por quê |
+|---|---|---|
+| coluna removida, tipo alterado, `nullable: true → false`, PK ou ordem de colunas alterada | **MAJOR** | quebra consumidor existente |
+| formato/delimitador/encoding da origem alterado | **MAJOR** | quebra a leitura do arquivo |
+| tolerância restringida (limite menor, ou limite acordado removido) | **MAJOR** | carga que passava passa a reprovar |
+| coluna nova obrigatória (`nullable: false`) | **MAJOR** | carga existente não tem a coluna |
+| coluna nova opcional, `nullable: false → true`, tolerância afrouxada, classificação regulatória | **MINOR** | retrocompatível |
+| descrição, `business_rules`, `sas_label`, owner/steward, metadados | **PATCH** | não muda o dado |
+
+Entre várias mudanças, vale a **de maior severidade**: `MAJOR > MINOR > PATCH > NONE`.
+
+### Contra o que se compara
+
+A resolução do baseline é, nesta ordem:
+
+1. `--baseline <arquivo>`, quando você quer comparar contra uma versão específica;
+2. **Git** (`git show HEAD:<caminho>`) — o baseline é o contrato commitado, sem estado extra;
+3. **lock file** (`data/contracts/.lock/<tabela>.yaml`) — snapshot do último bump aplicado, usado
+   quando não há `.git` (container, tarball, workspace sem histórico);
+4. sem baseline: o Manifest é tratado como primeira versão e o lock inicial é gravado no `--apply`.
+
+O lock é gravado a cada `--apply` e **é versionado junto com o contrato** — é ele que mantém a
+auditoria funcionando dentro da imagem, onde não existe histórico Git.
+
+### O histórico fica no próprio contrato
+
+```yaml
+version: 2.0.0
+version_history:
+  - version: 2.0.0
+    previous_version: 1.0.0
+    level: MAJOR
+    date: "2026-09-14T02:02:44"
+    author: "Joao Silva"
+    baseline_source: "git:HEAD"
+    revalidacao_requerida: true
+    changes:
+      - nivel: MAJOR
+        campo: schema.vl_renda_mensal
+        detalhe: coluna removida
+```
+
+Duas consequências deliberadas:
+
+- **Promover com schema alterado e sem bump falha.** O `manifest_validator` chama a mesma avaliação
+  antes de gravar `VALIDATED` e recusa a promoção, apontando o comando que corrige. A exceção
+  existe (`--skip-version-check`) e é explícita, para não virar caminho normal.
+- **Aplicar bump em Manifest `VALIDATED` devolve o status para `DRAFT`** e limpa `validated_by` /
+  `validated_at`. Manter `VALIDATED` seria afirmar que o Steward aprovou uma versão que ele nunca
+  viu; a revalidação continua sendo ato humano.
+
+---
+
 ## Cuidado operacional com os arquivos
 
-Os manifests vivem em `data/contracts/`, que está no `.gitignore` — o contrato que o projeto chama de
-"autoridade" não está versionado no repositório. Além disso, tanto `make clean-data` quanto
-`python tasks.py clean-data` apagam `data/contracts/*.yaml`, **inclusive manifest já VALIDATED**
-(o comando do `tasks.py` ao menos pede confirmação; o alvo do Makefile não pede).
+Os manifests vivem em `data/contracts/`, que **é versionado** (o `.gitignore` e o `.dockerignore`
+têm a exceção escrita, com o motivo): contrato é artefato de governança, não dado gerado — e sem
+ele o container não tem contra o que validar. O diretório `.lock/` acompanha, pelo mesmo motivo.
 
-Antes de qualquer limpeza, guarde os manifests validados fora de `data/`. Em uso além da PoC, o lugar
-do contrato é um diretório versionado (ou o bucket `contracts`, que o storage já expõe como camada),
-não um diretório ignorado que um comando de limpeza alcança.
+`python tasks.py clean-data` preserva `data/contracts/` por padrão; só apaga os contratos com
+`--contracts` explícito. Ainda assim, antes de qualquer limpeza vale conferir o que está `VALIDATED`
+— um contrato promovido é o registro de uma decisão humana, não um arquivo reproduzível.

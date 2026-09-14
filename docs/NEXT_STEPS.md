@@ -4,7 +4,8 @@
 
 Ultima atualizacao: sprint `feature/expand-minio` — metricas/relatorios no storage configuravel,
 portabilidade S3 (TLS, regiao, prefixo), idempotencia com SHA-256 do input, geracao deterministica,
-correcao da ordem gate/Silver, privacidade na quarentena e `emit-grants` (627 testes).
+correcao da ordem gate/Silver, privacidade na quarentena, `emit-grants` e versionamento do
+Manifest por diff (661 testes).
 
 ---
 
@@ -39,14 +40,23 @@ correcao da ordem gate/Silver, privacidade na quarentena e `emit-grants` (627 te
   exige que a mascara devolva o tipo da coluna) e os `ALTER COLUMN ... SET MASK`. **Nao executa,
   nao autentica e nao abre conexao** — a saida e um arquivo SQL revisavel.
 
+- **Versionamento do Manifest derivado do diff.** `python tasks.py manifest-version` compara o
+  contrato com o baseline (Git por padrao, lock file em `data/contracts/.lock/` como fallback no
+  container) e calcula o bump: MAJOR para coluna removida, tipo, `nullable` endurecido, PK, ordem
+  de colunas, formato da origem e tolerancia restringida; MINOR para coluna nova opcional,
+  `nullable` afrouxado e tolerancia relaxada; PATCH para descricao e metadados. O `--apply` grava
+  `version_history` no proprio Manifest e devolve contrato `VALIDATED` alterado para `DRAFT`. O
+  `manifest_validator` recusa promover contrato alterado sem bump.
+
 ---
 
 ## 2. Pendente — maior retorno primeiro
 
-**Versionamento de Manifest.** O ciclo DRAFT -> VALIDATED e real e auditavel, mas `version` fica
-fixa em `1.0.0`: falta bump automatico (`non_breaking` -> minor, `breaking` -> major), diff do
-`_draft` contra o vigente no `check-manifest` e algum registry/historico. Hoje a evolucao de versao
-e manual e nao rastreada.
+**Registry de contratos.** O versionamento ja e automatico e auditavel no arquivo, mas o historico
+vive dentro do proprio YAML e do lock: nao ha registry central, nem consulta "quem consome a versao
+2.x de tb_clientes", nem notificacao de consumidor quando sai um MAJOR. Falta tambem ligar o bump
+ao `check-manifest` do `_draft` e publicar a versao vigente como metadado da tabela no Unity
+Catalog.
 
 **IAM e aplicacao dos GRANTs.** O `emit-grants` produz o DDL; aplicar continua sendo ato de quem
 tem alcada no workspace. O pipeline **nao** cria service principal, nao concede permissao e nao

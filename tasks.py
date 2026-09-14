@@ -98,6 +98,22 @@ def cmd_validate_manifest(args):
     return run(["python", "-m", "src.manifest.manifest_validator",
                 "--file", file, "--steward", steward])
 
+def cmd_manifest_version(args):
+    """Deriva a versao semantica do Manifest a partir do diff contra o baseline."""
+    file = _get_opt(args, "--file")
+    if not file:
+        print('Uso: python tasks.py manifest-version --file data/contracts/tb_clientes.yaml '
+              '[--baseline <outro.yaml>] [--apply --author "Nome"]')
+        return 1
+    cmd = ["python", "-m", "src.manifest.manifest_version", "--file", file]
+    for opt in ("--baseline", "--author"):
+        valor = _get_opt(args, opt)
+        if valor:
+            cmd += [opt, valor]
+    if "--apply" in args:
+        cmd.append("--apply")
+    return run(cmd)
+
 def cmd_extract_sas(args):
     file  = _get_opt(args, "--file")
     table = _get_opt(args, "--table")
@@ -358,6 +374,7 @@ COMMANDS = {
     "check-manifest"    : (cmd_check_manifest,    "Verifica pendencias de um manifest (--file)"),
     "validate-manifest" : (cmd_validate_manifest, "Promove DRAFT->VALIDATED (--file --steward)"),
     "emit-grants"       : (cmd_emit_grants,       "Gera o DDL de GRANT/mascara do Manifest, sem executar (--file)"),
+    "manifest-version"  : (cmd_manifest_version,  "Diff de schema -> versao semantica (--file [--baseline] [--apply --author])"),
     "extract-sas"       : (cmd_extract_sas,       "Extrai manifest de SAS7BDAT (--file --table)"),
     "extract-csv"       : (cmd_extract_csv,       "Extrai manifest de CSV (--file --table)"),
     "prefect-setup"     : (cmd_prefect_setup,     "Cria work pool e registra deployments"),
