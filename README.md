@@ -218,7 +218,6 @@ nimbus/
 |-- run_pipeline.py           Execucao direta
 |-- prefect_flow.py           Orquestracao Prefect mapeada para Control-M
 |-- show_metrics.py           Dashboard no terminal
-|-- queries_apresentacao.sql  Consultas DuckDB e Databricks SQL de demonstracao
 |
 |-- docs/
 |   |-- ARCHITECTURE.md       Arquitetura tecnica e integracao Databricks
