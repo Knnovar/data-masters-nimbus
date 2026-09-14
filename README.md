@@ -48,21 +48,21 @@ table, com tags de governanca (LGPD, SCR) vindas do Manifest.
 ### 2.1 Fluxo medallion
 
 ```mermaid
-flowchart TD
-    ORIG["Sistema de origem<br/>CSV | JSON | Fixed-Width | SAS7BDAT"]
+graph TD
+    ORIG["Sistema de origem<br/>CSV / JSON / Fixed-Width / SAS7BDAT"]
     NORM["Normalizacao de encoding<br/>UTF-8 / LF"]
     BRONZE["BRONZE<br/>arquivo original preservado<br/>sem cast, sem validacao"]
-    MAN[("MANIFEST<br/>contrato do Steward<br/>DRAFT | VALIDATED")]
+    MAN["MANIFEST<br/>contrato do Steward<br/>DRAFT / VALIDATED"]
     VAL{"Validacao de contrato<br/>schema evolution"}
     CAST{"Cast dirigido pelo Manifest<br/>linha a linha"}
     PROF["Profiling<br/>DuckDB (fallback pandas)"]
     SILVER["SILVER<br/>Parquet tipado<br/>+ linhagem _ingest_*"]
-    QUAR["QUARENTENA / DLQ<br/>arquivo em DLQ<br/>+ reject_&lt;tabela&gt;.csv"]
-    SCORE["Quality score<br/>conformidade 40 | completude 25<br/>unicidade 20 | estabilidade 15"]
-    GATE{"Gate de publicacao<br/>reject_pct | score | manifest"}
+    QUAR["QUARENTENA / DLQ<br/>arquivo em DLQ<br/>+ reject_(tabela).csv"]
+    SCORE["Quality score<br/>conformidade 40 / completude 25<br/>unicidade 20 / estabilidade 15"]
+    GATE{"Gate de publicacao<br/>reject_pct / score / manifest"}
     PUB["Publicacao<br/>Databricks UC (Bronze + Silver)"]
     BLOCK["BLOQUEADO<br/>exit code 2"]
-    LEDGER[("Ledger de idempotencia<br/>metrics/_ingest_ledger.json")]
+    LEDGER["Ledger de idempotencia<br/>metrics/_ingest_ledger.json"]
 
     ORIG --> NORM --> BRONZE --> VAL
     MAN -.contrato.-> VAL
@@ -84,7 +84,7 @@ sequenceDiagram
     autonumber
     participant SCH as Agendador (Control-M / Prefect)
     participant RUN as run_pipeline.py
-    participant ST as storage (local | MinIO | S3)
+    participant ST as storage (local / MinIO / S3)
     participant ID as idempotency
     participant VL as validator + caster
     participant PR as profiler (DuckDB)
@@ -94,9 +94,9 @@ sequenceDiagram
     SCH->>RUN: --scenario baseline --dat-ref 2024-04-01
     RUN->>ST: grava entrada no Bronze (+ _archive)
     RUN->>ID: file_sha256(entrada)
-    ID-->>RUN: FIRST_LOAD | REPROCESS_IDENTICAL | REPROCESS_MODIFIED
+    ID-->>RUN: FIRST_LOAD / REPROCESS_IDENTICAL / REPROCESS_MODIFIED
     RUN->>VL: valida contra o Manifest
-    VL-->>RUN: PASS | WARNING | DLQ (+ evolution_type)
+    VL-->>RUN: PASS / WARNING / DLQ (+ evolution_type)
     VL->>ST: rejeitos para quarentena (valor original preservado)
     RUN->>PR: profiling da Silver tipada
     RUN->>ML: score por dimensao + metricas da run
@@ -114,11 +114,11 @@ sequenceDiagram
 ### 2.3 Topologia de storage (local, MinIO, S3)
 
 ```mermaid
-flowchart LR
+graph LR
     subgraph APP["Pipeline (codigo identico)"]
         CORE["generator / validator / caster<br/>profiler / slm / metrics"]
         API["storage.StorageBase<br/>write write_parquet read move<br/>promote_to_parquet list exists<br/>write_text read_path"]
-        FAC{{"get_storage()<br/>USE_MINIO"}}
+        FAC["get_storage()<br/>USE_MINIO"]
         CORE --> API --> FAC
     end
 
@@ -127,13 +127,13 @@ flowchart LR
 
     MIO --> B1["MinIO local<br/>localhost:9000 (HTTP)"]
     MIO --> B2["S3Mock / outro S3-compativel<br/>HTTPS + regiao<br/>(validado nesta branch)"]
-    MIO --> B3["AWS S3<br/>s3.&lt;regiao&gt;.amazonaws.com<br/>(compativel por API, nao exercitado em conta real)"]
+    MIO --> B3["AWS S3<br/>s3.(regiao).amazonaws.com<br/>(compativel por API, nao exercitado em conta real)"]
 ```
 
 ### 2.4 Orquestracao: Prefect, Control-M e Databricks
 
 ```mermaid
-flowchart TD
+graph TD
     CTM["Control-M<br/>agendamento corporativo"]
     PFC["prefect_flow.py --no-prefect<br/>funcoes puras, sem servidor"]
     PFS["prefect_flow.py<br/>@flow / @task no servidor Prefect"]
@@ -143,7 +143,7 @@ flowchart TD
     T4["JOB-DM-004-ENRICH (SLM)"]
     T5["JOB-DM-005-METRICS"]
     T6["JOB-DM-006-REPORT"]
-    GB{{"GateBlocked"}}
+    GB["GateBlocked"]
     EX["exit 0 publicado<br/>exit 2 bloqueio esperado<br/>exit 1 erro inesperado"]
     UC["Databricks Unity Catalog<br/>nimbus.bronze / nimbus.silver"]
 
@@ -157,30 +157,30 @@ flowchart TD
 ### 2.5 SLM com revisao humana
 
 ```mermaid
-flowchart LR
+graph LR
     EXT["Extrator (csv/json/fixed/sas7bdat)<br/>tasks.py extract-*"]
     DRAFT["Manifest DRAFT<br/>version 1.0.0 + # TODO"]
     SLM["Ollama local (phi4)<br/>propoe descricoes"]
     TAG["Saida marcada<br/>[AI_METADATA_STATUS: DRAFT]"]
     STW["Data Steward<br/>tasks.py check-manifest"]
     VALD["Manifest VALIDATED<br/>validated_by / validated_at"]
-    GATEG{{"REQUIRE_VALIDATED_MANIFEST"}}
+    GATEG["REQUIRE_VALIDATED_MANIFEST"]
     PUBG["Publicacao liberada"]
 
     EXT --> DRAFT --> SLM --> TAG --> STW
     STW -- "# TODO pendente" --> DRAFT
     STW -- "tasks.py validate-manifest --steward" --> VALD
     VALD --> GATEG --> PUBG
-    DRAFT -.->|"gate ligado bloqueia"| GATEG
+    DRAFT -. gate ligado bloqueia .-> GATEG
 ```
 
 ### 2.6 Reprocessamento e SHA-256
 
 ```mermaid
-flowchart TD
+graph TD
     IN["Arquivo de entrada<br/>(table, dat_ref, format)"]
     SHA["file_sha256<br/>leitura em blocos de 1 MiB"]
-    LED[("metrics/_ingest_ledger.json")]
+    LED["metrics/_ingest_ledger.json"]
     Q1{"existe entrada anterior<br/>para (table, dat_ref, format)?"}
     FL["FIRST_LOAD<br/>carga nova"]
     Q2{"sha atual == sha anterior?"}
@@ -188,7 +188,7 @@ flowchart TD
     RM["REPROCESS_MODIFIED<br/>ENTRADA DIVERGENTE<br/>previous_sha256 preservado"]
     Q3{"--skip-existing?"}
     SKIP["carga pulada<br/>(somente status concluido)"]
-    RUNP["processa e sobrescreve a particao<br/>dat_ref=&lt;data&gt;"]
+    RUNP["processa e sobrescreve a particao<br/>dat_ref=(data)"]
 
     IN --> SHA --> Q1
     Q1 -- nao --> FL --> RUNP
@@ -302,8 +302,8 @@ ambiente — em Docker elas vem do `docker-compose.yml`, localmente vem do `.env
 | `REQUIRE_VALIDATED_MANIFEST` | `false` | Gate de governanca: exige Manifest VALIDATED para publicar |
 | `USE_MINIO` | `false` | Troca o filesystem local pelo object storage S3-compativel |
 | `MINIO_ENDPOINT` | `localhost:9000` | Endpoint do object storage (`host:porta`, sem esquema) |
-| `MINIO_ACCESS_KEY` | `minioadmin` | Access key |
-| `MINIO_SECRET_KEY` | `minioadmin` | Secret key |
+| `MINIO_ACCESS_KEY` | (vazio, **obrigatoria** com `USE_MINIO=true`) | Access key; sem default no codigo |
+| `MINIO_SECRET_KEY` | (vazio, **obrigatoria** com `USE_MINIO=true`) | Secret key; sem default no codigo |
 | `MINIO_SECURE` | `false` | `true` liga HTTPS/TLS (obrigatorio em S3 gerenciado) |
 | `MINIO_REGION` | (vazio) | Regiao usada na assinatura SigV4 (ex.: `sa-east-1`) |
 | `BUCKET_PREFIX` | `nimbus` | Prefixo dos buckets (`<prefixo>-bronze`, `<prefixo>-silver`, ...) |
@@ -318,7 +318,9 @@ ambiente — em Docker elas vem do `docker-compose.yml`, localmente vem do `.env
 | `DATABRICKS_BRONZE_VOLUME` | `landing` | Volume UC do Bronze |
 | `DATABRICKS_AUTO_UPLOAD` | `true` | Publica Silver apos cada run |
 | `DATABRICKS_BRONZE_UPLOAD` | `true` | Publica o arquivo bruto apos a geracao |
-| `DATABRICKS_QUARANTINE_UPLOAD` | `true` | Publica rejeitos e arquivos em DLQ da quarentena |
+| `DATABRICKS_QUARANTINE_UPLOAD` | `false` | Publica rejeitos e arquivos em DLQ da quarentena; desligada por padrao porque rejeito carrega o registro que falhou |
+| `QUARANTINE_MASK_PII` | `true` | Mascara, nos rejeitos, as colunas marcadas `LGPD_SENSITIVE` no Manifest |
+| `QUARANTINE_BLOCKED_SILVER` | `true` | Carga reprovada no gate sai da Silver e fica na quarentena |
 
 ---
 
@@ -340,17 +342,29 @@ python run_pipeline.py --scenario baseline --format csv
 python show_metrics.py --score
 ```
 
-### 6.2 MinIO local
+### 6.2 MinIO local (um comando)
 
 ```bash
-docker compose up -d minio
-export USE_MINIO=true
-export MINIO_ENDPOINT=localhost:9000
-export MINIO_ACCESS_KEY=minioadmin
-export MINIO_SECRET_KEY=minioadmin
-python run_pipeline.py --scenario baseline --format json
-python show_metrics.py --score     # le do bucket nimbus-metrics
+make demo            # ou: python tasks.py demo
 ```
+
+`demo` gera o `.env` com credencial aleatoria na primeira execucao (nas seguintes reaproveita a
+que ja existe), sobe o MinIO, aguarda o health check, cria os buckets e roda
+`run_pipeline.py --scenario baseline --format json` + `show_metrics.py --score` **contra o
+object storage**, sem exigir nenhum `export` no seu shell.
+
+Para so subir o ambiente e depois trabalhar na mao:
+
+```bash
+make up                                      # ou: python scripts/nimbus_up.py
+make minio-creds                             # console/usuario/senha do MinIO local
+eval "$(python scripts/nimbus_up.py --print-env)"   # bash/zsh: exporta no shell atual
+python run_pipeline.py --scenario baseline --format json
+```
+
+A credencial nunca aparece em codigo nem em log: fica so no `.env`, que esta no `.gitignore`
+(`make minio-creds` e a forma explicita de consultar). `make down` derruba os containers
+preservando dados e credencial; `make reset-minio` recria o volume do zero.
 
 ### 6.3 Outro servidor S3-compativel, com TLS e regiao
 
@@ -503,7 +517,7 @@ CREATE VOLUME IF NOT EXISTS nimbus.silver.landing;
 | `python tasks.py metrics` | Resumo do ultimo run |
 | `python tasks.py score` | Score por dimensao das ultimas execucoes |
 | `python tasks.py models` | Visao de modelos/tabelas publicadas |
-| `python tasks.py test` | 592 testes unitarios |
+| `python tasks.py test` | 627 testes unitarios |
 | `python tasks.py test-databricks` | Diagnostico de conectividade em 4 niveis |
 | `python tasks.py upload-bronze` | Upload do arquivo bruto -> Volume bronze |
 | `python tasks.py upload-silver` | Upload Parquet -> Volume silver -> Delta -> metastore |
@@ -511,34 +525,32 @@ CREATE VOLUME IF NOT EXISTS nimbus.silver.landing;
 | `python tasks.py upload-silver --table tb_clientes` | Envia apenas uma tabela |
 | `python tasks.py check-manifest --file <path>` | Lista pendencias do Manifest |
 | `python tasks.py validate-manifest --file <path> --steward "Nome"` | Promove DRAFT para VALIDATED |
+| `python tasks.py emit-grants --file <path>` | Gera o DDL de `GRANT`/mascara a partir da classificacao do Manifest — **so imprime, nao executa** |
 | `python tasks.py help` | Lista todos os comandos |
 
 ---
 
 ## 10. Limites conhecidos
 
-Declarados de proposito — sao a fronteira entre o que o codigo prova e o que seria necessario para
-producao:
+Tres limites mudam como o resultado de uma execucao deve ser lido:
 
 - **Escala.** pandas single-node. O que sobrevive a uma troca por Spark e o Manifest, o roteamento
   e o contrato de exit code; o executor nao e o ponto forte.
-- **Ordem gate/Silver.** O gate bloqueia a **publicacao**, nao a escrita na Silver local: uma carga
-  reprovada pode existir como Parquet antes do bloqueio. Quem le a Silver precisa filtrar por
-  status da run (ver `queries_apresentacao.sql`).
-- **Quarentena com dado sensivel.** Os rejeitos preservam o valor original, inclusive PII em claro,
-  e o upload da quarentena esta ligado por padrao (`DATABRICKS_QUARANTINE_UPLOAD=true`).
-- **Identificacao de PII e heuristica.** Nomes de coluna legados (`NRDOC`, `DDD_FONE`, `LOGRAD`)
-  podem nao ser reconhecidos, e a mascara do prompt da SLM so atua sobre coluna marcada.
-- **Manifest sem versionamento automatico.** O ciclo DRAFT -> VALIDATED e real e auditavel, mas
-  `version` fica fixa em `1.0.0`: nao ha bump por `evolution_type`, registry central nem diff
-  automatico entre draft e vigente.
-- **Operacao.** Nao ha retry, lock, estado `RUNNING` nem atomicidade entre publicacao e ledger.
-  O ledger e um JSON reescrito, adequado a execucao sequencial.
+- **Ordem gate/Silver.** O gate so pode decidir depois do cast, entao o Parquet ja existe quando o
+  bloqueio acontece: a carga reprovada e **retirada da Silver e movida para a quarentena**
+  (`QUARANTINE_BLOCKED_SILVER=true`), onde continua auditavel sem ficar no caminho do consumidor.
 - **Gold.** Camada configurada, sem fluxo funcional — o medallion desta PoC termina na Silver.
-- **SLM local nao e governanca de IA corporativa.** O modelo propoe metadado; a autoridade continua
-  sendo o Data Steward, e toda saida nasce `DRAFT`.
-- **Sem evidencia de AWS real nem de workspace Databricks real** nesta branch: a compatibilidade S3
-  foi exercitada com dois servidores S3-compativeis, e o Databricks foi exercitado com mock.
+
+Dois defaults de privacidade que valem citar aqui: o upload da quarentena para o Databricks vem
+**desligado** (`DATABRICKS_QUARANTINE_UPLOAD=false`) e os rejeitos saem com as colunas marcadas
+`LGPD_SENSITIVE` no Manifest substituidas por um token deterministico
+(`QUARANTINE_MASK_PII=true`) — o token preserva correlacao entre linhas, e **nao** e anonimizacao
+juridica: a origem continua sendo o dado do titular.
+
+Os demais limites conhecidos (deteccao de dado sensivel limitada ao que o Manifest declara,
+versionamento de Manifest, IAM/service principal, retry/lock/atomicidade do ledger, papel da SLM e
+ausencia de AWS e de workspace Databricks reais) estao em
+[docs/NEXT_STEPS.md](docs/NEXT_STEPS.md), com o caminho de resolucao de cada um.
 
 ---
 

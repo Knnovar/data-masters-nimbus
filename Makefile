@@ -4,7 +4,7 @@
 # Windows: prefira `python tasks.py <comando>` — funciona nativamente,
 # sem precisar instalar make. Veja python tasks.py help
 
-.PHONY: run baseline non-breaking breaking metrics issues slm clean clean-data setup prefect-setup help
+.PHONY: run baseline non-breaking breaking metrics issues slm clean clean-data setup prefect-setup help up down demo reset-minio minio-creds
 
 # ── Pipeline ──────────────────────────────────────────────────────────────────
 
@@ -19,6 +19,24 @@ non-breaking:
 
 breaking:
 	python run_pipeline.py --scenario breaking
+
+# ── Object storage local (MinIO) ──────────────────────────────────────────────
+# `up` e idempotente: gera o .env na primeira vez e reaproveita a credencial depois.
+
+up:
+	python scripts/nimbus_up.py
+
+reset-minio:
+	python scripts/nimbus_up.py --reset
+
+minio-creds:
+	python tasks.py minio-creds
+
+demo:
+	python tasks.py demo
+
+down:
+	docker compose down
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 
@@ -78,6 +96,13 @@ help:
 	@echo "    make baseline      Executa cenario baseline"
 	@echo "    make non-breaking  Executa cenario non_breaking"
 	@echo "    make breaking      Executa cenario breaking"
+	@echo ""
+	@echo "  Object storage local:"
+	@echo "    make up            Sobe o MinIO, gera credencial no .env, cria buckets"
+	@echo "    make demo          up + pipeline + score no MinIO (sem exportar variavel)"
+	@echo "    make minio-creds   Mostra console/usuario/senha do MinIO local"
+	@echo "    make reset-minio   Recria o volume (use se a credencial divergir)"
+	@echo "    make down          Derruba os containers"
 	@echo ""
 	@echo "  Dashboard:"
 	@echo "    make metrics       Resumo geral do ultimo run"

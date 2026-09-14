@@ -2,85 +2,89 @@
 
 ## Visão Geral
 
-A tabela `tb_transacoes` registra todas as movimentações financeiras realizadas por diferentes canais de atendimento do banco. Ela é gerida pela equipe `squad-transacoes` e está em conformidade com os regulamentos BACEN_4658 e PCI_DSS. A tabela é classificada como confidencial e possui um período de retenção de 7 anos.
+A tabela `tb_transacoes` registra todas as movimentações financeiras realizadas através de diferentes canais de atendimento do banco. Ela é gerida pela equipe `squad-transacoes` e está em sua versão 2.3.1. O sistema de origem é o `SWITCH_TRANSACIONAL`, e os dados são armazenados em formato CSV com codificação UTF-8 no sistema operacional Unix. A atualização dos dados é feita de forma event-driven, e o contato para suporte é `squad-transacoes@banco.com.br`.
 
-## Colunas
+### Contexto de Negócio
 
-### `id_transacao`
-- **Tipo**: `string`
-- **Nullable**: `false`
-- **Descrição**: UUID da transação, gerado pelo sistema transacional no momento da operação.
-- **Propósito de Negócio**: Identificador único para cada transação.
-- **Comportamento Esperado**: Deve ser único para cada transação.
-- **Anomalias**: 2% de duplicatas observadas, o que excede o limite de tolerância de 0% para duplicatas.
+- **Registro de Movimentações**: A tabela captura todas as transações financeiras por canal.
+- **Flag de Transações Suspeitas**: A coluna `fl_suspeita` indica se uma transação está sendo analisada pelo motor antifraude.
+- **Estabelecimento Nulo**: A coluna `cd_estabelecimento` pode ser nula para compras online não identificadas, o que ocorre em aproximadamente 6% das transações.
 
-### `cd_cliente`
-- **Tipo**: `string`
-- **Nullable**: `false`
-- **Descrição**: Referência ao cliente em `tb_clientes`.
-- **Propósito de Negócio**: Identifica o cliente associado à transação.
-- **Comportamento Esperado**: Deve corresponder a um cliente válido na tabela `tb_clientes`.
-- **Anomalias**: Alta concentração de transações para alguns clientes, indicando potencialmente transações repetitivas ou padrões incomuns.
+### Regulamentações e Classificação de Dados
 
-### `dt_transacao`
-- **Tipo**: `string` (deveria ser `date`)
-- **Nullable**: `false`
-- **Descrição**: Data da transação no fuso horário America/Sao_Paulo.
-- **Propósito de Negócio**: Registro da data e hora em que a transação ocorreu.
-- **Comportamento Esperado**: Deve estar no formato de data e corresponder ao fuso horário especificado.
-- **Anomalias**: Tipo de dado incorreto (`VARCHAR` em vez de `date`), o que pode afetar operações de data.
+- **Tags Regulatórias**: A tabela está sujeita às normas `BACEN_4658` e `PCI_DSS`, o que implica em requisitos específicos de segurança e privacidade dos dados.
+- **Classificação de Dados**: Os dados são classificados como confidenciais e devem ser retidos por 7 anos.
 
-### `vl_transacao`
-- **Tipo**: `string` (deveria ser `float`)
-- **Nullable**: `false`
-- **Descrição**: Valor em BRL. Positivo para débitos, negativo para estornos.
-- **Propósito de Negócio**: Representa o valor monetário da transação.
-- **Comportamento Esperado**: Deve ser um número decimal representando o valor da transação.
-- **Anomalias**: Tipo de dado incorreto (`VARCHAR` em vez de `float`), o que pode afetar cálculos financeiros.
+## Esquema da Tabela
 
-### `tp_transacao`
-- **Tipo**: `string`
-- **Nullable**: `false`
-- **Descrição**: Tipo da operação. Dominio: COMPRA, SAQUE, TED, PIX, PAGAMENTO_BOLETO, ESTORNO.
-- **Propósito de Negócio**: Classifica o tipo de transação realizada.
-- **Comportamento Esperado**: Deve corresponder a um dos tipos de operação definidos no domínio.
-- **Anomalias**: Nenhuma anomalia observada.
+### Colunas
 
-### `cd_estabelecimento`
-- **Tipo**: `string`
-- **Nullable**: `true`
-- **Descrição**: CNPJ do estabelecimento. Nulo para compras online não identificadas (~6%).
-- **Propósito de Negócio**: Identifica o estabelecimento associado à transação.
-- **Comportamento Esperado**: Deve ser um CNPJ válido ou nulo para transações online não identificadas.
-- **Anomalias**: 6.5% de valores nulos observados, ligeiramente acima do esperado (~6%).
+1. **id_transacao**
+   - **Tipo**: String
+   - **Nullable**: Não
+   - **Descrição**: UUID da transação, gerado no momento da operação.
+   - **Comportamento Esperado**: Valor único para cada transação.
+   - **Anomalias**: 2% de duplicatas observadas.
 
-### `fl_suspeita`
-- **Tipo**: `string` (deveria ser `boolean`)
-- **Nullable**: `false`
-- **Descrição**: Flag do motor antifraude. True indica transação em análise (~4% do volume).
-- **Propósito de Negócio**: Indica se a transação está sendo analisada pelo motor antifraude.
-- **Comportamento Esperado**: Deve ser `true` ou `false`.
-- **Anomalias**: Tipo de dado incorreto (`VARCHAR` em vez de `boolean`), o que pode afetar a lógica de detecção de fraude.
+2. **cd_cliente**
+   - **Tipo**: String
+   - **Nullable**: Não
+   - **Descrição**: Referência ao cliente em `tb_clientes`.
+   - **Comportamento Esperado**: Valor único por cliente.
+   - **Anomalias**: Alta concentração de transações por alguns clientes.
 
-### `cd_canal`
-- **Tipo**: `string`
-- **Nullable**: `false`
-- **Descrição**: Canal de origem. Dominio: APP, INTERNET, AGENCIA, ATM, POS.
-- **Propósito de Negócio**: Identifica o canal através do qual a transação foi realizada.
-- **Comportamento Esperado**: Deve corresponder a um dos canais definidos no domínio.
-- **Anomalias**: Nenhuma anomalia observada.
+3. **dt_transacao**
+   - **Tipo**: String (deveria ser Date)
+   - **Nullable**: Não
+   - **Descrição**: Data da transação no fuso horário America/Sao_Paulo.
+   - **Comportamento Esperado**: Formato de data válido.
+   - **Anomalias**: Tipo de dado incorreto (VARCHAR).
 
-## Implicações de Compliance
+4. **vl_transacao**
+   - **Tipo**: String (deveria ser Float)
+   - **Nullable**: Não
+   - **Descrição**: Valor em BRL. Positivo para débitos, negativo para estornos.
+   - **Comportamento Esperado**: Valor numérico dentro do intervalo de 15.07 a 24986.13.
+   - **Anomalias**: Tipo de dado incorreto (VARCHAR).
 
-- **BACEN_4658**: Requer que todas as transações sejam registradas com precisão e que os dados sejam mantidos por um período mínimo de 7 anos.
-- **PCI_DSS**: Exige que dados sensíveis, como informações de transação, sejam protegidos contra acesso não autorizado.
+5. **tp_transacao**
+   - **Tipo**: String
+   - **Nullable**: Não
+   - **Descrição**: Tipo da operação. Dominio: COMPRA, SAQUE, TED, PIX, PAGAMENTO_BOLETO, ESTORNO.
+   - **Comportamento Esperado**: Valores dentro do domínio especificado.
+
+6. **cd_estabelecimento**
+   - **Tipo**: String
+   - **Nullable**: Sim
+   - **Descrição**: CNPJ do estabelecimento. Nulo para compras online não identificadas (~6%).
+   - **Comportamento Esperado**: CNPJ válido ou nulo.
+   - **Anomalias**: 6.5% de valores nulos, o que está dentro do esperado.
+
+7. **fl_suspeita**
+   - **Tipo**: String (deveria ser Boolean)
+   - **Nullable**: Não
+   - **Descrição**: Flag do motor antifraude. True indica transação em análise (~4% do volume).
+   - **Comportamento Esperado**: Valores booleanos (True/False).
+   - **Anomalias**: Tipo de dado incorreto (VARCHAR).
+
+8. **cd_canal**
+   - **Tipo**: String
+   - **Nullable**: Não
+   - **Descrição**: Canal de origem. Dominio: APP, INTERNET, AGENCIA, ATM, POS.
+   - **Comportamento Esperado**: Valores dentro do domínio especificado.
+
+### Anomalias e Observações
+
+- **Duplicatas**: A coluna `id_transacao` apresenta duplicatas, o que é uma anomalia crítica dado que é a chave primária.
+- **Tipos de Dados**: As colunas `dt_transacao`, `vl_transacao` e `fl_suspeita` têm tipos de dados incorretos (VARCHAR em vez de Date, Float e Boolean, respectivamente).
+- **Concentração de Transações**: Algumas contas de clientes têm um volume significativo de transações, o que pode indicar padrões de uso ou necessidade de análise adicional.
 
 ## Pontos de Atenção
 
-1. **Duplicatas em `id_transacao`**: 2% de duplicatas observadas, o que excede o limite de tolerância.
-2. **Tipos de Dados Incorretos**: `dt_transacao`, `vl_transacao` e `fl_suspeita` estão armazenados como `VARCHAR` em vez de `date`, `float` e `boolean`, respectivamente.
-3. **Valores Nulos em `cd_estabelecimento`**: 6.5% de valores nulos observados, ligeiramente acima do esperado (~6%).
-4. **Alta Concentração de Transações por Cliente**: Alguns clientes têm um número significativo de transações, o que pode indicar padrões incomuns ou potencial fraude.
+- **Validação de Tipos de Dados**: Corrigir os tipos de dados incorretos para garantir a integridade e a precisão dos dados.
+- **Duplicatas na Chave Primária**: Investigar e resolver as duplicatas na coluna `id_transacao`.
+- **Conformidade Regulatória**: Assegurar que todas as práticas de armazenamento e processamento de dados estejam em conformidade com as normas `BACEN_4658` e `PCI_DSS`.
+- **Monitoramento de Transações Suspeitas**: Manter um monitoramento contínuo das transações marcadas como suspeitas para prevenir fraudes.
 
 ---
 

@@ -5,7 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 import pandas as pd
 
-LINEAGE_COLUMNS = ["_ingest_file", "_ingest_format", "_ingest_time", "_ingest_run_id"]
+LINEAGE_COLUMNS = ["_ingest_file", "_ingest_format", "_ingest_time", "_ingest_run_id",
+                   "_ingest_dat_ref"]
 
 _FORMAT_BY_SUFFIX = {
     ".csv": "csv", ".tsv": "tsv",
@@ -21,7 +22,7 @@ DATA_SUFFIXES = {".csv", ".tsv", ".json", ".jsonl", ".ndjson",
 def ingest_format(filename) -> str:
     return _FORMAT_BY_SUFFIX.get(Path(filename).suffix.lower(), "outro")
 
-def add_lineage_columns(df, filename, run_id=None):
+def add_lineage_columns(df, filename, run_id=None, dat_ref=None):
     """Acrescenta a linhagem tecnica ao Dataframe ja tipado.
     
     Aplicada depois do cast, de proposito: estas colunas nao sao declaradas no
@@ -33,6 +34,7 @@ def add_lineage_columns(df, filename, run_id=None):
     df["_ingest_format"]    = ingest_format(filename)
     df["_ingest_time"]      = datetime.now(timezone.utc).isoformat(timespec="seconds")
     df["_ingest_run_id"]    = run_id or ""
+    df["_ingest_dat_ref"]   = dat_ref or ""
     return df
 class StorageBase(ABC):
     last_cast_report: dict = {}
@@ -46,7 +48,8 @@ class StorageBase(ABC):
     @abstractmethod
     def move(self, filename, from_layer, to_layer): pass
     @abstractmethod
-    def promote_to_parquet(self, filename, from_layer, to_layer, contract=None, run_id=None): pass
+    def promote_to_parquet(self, filename, from_layer, to_layer, contract=None, run_id=None,
+                           dat_ref=None): pass
     @abstractmethod
     def list(self, layer): pass
     @abstractmethod
@@ -64,6 +67,14 @@ def _strict_typing():
     import config
     return getattr(config, "STRICT_TYPING", True)
 
+def _mask_pii(rejected, contract):
+    """Aplica a mascara de PII nos rejeitos quando o contrato declara coluna sensivel."""
+    import config
+    if not getattr(config, "QUARANTINE_MASK_PII", True):
+        return rejected
+    from src.storage.pii_masking import mask_rejected
+    return mask_rejected(rejected, contract)
+
 def _apply_contract(storage, df, filename, contract):
     if contract is None:
         return df, None, None
@@ -76,7 +87,8 @@ def _apply_contract(storage, df, filename, contract):
         df, rejected, cast_warnings, reject_summary = apply_strict_schema(df, contract, report=cast_report)
         storage.last_reject_report = reject_summary
         if len(rejected):
-            storage.write("quarantine", "reject_" + _csv_name(filename), rejected)
+            storage.write("quarantine", "reject_" + _csv_name(filename),
+                          _mask_pii(rejected, contract))
     else:
         df, cast_warnings = apply_manifest_schema(df, contract, report=cast_report)
     storage.last_cast_report = cast_report
@@ -164,13 +176,14 @@ class LocalStorage(StorageBase):
         shutil.move(str(src), str(dst))
         print("   [MOVE] {}: {} -> {}".format(filename, from_layer.upper(), to_layer.upper()))
 
-    def promote_to_parquet(self, filename, from_layer, to_layer, contract=None, run_id=None):
+    def promote_to_parquet(self, filename, from_layer, to_layer, contract=None, run_id=None,
+                           dat_ref=None):
         self.last_cast_report = {}
         self.last_reject_report = {}
         src = self._path(from_layer, filename)
         df  = _read_file(src)
         df, arrow_schema, metadata = _apply_contract(self, df, filename, contract)
-        df = add_lineage_columns(df, filename, run_id)
+        df = add_lineage_columns(df, filename, run_id, dat_ref)
         pq = self._write_parquet_internal(to_layer, filename, df, arrow_schema, metadata)
         archive_dir = src.parent / "_archive"
         archive_dir.mkdir(exist_ok=True)
@@ -276,13 +289,14 @@ class MinIOStorage(StorageBase):
                                  CopySource(self._bucket(from_layer), filename))
         self._client.remove_object(self._bucket(from_layer), filename)
 
-    def promote_to_parquet(self, filename, from_layer, to_layer, contract=None, run_id=None):
+    def promote_to_parquet(self, filename, from_layer, to_layer, contract=None, run_id=None,
+                           dat_ref=None):
         self.last_cast_report = {}
         self.last_reject_report = {}
         tmp = self.read_path(from_layer, filename)
         df = _read_file(tmp)
         df, arrow_schema, metadata = _apply_contract(self, df, filename, contract)
-        df = add_lineage_columns(df, filename, run_id)
+        df = add_lineage_columns(df, filename, run_id, dat_ref)
         pq = self.write_parquet(to_layer, filename, df, arrow_schema, metadata)
         self._archive(from_layer, filename)
         print("  [PROMOTE] {} -> {}/{} (snappy) | original em {}/_archive".format(
@@ -322,10 +336,17 @@ def get_storage():
             "reports":    cfg.DATA_DIR / "reports",
         })
     prefix = getattr(cfg, "BUCKET_PREFIX", "nimbus")
+    access_key = getattr(cfg, "MINIO_ACCESS_KEY", "")
+    secret_key = getattr(cfg, "MINIO_SECRET_KEY", "")
+    if not access_key or not secret_key:
+        raise RuntimeError(
+            "USE_MINIO=true exige MINIO_ACCESS_KEY e MINIO_SECRET_KEY "
+            "(defina no .env; nao ha credencial default no codigo)"
+        )
     return MinIOStorage(
         endpoint   = getattr(cfg, "MINIO_ENDPOINT",   "localhost:9000"),
-        access_key = getattr(cfg, "MINIO_ACCESS_KEY", "minioadmin"),
-        secret_key = getattr(cfg, "MINIO_SECRET_KEY", "minioadmin"),
+        access_key = access_key,
+        secret_key = secret_key,
         layer_map  = {l: "{}-{}".format(prefix, l) for l in LAYERS},
         tmp_dir    = cfg.DATA_DIR / "_tmp_minio",
         secure     = getattr(cfg, "MINIO_SECURE", False),

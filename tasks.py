@@ -10,6 +10,7 @@ Uso:
     python tasks.py help
 """
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -116,6 +117,23 @@ def cmd_extract_csv(args):
     output = f"data/contracts/{table}.yaml"
     return run(["python", "-m", "src.manifest.extractor_csv",
                 "--file", file, "--table", table, "--output", output, "--enrich"])
+
+
+# ── Governanca ────────────────────────────────────────────────────────────────
+
+def cmd_emit_grants(args):
+    """Gera (sem executar) o DDL de acesso derivado da classificacao do Manifest."""
+    file = _get_opt(args, "--file")
+    if not file:
+        print("Uso: python tasks.py emit-grants --file data/contracts/tb_clientes.yaml "
+              "[--catalog c] [--schema s] [--reader-group g] [--pii-group g] [--output f.sql]")
+        return 1
+    cmd = ["python", "-m", "src.governance.grant_emitter", "--file", file]
+    for opt in ("--catalog", "--schema", "--reader-group", "--pii-group", "--output"):
+        valor = _get_opt(args, opt)
+        if valor:
+            cmd += [opt, valor]
+    return run(cmd)
 
 
 # ── Prefect ───────────────────────────────────────────────────────────────────
@@ -225,6 +243,51 @@ def cmd_upload_bronze(args):
     print()
     print("[BRONZE] {}/{} arquivos enviados".format(len(files) - errors, len(files)))
     return 0 if errors == 0 else 1
+# ── Object storage local (MinIO) ───────────────────────────────────────────────
+
+def _minio_env() -> dict:
+    """Ambiente com a credencial do .env e USE_MINIO ligado, sem exportar no shell."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from nimbus_up import ENDPOINT, ensure_credentials
+    access, secret, _ = ensure_credentials()
+    env = dict(os.environ)
+    env.update({
+        "USE_MINIO"       : "true",
+        "MINIO_ENDPOINT"  : ENDPOINT,
+        "MINIO_ACCESS_KEY": access,
+        "MINIO_SECRET_KEY": secret,
+    })
+    return env
+
+def cmd_up(args):
+    return run(["python", "scripts/nimbus_up.py"] + args)
+
+def cmd_down(args):
+    return subprocess.call(["docker", "compose", "down"], cwd=ROOT)
+
+def cmd_minio_creds(args):
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from nimbus_up import CONSOLE, ensure_credentials
+    access, secret, _ = ensure_credentials()
+    print("console : {}".format(CONSOLE))
+    print("usuario : {}".format(access))
+    print("senha   : {}".format(secret))
+    return 0
+
+def cmd_demo(args):
+    """Sobe o MinIO se preciso e roda pipeline + dashboard nele, sem export manual."""
+    if run(["python", "scripts/nimbus_up.py"]) != 0:
+        return 1
+    env = _minio_env()
+    fmt = _get_opt(args, "--format") or "json"
+    cenario = _get_opt(args, "--scenario") or "baseline"
+    codigo = subprocess.call(
+        [sys.executable, "run_pipeline.py", "--scenario", cenario, "--format", fmt],
+        cwd=ROOT, env=env)
+    subprocess.call([sys.executable, "show_metrics.py", "--score"], cwd=ROOT, env=env)
+    return codigo
+
+
 # ── Testes ────────────────────────────────────────────────────────────────────
 
 def cmd_test(args):
@@ -287,10 +350,15 @@ COMMANDS = {
     "export"            : (cmd_export,            "Exporta metricas para CSV"),
     "check-manifest"    : (cmd_check_manifest,    "Verifica pendencias de um manifest (--file)"),
     "validate-manifest" : (cmd_validate_manifest, "Promove DRAFT->VALIDATED (--file --steward)"),
+    "emit-grants"       : (cmd_emit_grants,       "Gera o DDL de GRANT/mascara do Manifest, sem executar (--file)"),
     "extract-sas"       : (cmd_extract_sas,       "Extrai manifest de SAS7BDAT (--file --table)"),
     "extract-csv"       : (cmd_extract_csv,       "Extrai manifest de CSV (--file --table)"),
     "prefect-setup"     : (cmd_prefect_setup,     "Cria work pool e registra deployments"),
     "prefect-run"       : (cmd_prefect_run,       "Dispara run baseline via Prefect"),
+    "up"                : (cmd_up,                "Sobe o MinIO local, gera credencial no .env e cria os buckets (--reset recria)"),
+    "down"              : (cmd_down,              "Derruba os containers (mantem o volume e a credencial)"),
+    "minio-creds"       : (cmd_minio_creds,       "Mostra console/usuario/senha do MinIO local (le do .env)"),
+    "demo"              : (cmd_demo,              "up + pipeline + score contra o MinIO, sem exportar variavel (--scenario --format)"),
     "test"              : (cmd_test,              "Roda a suite de testes"),
     "test-databricks"   : (cmd_test_databricks,   "Diagnostico em 4 niveis: token, warehouse, schema, Volumes"),
     "upload-silver"     : (cmd_upload_silver,     "Upload Silver -> Volumes -> Delta -> metastore (--table, --no-comments, --dry-run)"),

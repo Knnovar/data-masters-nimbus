@@ -26,6 +26,8 @@ from src.validation.validator import validate
 from src.profiler.duckdb_profiler import profile
 from src.slm.ollama_enrichment import enrich
 from src.metrics.metrics_collector import collect, generate_report, save_summary
+from src.ingestion.idempotency import (announce, file_sha256, record_load,
+                                       resolve_dat_ref, short_sha)
 
 BANNER = """
 ╔══════════════════════════════════════════════════════════════════╗
@@ -114,7 +116,7 @@ def silver_guard(run_id: str) -> SilverCollisionGuard:
 
 def publish_quarantine_files(storage, filename: str, run_id: str,
                              reject_report: dict | None = None,
-                             dlq: bool = False) -> list[dict]:
+                             dlq: bool = False, dat_ref: str | None = None) -> list[dict]:
     from src.connectors.bronze_uploader import publish_quarantine
     candidates = []
     if (reject_report or {}).get("rows_rejected"):
@@ -126,10 +128,34 @@ def publish_quarantine_files(storage, filename: str, run_id: str,
         if not storage.exists("quarantine", name):
             continue
         out.append(publish_quarantine(storage.read_path("quarantine", name),
-                                      table_name=Path(filename).stem, run_id=run_id))
+                                      table_name=Path(filename).stem, run_id=run_id,
+                                      dat_ref=dat_ref))
     return out
 
-def run_scenario(scenario: str, run_id: str, fmt: str = "csv") -> tuple[list[dict], list[dict]]:
+def quarantine_blocked_silver(storage, parquet_filename: str | None) -> str | None:
+    """Retira da Silver o Parquet de uma carga reprovada pelo gate.
+
+    O gate so pode decidir depois do cast, porque e o cast que produz a taxa de
+    rejeicao — entao o Parquet ja existe quando o bloqueio acontece. Deixa-lo na
+    Silver significa que quem le a camada le dado reprovado sem saber; move-lo
+    para a quarentena mantem o artefato auditavel e fora do caminho do consumidor.
+
+    Returns:
+        O nome do arquivo movido, ou None quando nada foi movido.
+    """
+    import config
+
+    if not config.QUARANTINE_BLOCKED_SILVER:
+        return None
+    if not parquet_filename or not storage.exists("silver", parquet_filename):
+        return None
+    storage.move(parquet_filename, "silver", "quarantine")
+    print("     [GATE] silver/{} retirada da Silver -> quarentena (carga bloqueada)".format(
+        parquet_filename))
+    return parquet_filename
+
+def run_scenario(scenario: str, run_id: str, fmt: str = "csv", dat_ref: str | None = None,
+                 skip_existing: bool = False) -> tuple[list[dict], list[dict]]:
     """Executa um único cenário end-to-end usando a camada Storage."""
     print(f"\n{chr(9552)*66}")
     print(f"  CENARIO: {scenario.upper()}")
@@ -137,9 +163,10 @@ def run_scenario(scenario: str, run_id: str, fmt: str = "csv") -> tuple[list[dic
 
     # Instancia o backend de storage (local ou MinIO conforme config.py)
     storage = get_storage()
+    dat_ref = dat_ref or resolve_dat_ref(run_id)
 
     # ── 1. Bronze: geração de dados ───────────────────────────────────────
-    produced = generate_all(storage, scenario=scenario, fmt=fmt)
+    produced = generate_all(storage, scenario=scenario, fmt=fmt, dat_ref=dat_ref)
 
     # ── 2. Loop por tabela ────────────────────────────────────────────────
     scenario_metrics = [] 
@@ -151,9 +178,18 @@ def run_scenario(scenario: str, run_id: str, fmt: str = "csv") -> tuple[list[dic
 
         print(f"\n  -- {table} --")
 
+        # Idempotencia: identidade da carga e (dat_ref + conteudo do arquivo),
+        # por isso o SHA-256 do input entra antes de qualquer decisao de pular.
+        input_sha = file_sha256(storage.read_path("bronze", filename))
+        print(f"     [IDEMPOTENCIA] input sha256={short_sha(input_sha)} ({filename})")
+        if announce(storage, table, dat_ref, fmt, skip_existing=skip_existing,
+                    input_sha=input_sha):
+            continue
+
         from src.connectors.bronze_uploader import publish_bronze
         publications.append(publish_bronze(storage.read_path("bronze", filename),
-                                                   table_name=Path(filename).stem, run_id=run_id))
+                                                   table_name=Path(filename).stem, run_id=run_id,
+                                                   dat_ref=dat_ref))
 
         # Silver: validação (DLQ → quarantine, OK → permanece no bronze)
         val_result = validate(storage, filename, contract_filename, scenario=scenario)
@@ -185,28 +221,38 @@ def run_scenario(scenario: str, run_id: str, fmt: str = "csv") -> tuple[list[dic
 
             slm_result = enrich(storage, contract_filename, profiler_payload)
             silver_guard(run_id).check(Path(filename).stem, filename)
-            parquet_filename = storage.promote_to_parquet(filename, "bronze", "silver", contract=contract, run_id=run_id)
+            parquet_filename = storage.promote_to_parquet(filename, "bronze", "silver", contract=contract, run_id=run_id, dat_ref=dat_ref)
             cast_report = dict(getattr(storage, "last_cast_report", {}) or {})
             reject_report = dict(getattr(storage, "last_reject_report", {}) or {})
             gate = evaluate_gate(table, reject_report, contract=contract)
             if gate["status"] == "BLOCKED":
+                retirado = quarantine_blocked_silver(storage, parquet_filename)
                 publications.append({"table": table, "status": "BLOCKED", "layer": "silver",
-                                     "error": gate["detail"], "rows": 0})
+                                     "error": gate["detail"], "rows": 0,
+                                     "quarantined_file": retirado})
             else:
                 from src.connectors.databricks_uploader import publish_table
                 pub = publish_table(storage.read_path("silver", parquet_filename),
-                                    table_name=Path(filename).stem, contract=contract, run_id=run_id)
+                                    table_name=Path(filename).stem, contract=contract, run_id=run_id,
+                                    dat_ref=dat_ref)
                 publications.append(pub)
 
         publications.extend(publish_quarantine_files(
-            storage,filename, run_id, reject_report=reject_report, dlq=val_result.status == "DLQ"
+            storage,filename, run_id, reject_report=reject_report, dlq=val_result.status == "DLQ",
+            dat_ref=dat_ref
             ))
         
         # Gold: métricas agregadas
         m = collect(run_id, val_result, profiler_payload, slm_result,
                     contract=contract, cast_report=cast_report, fmt = fmt,
-                    reject_report=reject_report, gate=gate)
+                    reject_report=reject_report, gate=gate, dat_ref=dat_ref)
         scenario_metrics.append(m)
+
+        # Ledger: a carga concluida passa a ser reconhecivel como reprocessavel
+        record_load(storage, table, dat_ref, fmt, run_id,
+                    "BLOCKED" if gate["status"] == "BLOCKED" else val_result.status,
+                    rows=val_result.rows_valid,
+                    input_sha=input_sha, input_file=filename)
 
     return scenario_metrics, publications
 
@@ -276,6 +322,18 @@ def build_parser() -> argparse.ArgumentParser:
              dest="fmt",
              help="Formato de saida (csv|json|fixed|all). Padrao: csv",
          )
+    parser.add_argument(
+             "--dat-ref",
+             dest="dat_ref",
+             default=None,
+             help="Data de referencia da carga (YYYY-MM-DD). Padrao: data do run_id. "
+                  "Reprocessar a mesma dat_ref sobrescreve a particao.",
+         )
+    parser.add_argument(
+             "--skip-existing",
+             action="store_true",
+             help="Pula tabela cuja dat_ref ja foi ingerida com sucesso (carga incremental).",
+         )
     return parser
 
 def main():
@@ -284,7 +342,9 @@ def main():
     print(BANNER)
 
     run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{str(uuid.uuid4())[:6]}"
+    dat_ref = resolve_dat_ref(run_id, args.dat_ref)
     print(f"  Run ID : {run_id}")
+    print(f"  dat_ref: {dat_ref}" + ("  (informada)" if args.dat_ref else "  (do run_id)"))
     print(f"  Modelo : {__import__('config').OLLAMA_MODEL}")
     print(f"  Ollama : {__import__('config').OLLAMA_HOST}")
 
@@ -300,9 +360,15 @@ def main():
     publications: list[dict] = []
     for scenario in scenarios:
         for fmt in fmt_list:
-            metrics, pubs = run_scenario(scenario, run_id, fmt=fmt)
+            metrics, pubs = run_scenario(scenario, run_id, fmt=fmt, dat_ref=dat_ref,
+                                         skip_existing=args.skip_existing)
             all_metrics.extend(metrics)
             publications.extend(pubs)
+
+    if not all_metrics:
+        print("\n  Nada a processar: todas as tabelas da dat_ref {} ja estavam "
+              "ingeridas (--skip-existing).\n".format(dat_ref))
+        return 0
 
     # Relatório consolidado
     print_summary(all_metrics)

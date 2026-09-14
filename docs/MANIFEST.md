@@ -151,3 +151,85 @@ python tasks.py validate-manifest --file data/contracts/tb_clientes.yaml --stewa
 ```
 
 Um detalhe importante: o `ManifestWriter` nunca sobrescreve um manifest `VALIDATED`. Se uma nova extração for executada sobre uma tabela já validada, o resultado é gravado em um arquivo `_draft.yaml` separado, permitindo comparação manual antes de qualquer substituição.
+
+---
+
+## Versionamento: o que existe e o que não existe
+
+O ciclo `DRAFT → VALIDATED` é real, auditável e protegido: o promotor registra `validated_by` e
+`validated_at`, recusa promover manifest com `# TODO` pendente e o `ManifestWriter` nunca sobrescreve
+um `VALIDATED` (só sobrescreve DRAFT, e apenas com `--overwrite`).
+
+O que **não** existe, e é a resposta honesta quando alguém pergunta:
+
+- `version` é um campo fixo `"1.0.0"` escrito pelos quatro extratores e **nunca incrementado** —
+  quem muda versão é o Steward editando o YAML à mão.
+- Não há bump automático de SemVer. O `evolution_type` (`breaking` / `non_breaking`) que o validator
+  detecta em runtime não propõe mudança de versão.
+- Não há histórico nem registry: nada de `tb_clientes_v2.yaml`, nada de seleção automática da versão
+  vigente.
+- Não há diff automático entre o `_draft.yaml` e o manifest em vigor — a comparação é manual.
+
+O caminho natural de evolução (`non_breaking` → minor, `breaking` → major, mais o diff no
+`check-manifest`) está registrado em [NEXT_STEPS.md](NEXT_STEPS.md).
+
+---
+
+## O gate de governança
+
+`REQUIRE_VALIDATED_MANIFEST` controla o rigor:
+
+| Valor | Comportamento |
+|---|---|
+| `false` (padrão) | manifest em DRAFT gera aviso em toda execução, mas a publicação segue |
+| `true` | manifest em DRAFT **bloqueia a publicação** e o pipeline termina com exit code 2 |
+
+O status também viaja com o dado: o footer do Parquet no Silver carrega `manifest_validated` ou
+`manifest_draft`, e o relatório consolidado leva a marca `[AI_METADATA_STATUS: DRAFT]` enquanto
+houver texto gerado pela SLM sem revisão humana.
+
+---
+
+## Do contrato para a permissão: `emit-grants`
+
+A classificação de sensibilidade não serve só para mascarar rejeito: ela é a mesma informação que
+um administrador de Unity Catalog precisa para conceder acesso. `emit-grants` fecha esse caminho
+derivando o DDL de acesso do próprio Manifest:
+
+```bash
+python tasks.py emit-grants --file data/contracts/tb_clientes.yaml
+python tasks.py emit-grants --file data/contracts/tb_clientes.yaml \
+  --catalog nimbus --schema silver \
+  --reader-group nimbus_readers --pii-group nimbus_pii_readers \
+  --output grants.sql
+```
+
+A saída tem três partes: `GRANT USE CATALOG`/`USE SCHEMA`/`SELECT` para o grupo leitor; uma
+`CREATE OR REPLACE FUNCTION` de máscara **por tipo SQL** (o Unity Catalog exige que a função
+devolva o tipo da coluna, então `mask_pii_string` devolve `'***'` e `mask_pii_date` devolve
+`NULL`); e um `ALTER COLUMN ... SET MASK` para cada coluna marcada `LGPD_SENSITIVE`.
+
+Duas decisões que valem explicitar:
+
+- **O comando não executa nada.** Não abre conexão, não autentica e não usa o PAT — ele imprime
+  texto. Quem aplica é quem tem alçada no workspace, e o artefato existe justamente para ser
+  revisado antes disso. O pipeline deriva a permissão do contrato; não concede permissão.
+- **Classificação restrita sai comentada.** Com `classification` em `restricted`, `secret` ou
+  `confidential_restricted`, o `GRANT SELECT` é emitido como comentário: liberar leitura de tabela
+  restrita para um grupo amplo é decisão de dono do dado, não default de ferramenta.
+
+O `owner`, a `version` e o status do Manifest viajam no cabeçalho do SQL, então o DDL sempre diz de
+qual contrato ele saiu — e um Manifest em DRAFT gera aviso no próprio arquivo.
+
+---
+
+## Cuidado operacional com os arquivos
+
+Os manifests vivem em `data/contracts/`, que está no `.gitignore` — o contrato que o projeto chama de
+"autoridade" não está versionado no repositório. Além disso, tanto `make clean-data` quanto
+`python tasks.py clean-data` apagam `data/contracts/*.yaml`, **inclusive manifest já VALIDATED**
+(o comando do `tasks.py` ao menos pede confirmação; o alvo do Makefile não pede).
+
+Antes de qualquer limpeza, guarde os manifests validados fora de `data/`. Em uso além da PoC, o lugar
+do contrato é um diretório versionado (ou o bucket `contracts`, que o storage já expõe como camada),
+não um diretório ignorado que um comando de limpeza alcança.

@@ -25,14 +25,14 @@ de qualidade e as metricas sao calculados, o relatorio e consolidado e o gate de
 publicacao acontece.
 
 ```mermaid
-flowchart TD
+graph TD
     ORIG["Sistema de origem"] --> NORM["normalizer<br/>UTF-8 / LF"]
     NORM --> BRONZE["BRONZE<br/>original + _archive"]
     BRONZE --> SHA["idempotency.file_sha256<br/>(table, dat_ref, format)"]
     SHA --> VAL{"validator<br/>contrato + schema evolution"}
     VAL -- DLQ --> QUAR["QUARENTENA<br/>arquivo em DLQ"]
     VAL -- PASS / WARNING --> CAST{"caster dirigido pelo Manifest"}
-    CAST -- "linha invalida / DUPLICATE_PK" --> REJ["quarantine/reject_&lt;tabela&gt;.csv<br/>_reject_columns _reject_values _reject_reason"]
+    CAST -- "linha invalida / DUPLICATE_PK" --> REJ["quarantine/reject_(tabela).csv<br/>_reject_columns _reject_values _reject_reason"]
     CAST --> SILVER["SILVER<br/>Parquet tipado + _ingest_*"]
     SILVER --> PROF["profiler DuckDB"]
     PROF --> SLM["SLM (Ollama)<br/>saida DRAFT"]
@@ -40,13 +40,14 @@ flowchart TD
     MET --> GATE{"gate:<br/>reject_pct / score / manifest"}
     GATE -- liberado --> DBX["Databricks UC<br/>bronze + silver (+ quarentena)"]
     GATE -- bloqueado --> EX2["exit 2"]
-    MET --> LED[("ledger + metrics + report<br/>no storage configurado")]
+    MET --> LED["ledger + metrics + report<br/>no storage configurado"]
 ```
 
-**Limite importante e deliberado:** o gate bloqueia a **publicacao**, nao a escrita local na Silver.
-Uma carga reprovada pode existir como Parquet em `data/processed/` antes do bloqueio; o consumidor
-da Silver precisa filtrar por status da run (ha consultas prontas em
-`queries_apresentacao.sql`).
+**Ordem gate/Silver.** O gate depende da taxa de rejeicao, que so existe depois do cast — entao o
+Parquet ja foi escrito quando o bloqueio acontece. Em vez de deixa-lo legivel, o pipeline **retira
+a carga reprovada da Silver e a move para a quarentena** (`QUARANTINE_BLOCKED_SILVER=true`), de
+modo que o artefato continua auditavel sem ficar no caminho de quem le a camada. O nome do arquivo
+movido aparece na publicacao como `quarantined_file`.
 
 ---
 
@@ -265,9 +266,14 @@ Catalog.
 `publish_bronze()` e `publish_table()` sao as interfaces do pipeline. Cada uma devolve
 `{table, status, target, error}` e nunca levanta excecao.
 
-**Atencao de governanca:** `DATABRICKS_QUARANTINE_UPLOAD` vem `true` por padrao, e os rejeitos
-preservam o valor original — inclusive PII em claro. Em ambiente com dado real, avalie desligar ou
-mascarar antes de publicar a quarentena.
+**Governanca da quarentena.** O rejeito e, por definicao, o registro que falhou — e ele carrega os
+mesmos dados pessoais do registro aprovado. Por isso dois defaults:
+`DATABRICKS_QUARANTINE_UPLOAD=false` (rejeito nao sai do ambiente local sem decisao explicita) e
+`QUARANTINE_MASK_PII=true`, que substitui o valor das colunas marcadas `LGPD_SENSITIVE` no
+Manifest — e os mesmos valores dentro de `_reject_values` — por um token `MASK:<hash>`. O token e
+deterministico, entao preserva correlacao entre linhas para investigacao, e **nao** e anonimizacao
+juridica: quem tiver o valor original consegue recomputar o token. A classificacao vem do
+Manifest, nao de heuristica de nome de coluna — coluna sensivel nao declarada nao e mascarada.
 
 | Variavel | Exemplo | Descricao |
 |---|---|---|
@@ -281,7 +287,8 @@ mascarar antes de publicar a quarentena.
 | `DATABRICKS_BRONZE_VOLUME` | `landing` | Volume Bronze |
 | `DATABRICKS_AUTO_UPLOAD` | `true` | Publica Silver no fim do run |
 | `DATABRICKS_BRONZE_UPLOAD` | `true` | Publica Bronze apos a geracao |
-| `DATABRICKS_QUARANTINE_UPLOAD` | `true` | Publica rejeitos e DLQ |
+| `DATABRICKS_QUARANTINE_UPLOAD` | `false` | Publica rejeitos e DLQ (desligada por padrao) |
+| `QUARANTINE_MASK_PII` | `true` | Mascara colunas `LGPD_SENSITIVE` nos rejeitos |
 
 ```bash
 python tasks.py test-databricks          # diagnostico em 4 niveis
