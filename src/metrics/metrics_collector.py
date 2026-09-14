@@ -39,6 +39,27 @@ def _slm_metrics(slm_result: dict) -> dict:
         "slm_has_draft_tag"         : out.get("has_draft_tag"),
     }
     
+_STATUS_ICONS = {
+    "PASS"   : "[PASS]",
+    "WARNING": "[WARN]",
+    "DLQ"    : "[DLQ]",
+    "BLOCKED": "[BLOCK]",
+}
+
+def summary_status(metrics: dict) -> tuple[str, str]:
+    """Icone e texto da coluna status do resumo e do relatorio.
+
+    Validacao estrutural e gate sao decisoes distintas: uma tabela pode passar
+    na validacao e ainda assim ser barrada na publicacao. Quando o gate
+    bloqueia, o status exibido e BLOCKED, e nao o resultado da validacao, que
+    segue registrado em validation_status no proprio registro e no ledger.
+    """
+
+    status = metrics.get("validation_status", "?")
+    if metrics.get("gate_status") == "BLOCKED" and status not in ("DLQ", "ERROR"):
+        status = "BLOCKED"
+    return _STATUS_ICONS.get(status, "[?]"), status
+
 def collect(
     run_id          : str,
     val_result      : ValidationResult,
@@ -124,10 +145,10 @@ def generate_report(all_metrics: list[dict]) -> str:
     ]
 
     for m in all_metrics:
-        status_icon = {"PASS": "[PASS]", "WARNING": "[WARN]", "DLQ": "[DLQ]"}.get(m["validation_status"], "[?]")
+        status_icon, status = summary_status(m)
         slm_icon    = {"SUCCESS": "[OK]", "SKIPPED": "[SKIP]", "ERROR": "[ERR]"}.get(m["slm_status"], "[-]")
         lines.append(
-            f"| `{m['table']}` | {m['scenario']} | {status_icon} {m['validation_status']} "
+            f"| `{m['table']}` | {m['scenario']} | {status_icon} {status} "
             f"| {m['rows_total']:,} | {m['duplicate_count']} | {m['avg_null_pct']}% "
             f"| {m['profiling_ms']} | {slm_icon} {m['slm_inference_ms']} | **{m['quality_score']}** |"
         )

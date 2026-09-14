@@ -1,9 +1,9 @@
 # Testes — Projeto Nimbus
 
-661 testes unitarios usando `unittest` nativo do Python, sem dependencias externas de teste.
+675 testes unitarios usando `unittest` nativo do Python, sem dependencias externas de teste.
 
 ```
-Ran 661 tests
+Ran 675 tests
 OK (skipped=1)
 ```
 
@@ -45,10 +45,11 @@ SKIP_SLM=true python -m unittest discover -s tests -q     # sem Ollama
 | `test_exit_codes.py` | 8 | Contrato de exit code fim a fim |
 | `test_steward_tags_quarantine.py` | 7 | Tags de governanca e roteamento de quarentena |
 | `test_gate_silver.py` | 4 | Carga reprovada sai da Silver e vai para a quarentena |
+| `test_contract_gate.py` | 14 | Contrato ilegivel bloqueia a promocao (`CONTRACT_UNREADABLE`) |
 | `test_grant_emitter.py` | 17 | DDL de GRANT/mask derivado da classificacao do Manifest |
 | `test_pii_masking.py` | 13 | Token `MASK:<hash>` deterministico nas colunas sensiveis |
 | `test_manifest_version.py` | 34 | Diff de schema -> bump semantico, baseline Git/lock, historico, bloqueio da promocao |
-| **Total** | **661** | |
+| **Total** | **675** | |
 
 ---
 

@@ -24,6 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from src.storage.storage import get_storage
+from src.metrics.metrics_collector import summary_status
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -77,8 +78,11 @@ def filter_records(
 # Formatacao
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _status_tag(status: str) -> str:
-    return {"PASS": "[PASS]", "WARNING": "[WARN]", "DLQ": "[DLQ]"}.get(status, "[?]")
+def _status_tag(record: dict) -> str:
+    """Rotulo de status do registro, com o bloqueio do gate tendo precedencia
+    sobre o resultado da validacao estrutural."""
+    icon, _ = summary_status(record)
+    return icon
 
 
 def _slm_tag(status: str) -> str:
@@ -130,7 +134,7 @@ def view_summary(records: list[dict]) -> None:
     for (table, scenario), recs in sorted(groups.items()):
         scores = [r.get("quality_score", 0) for r in recs]
         last   = recs[-1]
-        tag    = _status_tag(last.get("validation_status","?"))
+        tag    = _status_tag(last)
         bar    = _score_bar(scores[-1])
         trend  = _trend(scores)
         print(f"  {table:<30} {scenario:<14} {tag:<8} {bar}  {trend}")
@@ -160,7 +164,7 @@ def view_evolution(records: list[dict], table: str | None = None) -> None:
         for r in recs:
             ts       = r.get("timestamp","")[:10]
             run_id   = r.get("run_id","")[-18:]
-            tag      = _status_tag(r.get("validation_status","?"))
+            tag      = _status_tag(r)
             bar      = _score_bar(r.get("quality_score",0))
             nulls    = f"{r.get('avg_null_pct',0):5.1f}%"
             dups     = str(r.get("duplicate_count",0))
@@ -203,7 +207,7 @@ def view_issues(records: list[dict]) -> None:
 
     for r in problems:
         ts    = r.get("timestamp","")[:16].replace("T"," ")
-        tag   = _status_tag(r.get("validation_status","?"))
+        tag   = _status_tag(r)
         print(f"\n  {tag} {r.get('table','?')} / {r.get('scenario','?')} [{ts}]")
         for issue in r.get("issues",[]):
             print(f"       [ERR]  {issue}")

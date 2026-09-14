@@ -562,18 +562,17 @@ def _publication_exit_code(publications, run_id):
     return 2 if (failed or blocked) else 0
 
 def _print_summary(all_metrics, run_id):
-    status_tag = {"PASS": "[PASS]", "WARNING": "[WARN]", "DLQ": "[DLQ]"}
     print("\n" + "=" * 66)
     print("  RUN: {}".format(run_id))
     print("=" * 66)
     from run_pipeline import gate_label
+    from src.metrics.metrics_collector import summary_status
     print("  {:<26} {:<13} {:<10} {:<12} {:>6}".format("Tabela", "Cenario", "Status", "Publicacao", "Score"))
     print("  " + "-" * 62)
     for m in all_metrics:
-        tag = status_tag.get(m["validation_status"], "[?]")
+        tag, status = summary_status(m)
         print("  {:<26} {:<13} {} {:<8} {:<12} {:>6.1f}/100".format(
-            m["table"], m["scenario"], tag,
-            m["validation_status"],
+            m["table"], m["scenario"], tag, status,
             gate_label(m), m["quality_score"]))
     avg = round(sum(m["quality_score"] for m in all_metrics) / len(all_metrics), 1) if all_metrics else 0
     print("  " + "-" * 62)

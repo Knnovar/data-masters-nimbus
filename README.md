@@ -9,37 +9,39 @@ O objetivo do projeto e resolver uma dor concreta: a distancia entre o time de n
 tecnico na hora de entender o que um dado significa, e a falta de rastreabilidade de por que uma
 carga foi aceita, rejeitada ou reprocessada.
 
-**Escopo honesto.** Esta e uma PoC single-node em pandas. O valor esta em contrato, governanca,
-roteamento de rejeitos, linhagem, observabilidade e portabilidade de storage — nao em escala.
-Os limites conhecidos estao no [§10](#10-limites-conhecidos), declarados de proposito.
+Sobre o escopo: esta e uma PoC single-node em pandas. O que ela prova e o desenho de contrato,
+governanca, roteamento de rejeitos, linhagem, observabilidade e portabilidade de storage. Escala
+nao e o ponto, e os limites conhecidos estao no [§10](#10-limites-conhecidos).
 
 ---
 
 ## 1. A ideia central
 
-O **Manifest** e um arquivo YAML que vai além do schema tecnico. Descreve de onde o dado vem, qual
-regulacao se aplica, o que cada coluna significa no negocio bancario e exemplos de uso. E o ponto
-de partida para tudo que o pipeline faz: tipagem, validacao, tolerancia de rejeito, tags de
-governanca e o prompt da SLM.
+O Manifest e um arquivo YAML que vai alem do schema tecnico. Descreve de onde o dado vem, qual
+regulacao se aplica, o que cada coluna significa no negocio bancario e exemplos de uso. Ele e o
+ponto de partida para tudo que o pipeline faz: tipagem, validacao, tolerancia de rejeito, tags de
+governanca e o prompt da SLM. Como e um contrato, tem versao, e essa versao nao e escrita no
+chute: `tasks.py manifest-version` compara o contrato com o baseline e diz qual bump a alteracao
+exige (§2.7).
 
-A **SLM** roda localmente via Ollama e, depois da validacao e do profiling, le o Manifest junto com
-as estatisticas reais e escreve documentacao tecnica em linguagem de negocio. Ela parte sempre do
-que o Data Steward declarou e o resultado nasce marcado `[AI_METADATA_STATUS: DRAFT]` — a SLM
-propoe, nao decide.
+A SLM roda localmente via Ollama e, depois da validacao e do profiling, le o Manifest junto com as
+estatisticas reais e escreve documentacao tecnica em linguagem de negocio. Ela parte sempre do que
+o Data Steward declarou, e o resultado nasce marcado `[AI_METADATA_STATUS: DRAFT]`, porque a SLM
+propoe e nao decide.
 
-O **Data Steward** fecha o ciclo. Toda documentacao gerada por IA nasce `DRAFT`; so depois de
-revisao humana avanca para `VALIDATED`.
+Quem fecha o ciclo e o Data Steward. Toda documentacao gerada por IA nasce `DRAFT` e so avanca
+para `VALIDATED` depois de revisao humana.
 
-O **Silver** grava Parquet com os tipos declarados no Manifest — nao os inferidos pelo PyArrow.
-Uma coluna `fl_ativo: boolean` chega ao Silver como `pa.bool_()` porque o Steward disse que e
-boolean. O footer do arquivo indica se o schema veio de Manifest `VALIDATED` ou `DRAFT`.
+A Silver grava Parquet com os tipos declarados no Manifest, nao com os tipos que o PyArrow
+inferiria. Uma coluna `fl_ativo: boolean` chega ao Silver como `pa.bool_()` porque o Steward disse
+que e boolean. O footer do arquivo indica se o schema veio de Manifest `VALIDATED` ou `DRAFT`.
 
-O **Bronze** preserva a entrada como ela chegou (`_archive/`), sem cast e sem validacao — o que
+O Bronze preserva a entrada como ela chegou (`_archive/`), sem cast e sem validacao. E isso que
 permite reprocessar a partir da origem e provar o que foi recebido.
 
-O **Databricks** recebe duas camadas via Files API (Unity Catalog Volumes): Bronze com o arquivo
-bruto (colunas STRING + provenance) e Silver com o Parquet tipado registrado como managed Delta
-table, com tags de governanca (LGPD, SCR) vindas do Manifest.
+O Databricks recebe duas camadas via Files API (Unity Catalog Volumes): Bronze com o arquivo bruto
+(colunas STRING mais provenance) e Silver com o Parquet tipado registrado como managed Delta
+table, com as tags de governanca (LGPD, SCR) vindas do Manifest.
 
 ---
 
@@ -126,8 +128,8 @@ graph LR
     FAC -- "true" --> MIO["MinIOStorage (client minio, API S3)<br/>MINIO_ENDPOINT MINIO_SECURE<br/>MINIO_REGION BUCKET_PREFIX<br/>MINIO_CREATE_BUCKETS"]
 
     MIO --> B1["MinIO local<br/>localhost:9000 (HTTP)"]
-    MIO --> B2["S3Mock / outro S3-compativel<br/>HTTPS + regiao<br/>(validado nesta branch)"]
-    MIO --> B3["AWS S3<br/>s3.(regiao).amazonaws.com<br/>(compativel por API, nao exercitado em conta real)"]
+    MIO --> B2["Outro servidor S3-compativel<br/>HTTPS + regiao"]
+    MIO --> B3["AWS S3<br/>s3.(regiao).amazonaws.com<br/>(compativel por API, sem conta real exercitada)"]
 ```
 
 ### 2.4 Orquestracao: Prefect, Control-M e Databricks
@@ -202,6 +204,25 @@ graph TD
     LED -.status BLOCKED nunca e pulado.-> Q3
 ```
 
+### 2.7 Versao do contrato derivada do diff
+
+O campo `version` do Manifest nao depende de alguem lembrar de edita-lo. O comando
+`tasks.py manifest-version` compara o contrato atual com um baseline, classifica cada diferenca e
+calcula a versao esperada. O baseline vem do Git (`git show HEAD:<arquivo>`) quando ha repositorio,
+e do lock file em `data/contracts/.lock/` quando nao ha, que e o caso dentro do container.
+
+| Tipo de mudanca | Nivel |
+|---|---|
+| coluna removida, tipo alterado, `nullable` endurecido, PK alterada, ordem de colunas, formato da origem, tolerancia restringida | MAJOR |
+| coluna nova opcional, `nullable` afrouxado, tolerancia relaxada, classificacao regulatoria alterada | MINOR |
+| descricao, metadado, owner, steward, regra de negocio, query de exemplo | PATCH |
+
+Quando ha mais de uma mudanca, prevalece a mais severa. O `--apply` grava a nova versao e um
+`version_history` no proprio Manifest, com data, autor, origem do baseline e a lista de mudancas.
+Se o contrato estava `VALIDATED`, ele volta para `DRAFT`, porque manter o carimbo seria dizer que
+o Steward aprovou uma versao que ele nunca viu. O `manifest_validator` completa o ciclo: contrato
+alterado sem bump nao e promovido.
+
 ---
 
 ## 3. Estrutura do projeto
@@ -243,7 +264,7 @@ nimbus/
 |   |-- metrics/              Metricas, quality score e relatorios
 |   `-- connectors/           Integracao Databricks via Files API + Unity Catalog
 |
-|-- tests/                    661 testes unitarios
+|-- tests/                    Suite de testes unitarios
 `-- data/                     Camadas medallion (persiste no host via Docker volume)
 ```
 
@@ -252,8 +273,8 @@ nao converte e rejeitada individualmente, com o valor original preservado em
 `data/quarantine/reject_<tabela>.csv` junto de `_reject_columns`, `_reject_values` e
 `_reject_reason`. Duplicatas de chave primaria seguem o mesmo caminho (`DUPLICATE_PK`): a primeira
 ocorrencia e mantida, as repeticoes vao para a quarentena. O percentual rejeitado e comparado com
-`tolerance.max_reject_pct` do Manifest — dentro do limite a tabela publica com
-`PASS_WITH_REJECTS`, acima do limite a publicacao e **bloqueada** e a execucao sai com exit code 2.
+`tolerance.max_reject_pct` do Manifest. Dentro do limite a tabela publica com
+`PASS_WITH_REJECTS`; acima do limite a publicacao e bloqueada e a execucao sai com exit code 2.
 
 ---
 
@@ -284,12 +305,26 @@ python tasks.py baseline
 python tasks.py metrics
 ```
 
+### Antes de publicar no Databricks
+
+Os schemas e Volumes precisam existir. Uma vez, no SQL Editor do workspace:
+
+```sql
+CREATE SCHEMA IF NOT EXISTS nimbus.bronze;
+CREATE SCHEMA IF NOT EXISTS nimbus.silver;
+CREATE VOLUME IF NOT EXISTS nimbus.bronze.landing;
+CREATE VOLUME IF NOT EXISTS nimbus.silver.landing;
+```
+
+Para rodar a SLM em GPU, descomente `deploy.resources` no `docker-compose.yml` (NVIDIA) ou o bloco
+de devices mais `AMD_GFX_VERSION` no `.env` (ROCm). Trocar de modelo e trocar `OLLAMA_MODEL`.
+
 ---
 
 ## 5. Configuracao
 
 O unico arquivo que o usuario precisa editar e o `.env`. O `config.py` le tudo via variaveis de
-ambiente — em Docker elas vem do `docker-compose.yml`, localmente vem do `.env`.
+ambiente: em Docker elas vem do `docker-compose.yml`, localmente vem do `.env`.
 
 | Variavel | Padrao | O que controla |
 |---|---|---|
@@ -328,11 +363,11 @@ ambiente — em Docker elas vem do `docker-compose.yml`, localmente vem do `.env
 O pipeline nunca sabe onde o dado reside. Todos os modulos falam com `StorageBase`
 (`write`, `write_parquet`, `read`, `move`, `promote_to_parquet`, `list`, `exists`, `write_text`,
 `read_path`) e `get_storage()` escolhe o backend em tempo de execucao. Trocar de filesystem para
-object storage **nao altera uma linha de codigo do pipeline** — so variaveis de ambiente.
+object storage nao altera uma linha de codigo do pipeline, so variaveis de ambiente.
 
 Buckets (com `BUCKET_PREFIX=nimbus`): `nimbus-bronze`, `nimbus-silver`, `nimbus-quarantine`,
 `nimbus-contracts`, `nimbus-metrics`, `nimbus-reports`. Metricas e relatorios vao para o mesmo
-backend do dado — governanca nao fica presa no disco local.
+backend do dado, de modo que a governanca nao fica presa no disco local.
 
 ### 6.1 Filesystem local (padrao)
 
@@ -344,30 +379,29 @@ python show_metrics.py --score
 ### 6.2 MinIO local (um comando)
 
 ```bash
-make demo            # ou: python tasks.py demo
+python tasks.py demo     # ou: make demo
 ```
 
-`demo` gera o `.env` com credencial aleatoria na primeira execucao (nas seguintes reaproveita a
-que ja existe), sobe o MinIO, aguarda o health check, cria os buckets e roda
-`run_pipeline.py --scenario baseline --format json` + `show_metrics.py --score` **contra o
-object storage**, sem exigir nenhum `export` no seu shell.
+O `demo` gera o `.env` com credencial aleatoria na primeira execucao e reaproveita a existente nas
+seguintes, sobe o MinIO, espera o health check, cria os buckets e roda o pipeline e o score contra
+o object storage, sem precisar de `export` no shell.
 
 Para so subir o ambiente e depois trabalhar na mao:
 
 ```bash
-make up                                      # ou: python scripts/nimbus_up.py
-make minio-creds                             # console/usuario/senha do MinIO local
+python tasks.py up                                  # sobe MinIO e cria os buckets
+python tasks.py minio-creds                         # console, usuario e senha do MinIO local
 eval "$(python scripts/nimbus_up.py --print-env)"   # bash/zsh: exporta no shell atual
 python run_pipeline.py --scenario baseline --format json
 ```
 
-A credencial nunca aparece em codigo nem em log: fica so no `.env`, que esta no `.gitignore`
-(`make minio-creds` e a forma explicita de consultar). `make down` derruba os containers
-preservando dados e credencial; `make reset-minio` recria o volume do zero.
+A credencial nunca aparece em codigo nem em log: fica so no `.env`, que esta no `.gitignore`, e
+`minio-creds` e a forma explicita de consultar. `python tasks.py down` derruba os containers
+preservando dados e credencial, e `python tasks.py up --reset` recria o volume do zero.
 
 ### 6.3 Outro servidor S3-compativel, com TLS e regiao
 
-Exemplo exercitado nesta branch (Adobe S3Mock, sem MinIO envolvido), so por env var:
+Serve qualquer servidor que fale a API S3, sem MinIO envolvido. Muda so a variavel de ambiente:
 
 ```bash
 export USE_MINIO=true
@@ -382,8 +416,8 @@ python run_pipeline.py --scenario baseline --format csv
 
 ### 6.4 AWS S3
 
-O cliente `minio` fala a API S3, portanto a configuracao e a mesma — muda o endpoint, a regiao e
-as credenciais:
+O cliente `minio` fala a API S3, entao a configuracao e a mesma. Mudam o endpoint, a regiao e as
+credenciais:
 
 ```bash
 export USE_MINIO=true
@@ -399,47 +433,46 @@ python run_pipeline.py --scenario baseline --format csv
 
 Pontos de atencao, na ordem em que aparecem:
 
-1. **HTTPS e obrigatorio.** Sem `MINIO_SECURE=true` o cliente recusa a combinacao host/porta
+1. HTTPS e obrigatorio. Sem `MINIO_SECURE=true` o cliente recusa a combinacao host/porta
    (`This combination of host and port requires TLS`).
-2. **Regiao e obrigatoria** para a assinatura SigV4 do endpoint regional.
-3. **Nome de bucket em S3 e global.** `nimbus-bronze` provavelmente ja existe na conta de alguem;
-   use `BUCKET_PREFIX` proprio.
-4. **`MINIO_CREATE_BUCKETS=false`** em nuvem: a criacao de bucket passa a ser responsabilidade da
-   plataforma, e o pipeline falha rapido se o bucket nao existir, em vez de criar recurso sozinho.
-5. **Credencial.** Em conta real, use credencial de servico de escopo minimo e nunca a coloque em
-   `.env` de maquina de demonstracao.
+2. A regiao tambem e obrigatoria, porque o endpoint regional exige assinatura SigV4.
+3. Nome de bucket em S3 e global. `nimbus-bronze` provavelmente ja existe na conta de alguem,
+   entao use um `BUCKET_PREFIX` proprio.
+4. Em nuvem, deixe `MINIO_CREATE_BUCKETS=false`. A criacao de bucket passa a ser responsabilidade
+   da plataforma, e o pipeline falha rapido se o bucket nao existir, em vez de criar recurso por
+   conta propria.
+5. Em conta real, use credencial de servico de escopo minimo e nunca a coloque no `.env` de uma
+   maquina de demonstracao.
 
-**Status de evidencia (leia antes de afirmar em apresentacao):** compatibilidade com a API S3,
-TLS, regiao e prefixo foram exercitados com MinIO e com um segundo servidor S3-compativel. Uma
-conta AWS real **nao** foi exercitada — o que falta e conta, IAM, nome unico e custo; nao e
-codigo. Detalhes em [docs/STORAGE_S3.md](docs/STORAGE_S3.md).
+O que foi exercitado: compatibilidade com a API S3, TLS, regiao e prefixo, em MinIO e em um
+segundo servidor S3-compativel. Conta AWS real, nao. O que falta ali e conta, IAM, nome unico de
+bucket e controle de custo, nao codigo. Detalhes em [docs/STORAGE_S3.md](docs/STORAGE_S3.md).
 
 ---
 
 ## 7. Idempotencia, SHA-256 e reprocessamento
 
-A identidade logica de uma carga e `(tabela, dat_ref, formato)` — nao o `run_id`. O `run_id` muda
+A identidade logica de uma carga e `(tabela, dat_ref, formato)`, e nao o `run_id`. O `run_id` muda
 a cada execucao e serve para rastreio; a `dat_ref` identifica a janela de dados. Reprocessar a
 mesma `dat_ref` sobrescreve a particao correspondente (Silver local e
 `dat_ref=<data>/part-<data>.parquet` no Volume) em vez de acumular duplicata, e a linhagem registra
 `_ingest_dat_ref` ao lado de `_ingest_run_id`.
 
-Alem da `dat_ref`, o pipeline calcula o **SHA-256 do arquivo de entrada** (leitura em blocos de
-1 MiB, sem carregar o arquivo na memoria) e guarda no ledger. Isso separa dois casos que antes eram
-indistinguiveis:
+Alem da `dat_ref`, o pipeline calcula o SHA-256 do arquivo de entrada (leitura em blocos de 1 MiB,
+sem carregar o arquivo na memoria) e guarda no ledger. O hash separa reprocessamento de entrada
+divergente, que sao situacoes operacionais diferentes:
 
 | Situacao | Estado no ledger | Comportamento |
 |---|---|---|
 | Primeira carga de `(tabela, dat_ref, formato)` | `FIRST_LOAD` | processa normalmente |
 | Mesma `dat_ref`, arquivo byte a byte igual | `REPROCESS_IDENTICAL` | declara reprocessamento e sobrescreve a particao; `--skip-existing` pode pular |
-| Mesma `dat_ref`, arquivo diferente | `REPROCESS_MODIFIED` | loga `ENTRADA DIVERGENTE` com `sha anterior -> sha atual`, guarda `previous_sha256` e **ignora** `--skip-existing` |
+| Mesma `dat_ref`, arquivo diferente | `REPROCESS_MODIFIED` | loga `ENTRADA DIVERGENTE` com `sha anterior -> sha atual`, guarda `previous_sha256` e ignora `--skip-existing` |
 
 O ledger fica em `metrics/_ingest_ledger.json`, gravado pelo storage configurado (mesmo
 comportamento em filesystem local e MinIO/S3), com uma entrada por `(tabela, dat_ref, formato)`
 contendo `input_file`, `input_sha256`, `previous_sha256`, `input_situation`, `reprocess_count`,
-`status`, `rows`, `run_id`, `dat_ref` e `format`. Carga bloqueada por gate/DLQ fica registrada como
-`BLOCKED` e por isso **nao** e pulada por `--skip-existing`. Cargas antigas, gravadas antes do
-hash existir, sao tratadas como identicas por compatibilidade.
+`status`, `rows`, `run_id`, `dat_ref` e `format`. Carga bloqueada por gate ou DLQ fica registrada
+como `BLOCKED` e por isso nunca e pulada por `--skip-existing`.
 
 ```bash
 python run_pipeline.py --scenario baseline --dat-ref 2024-04-01                   # FIRST_LOAD
@@ -448,15 +481,7 @@ python run_pipeline.py --scenario baseline --dat-ref 2024-04-01 --skip-existing 
 python run_pipeline.py --scenario type_drift --dat-ref 2024-04-01 --skip-existing # REPROCESS_MODIFIED: nao pula
 ```
 
-Saida real da segunda execucao:
-
-```
-[IDEMPOTENCIA] input sha256=c5f63b648865 (tb_clientes.csv)
-[IDEMPOTENCIA] reprocessamento de tb_clientes dat_ref=2024-04-01 (run ..., status PASS,
-               arquivo identico sha c5f63b648865) - a particao sera sobrescrita
-```
-
-E do caso divergente:
+O caso divergente aparece assim no log:
 
 ```
 [IDEMPOTENCIA] ENTRADA DIVERGENTE em tb_clientes dat_ref=2024-04-01: arquivo difere da carga
@@ -464,7 +489,7 @@ E do caso divergente:
 [IDEMPOTENCIA] --skip-existing ignorado: o conteudo mudou, a particao precisa ser reprocessada
 ```
 
-Para que o caso "identico" seja demonstravel, a **geracao de dados ficticios e deterministica**
+Para que o caso "identico" seja demonstravel, a geracao de dados ficticios e deterministica
 quando `--dat-ref` e informada: a semente vem de `SHA-256(scenario|format|dat_ref)` e semeia
 `random`, NumPy, Faker e a geracao de UUID. Sem `--dat-ref`, a geracao permanece aleatoria.
 O `prefect_flow.py` aceita `--dat-ref` com a mesma semantica (sem `--skip-existing`).
@@ -473,7 +498,7 @@ O `prefect_flow.py` aceita `--dat-ref` com a mesma semantica (sem `--skip-existi
 
 ## 8. Exit codes
 
-O mesmo contrato vale para `run_pipeline.py`, `prefect_flow.py` e o container — e e o que o
+O mesmo contrato vale para `run_pipeline.py`, `prefect_flow.py` e o container, e e o que o
 agendador usa para rotear:
 
 | Codigo | Significado | Acao do agendador |
@@ -482,26 +507,13 @@ agendador usa para rotear:
 | `2` | Publicacao bloqueada por gate de qualidade, governanca ou quarentena/DLQ | Resultado esperado: roteia para o fluxo de tratamento, nao aciona plantao |
 | `1` | Erro inesperado de execucao | Falha real: aciona plantao |
 
-Os cenarios `breaking` e `type_drift` terminam em `2` **por desenho** — e a gate funcionando, nao
-uma falha de pipeline. No Prefect, o bloqueio levanta `GateBlocked`, de modo que a run aparece como
-**Failed** na UI/worker em vez de "Completed" silencioso. O modo `--no-prefect` executa as funcoes
-puras (sem subir servidor Prefect) e preserva os mesmos codigos:
+Os cenarios `breaking` e `type_drift` terminam em `2` por desenho. E o gate funcionando, nao uma
+falha de pipeline. No Prefect, o bloqueio levanta `GateBlocked`, de modo que a run aparece como
+Failed na UI e no worker em vez de terminar como "Completed" silencioso. O modo `--no-prefect`
+executa as funcoes puras, sem subir servidor Prefect, e preserva os mesmos codigos:
 
 ```bash
 python prefect_flow.py --no-prefect --scenario baseline --run-id %%JOBRUNID%%
-```
-
-GPU NVIDIA: descomente `deploy.resources` no `docker-compose.yml`.
-GPU AMD/ROCm: descomente o bloco de devices e adicione `AMD_GFX_VERSION` no `.env`.
-Modelo alternativo: troque `OLLAMA_MODEL` no `.env` — o download acontece no proximo boot.
-
-### Pre-requisito Databricks (executar uma vez no SQL Editor)
-
-```sql
-CREATE SCHEMA IF NOT EXISTS nimbus.bronze;
-CREATE SCHEMA IF NOT EXISTS nimbus.silver;
-CREATE VOLUME IF NOT EXISTS nimbus.bronze.landing;
-CREATE VOLUME IF NOT EXISTS nimbus.silver.landing;
 ```
 
 ---
@@ -516,7 +528,7 @@ CREATE VOLUME IF NOT EXISTS nimbus.silver.landing;
 | `python tasks.py metrics` | Resumo do ultimo run |
 | `python tasks.py score` | Score por dimensao das ultimas execucoes |
 | `python tasks.py models` | Visao de modelos/tabelas publicadas |
-| `python tasks.py test` | 661 testes unitarios |
+| `python tasks.py test` | Roda a suite de testes unitarios |
 | `python tasks.py test-databricks` | Diagnostico de conectividade em 4 niveis |
 | `python tasks.py manifest-version --file <manifest>` | Diff de schema -> versao semantica do contrato |
 | `python tasks.py manifest-version --file <manifest> --apply --author "Nome"` | Aplica o bump e grava o historico no Manifest |
@@ -526,7 +538,7 @@ CREATE VOLUME IF NOT EXISTS nimbus.silver.landing;
 | `python tasks.py upload-silver --table tb_clientes` | Envia apenas uma tabela |
 | `python tasks.py check-manifest --file <path>` | Lista pendencias do Manifest |
 | `python tasks.py validate-manifest --file <path> --steward "Nome"` | Promove DRAFT para VALIDATED |
-| `python tasks.py emit-grants --file <path>` | Gera o DDL de `GRANT`/mascara a partir da classificacao do Manifest — **so imprime, nao executa** |
+| `python tasks.py emit-grants --file <path>` | Gera o DDL de `GRANT` e de mascara a partir da classificacao do Manifest (so imprime, nao executa) |
 | `python tasks.py help` | Lista todos os comandos |
 
 ---
@@ -535,22 +547,23 @@ CREATE VOLUME IF NOT EXISTS nimbus.silver.landing;
 
 Tres limites mudam como o resultado de uma execucao deve ser lido:
 
-- **Escala.** pandas single-node. O que sobrevive a uma troca por Spark e o Manifest, o roteamento
-  e o contrato de exit code; o executor nao e o ponto forte.
-- **Ordem gate/Silver.** O gate so pode decidir depois do cast, entao o Parquet ja existe quando o
-  bloqueio acontece: a carga reprovada e **retirada da Silver e movida para a quarentena**
+- Escala: pandas single-node. Numa troca por Spark sobrevivem o Manifest, o roteamento de rejeito
+  e o contrato de exit code. O executor nao e o ponto forte do projeto.
+- Ordem entre gate e Silver: o gate so pode decidir depois do cast, entao o Parquet ja existe
+  quando o bloqueio acontece. A carga reprovada e retirada da Silver e movida para a quarentena
   (`QUARANTINE_BLOCKED_SILVER=true`), onde continua auditavel sem ficar no caminho do consumidor.
-- **Gold.** Camada configurada, sem fluxo funcional — o medallion desta PoC termina na Silver.
+- Gold: a camada esta configurada, mas nao tem fluxo funcional. O medallion desta PoC termina na
+  Silver.
 
-Dois defaults de privacidade que valem citar aqui: o upload da quarentena para o Databricks vem
-**desligado** (`DATABRICKS_QUARANTINE_UPLOAD=false`) e os rejeitos saem com as colunas marcadas
+Dois defaults de privacidade valem ser citados aqui. O upload da quarentena para o Databricks vem
+desligado (`DATABRICKS_QUARANTINE_UPLOAD=false`), e os rejeitos saem com as colunas marcadas
 `LGPD_SENSITIVE` no Manifest substituidas por um token deterministico
-(`QUARANTINE_MASK_PII=true`) — o token preserva correlacao entre linhas, e **nao** e anonimizacao
-juridica: a origem continua sendo o dado do titular.
+(`QUARANTINE_MASK_PII=true`). Esse token preserva a correlacao entre linhas e nao e anonimizacao
+juridica, porque a origem continua sendo o dado do titular.
 
-Os demais limites conhecidos (deteccao de dado sensivel limitada ao que o Manifest declara,
-versionamento de Manifest, IAM/service principal, retry/lock/atomicidade do ledger, papel da SLM e
-ausencia de AWS e de workspace Databricks reais) estao em
+Os demais limites conhecidos (registry central de contratos, deteccao de dado sensivel limitada ao
+que o Manifest declara, IAM e service principal, retry, lock e atomicidade do ledger, papel da SLM
+e ausencia de AWS e de workspace Databricks reais) estao em
 [docs/NEXT_STEPS.md](docs/NEXT_STEPS.md), com o caminho de resolucao de cada um.
 
 ---

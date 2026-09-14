@@ -160,18 +160,20 @@ O ciclo `DRAFT → VALIDATED` é real, auditável e protegido: o promotor regist
 `validated_at`, recusa promover manifest com `# TODO` pendente e o `ManifestWriter` nunca sobrescreve
 um `VALIDATED` (só sobrescreve DRAFT, e apenas com `--overwrite`).
 
-O que **não** existe, e é a resposta honesta quando alguém pergunta:
+Sobre a versão do contrato, o que existe hoje e o que ainda não existe:
 
-- `version` é um campo fixo `"1.0.0"` escrito pelos quatro extratores e **nunca incrementado** —
-  quem muda versão é o Steward editando o YAML à mão.
-- Não há bump automático de SemVer. O `evolution_type` (`breaking` / `non_breaking`) que o validator
-  detecta em runtime não propõe mudança de versão.
-- Não há histórico nem registry: nada de `tb_clientes_v2.yaml`, nada de seleção automática da versão
-  vigente.
-- Não há diff automático entre o `_draft.yaml` e o manifest em vigor — a comparação é manual.
+- Os quatro extratores escrevem `version: "1.0.0"` no rascunho, mas a partir daí quem calcula o
+  número é o `manifest-version`, comparando o contrato com o baseline. A seção
+  [Versão do contrato](#versão-do-contrato-manifest-version) descreve a regra inteira.
+- O histórico de versões fica no próprio Manifest, em `version_history`, e o lock em
+  `data/contracts/.lock/` guarda o último estado publicado.
+- Ainda não há registry central: nada de `tb_clientes_v2.yaml`, nada de seleção automática da
+  versão vigente, nada de consulta de quem consome cada versão.
+- O `_draft.yaml` gerado por uma nova extração sobre um contrato `VALIDATED` continua sendo
+  comparado à mão. O `manifest-version` compara o contrato com o baseline, e não o rascunho com o
+  contrato em vigor.
 
-O caminho natural de evolução (`non_breaking` → minor, `breaking` → major, mais o diff no
-`check-manifest`) está registrado em [NEXT_STEPS.md](NEXT_STEPS.md).
+O que falta nessa frente está registrado em [NEXT_STEPS.md](NEXT_STEPS.md).
 
 ---
 

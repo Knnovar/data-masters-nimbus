@@ -183,3 +183,17 @@ promocao de contrato alterado sem bump (`--skip-version-check` existe e e explic
 
 **Suite.** 661 testes unitarios, com `test_gate_silver.py`, `test_grant_emitter.py`,
 `test_pii_masking.py` e `test_manifest_version.py` cobrindo os itens acima.
+
+---
+
+## Contrato ilegivel deixa de degradar em silencio
+
+O contrato e carregado duas vezes por tabela, uma no validador e uma no `run_scenario`. A falha na
+segunda leitura era apenas impressa e o processamento seguia com `contract=None`, o que desligava o
+cast dirigido pelo Manifest, o gate de governanca e o mascaramento de PII na quarentena enquanto a
+tabela aparecia como `[LIBERADA]` no resumo. Agora essa falha produz `BLOCKED` com razao
+`CONTRACT_UNREADABLE` e rotulo `[CONTRATO]`: a tabela nao e promovida, profiling e SLM nao rodam, a
+publicacao da Silver e registrada como bloqueada, o ledger grava `BLOCKED` e a run sai com exit
+code 2. Contrato ausente continua sendo barrado antes, pela validacao estrutural, que devolve
+`DLQ`. 675 testes unitarios, com `test_contract_gate.py` cobrindo o bloqueio e a preservacao do
+caminho normal.

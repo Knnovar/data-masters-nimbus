@@ -25,7 +25,8 @@ from src.generators.data_generator import generate_all
 from src.validation.validator import validate
 from src.profiler.duckdb_profiler import profile
 from src.slm.ollama_enrichment import enrich
-from src.metrics.metrics_collector import collect, generate_report, save_summary
+from src.metrics.metrics_collector import (collect, generate_report, save_summary,
+                                           summary_status)
 from src.ingestion.idempotency import (announce, file_sha256, record_load,
                                        resolve_dat_ref, short_sha)
 
@@ -195,6 +196,7 @@ def run_scenario(scenario: str, run_id: str, fmt: str = "csv", dat_ref: str | No
         val_result = validate(storage, filename, contract_filename, scenario=scenario)
 
         contract = None
+        contract_error = None
         if contract_filename and storage.exists("contracts", contract_filename):
             try:
                 import yaml
@@ -203,6 +205,7 @@ def run_scenario(scenario: str, run_id: str, fmt: str = "csv", dat_ref: str | No
                 with open(cp, encoding="utf-8") as f:
                     contract = DataContract.from_dict(yaml.safe_load(f))
             except Exception as ce:
+                contract_error = str(ce)
                 print(f" [SCHEMA] Contrato Nao Carregado: {ce}")
         cast_report = {}
         reject_report = {}
@@ -213,6 +216,20 @@ def run_scenario(scenario: str, run_id: str, fmt: str = "csv", dat_ref: str | No
             gate             = {"status": "BLOCKED", "reason": "VALIDATION_DLQ",
                                 "detail": "quarentena na validacao ({})".format(val_result.evolution_type or "regra de contrato"),
                                 "reject_pct": None, "limit_pct": None}
+            print("     [GATE] [{}] BLOQUEADO: {}".format(table, gate["detail"]))
+        elif contract_error is not None:
+            # Sem contrato nao ha cast dirigido pelo Manifest, gate de governanca
+            # nem mascara de PII na quarentena: publicar aqui seria publicar sem
+            # nenhum dos controles que a Silver promete.
+            slm_result       = {"table": table, "status": "SKIPPED", "inference_ms": 0, "documentation": ""}
+            profiler_payload = {"table": table, "rows": 0, "profiling_ms": 0, "columns": {}}
+            gate             = {"status": "BLOCKED", "reason": "CONTRACT_UNREADABLE",
+                                "detail": "contrato {} ilegivel: {}".format(
+                                    contract_filename, contract_error),
+                                "reject_pct": None, "limit_pct": None}
+            publications.append({"table": table, "status": "BLOCKED", "layer": "silver",
+                                 "error": gate["detail"], "rows": 0,
+                                 "quarantined_file": None})
             print("     [GATE] [{}] BLOQUEADO: {}".format(table, gate["detail"]))
         else:
 
@@ -260,6 +277,7 @@ _GATE_LABELS = {
     "MANIFEST_NOT_VALIDATED": "[GOVERNANCA]",
     "VALIDATION_DLQ"        : "[QUARENTENA]",
     "REJECT_ABOVE_TOLERANCE": "[QUALIDADE]",
+    "CONTRACT_UNREADABLE"   : "[CONTRATO]",
 }
 
 def gate_label(metrics: dict) -> str:
@@ -293,13 +311,12 @@ def print_summary(all_metrics: list[dict]) -> None:
     print(header)
     print("-" * 78)
 
-    icons = {"PASS": "[PASS]", "WARNING": "[WARN]", "DLQ": "[DLQ]"}
     for m in all_metrics:
-        icon = icons.get(m["validation_status"], "⚪")
+        icon, status = summary_status(m)
         gate = gate_label(m)
         print(
             f"{m['table']:<26} {m['scenario']:<13} "
-            f"{icon} {m['validation_status']:<8} {gate:<12} {m['quality_score']:>6.1f}/100"
+            f"{icon} {status:<8} {gate:<12} {m['quality_score']:>6.1f}/100"
         )
 
     avg = round(sum(m["quality_score"] for m in all_metrics) / len(all_metrics), 1)
