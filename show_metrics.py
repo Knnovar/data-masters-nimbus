@@ -31,10 +31,10 @@ from src.storage.storage import get_storage
 # ─────────────────────────────────────────────────────────────────────────────
 
 def load_all_metrics(storage) -> list[dict]:
-    """Carrega todos os registros de metricas, excluindo arquivos summary."""
+    """Carrega todos os registros de metricas, excluindo summary e arquivos de controle."""
     records = []
     for name in sorted(n for n in storage.list("metrics") if n.endswith(".json")):
-        if "summary" in name:
+        if "summary" in name or Path(name).name.startswith("_"):
             continue
         try:
             with open(storage.read_path("metrics", name), encoding="utf-8") as f:

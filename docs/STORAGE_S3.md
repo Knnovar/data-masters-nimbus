@@ -81,8 +81,8 @@ governanca presa no disco da maquina que rodou o pipeline.
 |---|---|---|
 | `USE_MINIO` | `false` | seleciona o backend |
 | `MINIO_ENDPOINT` | `localhost:9000` | `host:porta` **sem** esquema (`http://` quebra o client) |
-| `MINIO_ACCESS_KEY` | `minioadmin` | access key |
-| `MINIO_SECRET_KEY` | `minioadmin` | secret key |
+| `MINIO_ACCESS_KEY` | (vazio) | access key — **obrigatoria** com `USE_MINIO=true`; `get_storage()` levanta `RuntimeError` se vazia |
+| `MINIO_SECRET_KEY` | (vazio) | secret key — **obrigatoria** com `USE_MINIO=true` |
 | `MINIO_SECURE` | `false` | `true` = HTTPS/TLS |
 | `MINIO_REGION` | (vazio) | regiao na assinatura SigV4 |
 | `BUCKET_PREFIX` | `nimbus` | prefixo dos buckets |
@@ -101,17 +101,38 @@ python show_metrics.py --score
 
 ### 4.2 MinIO local
 
+Caminho de um comando (`scripts/nimbus_up.py`, idempotente):
+
 ```bash
-docker compose up -d minio
+make up      # gera o .env na 1a vez, sobe o minio, espera health check, cria os buckets
+make demo    # o mesmo + pipeline e score rodando contra o MinIO, sem export manual
+```
+
+O bootstrap **nunca sobrescreve** credencial existente: reexecutar reaproveita o `.env`, e a
+credencial e gerada com `secrets.token_urlsafe`, gravada com permissao `0600` e nunca impressa
+(consulte com `make minio-creds`). `make reset-minio` derruba containers e volume e recria.
+
+Equivalente na mao, quando se quer ver cada etapa:
+
+```bash
+# credencial obrigatoria: nao existe default no compose nem no config.py
+cp .env.example .env
+printf 'MINIO_ACCESS_KEY=%s\nMINIO_SECRET_KEY=%s\n' "$(openssl rand -hex 12)" "$(openssl rand -hex 24)" >> .env
+set -a && . ./.env && set +a
+
+docker compose up -d minio     # falha rapido se MINIO_ACCESS_KEY/SECRET_KEY nao estiverem no .env
 
 export USE_MINIO=true
 export MINIO_ENDPOINT=localhost:9000
-export MINIO_ACCESS_KEY=minioadmin
-export MINIO_SECRET_KEY=minioadmin
 
 python run_pipeline.py --scenario baseline --format json
 python show_metrics.py --score        # le de nimbus-metrics
 ```
+
+Trocar a credencial no `.env` com o ambiente ja de pe **nao** exige apagar o volume: o
+`docker compose up -d` recria o container com as novas `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD`
+(root credential do MinIO vem do ambiente, nao do volume). Usuarios criados via console e
+politicas, sim, vivem no volume.
 
 UI em `http://localhost:9001` — util para mostrar os buckets sendo populados ao vivo.
 
@@ -192,7 +213,9 @@ Politica IAM minima para a credencial do pipeline (escopo restrito ao prefixo):
    sozinho na conta. Em nuvem, use `false` — o erro passa a ser explicito
    (`RuntimeError` citando o bucket ausente).
 6. **Credencial em maquina de demonstracao.** Chave AWS em `.env` local e risco desproporcional
-   para a apresentacao; `minioadmin` local nao tem valor fora da maquina.
+   para a apresentacao. Nao ha credencial default em nenhum lugar do projeto: o compose usa
+   `${MINIO_ACCESS_KEY:?...}` e o `config.py` deixa a variavel vazia, entao a credencial local
+   e gerada por quem sobe o ambiente e vive somente no `.env` (fora do Git).
 
 ---
 

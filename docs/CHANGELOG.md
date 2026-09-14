@@ -106,3 +106,40 @@ O Unity Catalog passou a espelhar a medallion local: catalog `nimbus`, schema `b
 
 **Suite.** 325 testes unitários, incluindo `tests/test_bronze.py`.
 
+
+---
+
+## Sprint `expand-minio` — Storage portavel, governanca no lake e idempotencia por conteudo
+
+**Storage.** `MinIOStorage` ganhou `MINIO_SECURE` (TLS), `MINIO_REGION` (SigV4), `BUCKET_PREFIX`
+(nome de bucket e global em S3) e `MINIO_CREATE_BUCKETS` (impede o pipeline de criar bucket em conta
+gerenciada). O `secure=False` fixo — que impedia qualquer object storage gerenciado — foi corrigido.
+O pipeline foi exercitado em MinIO e em um segundo servidor S3-compativel (Adobe S3Mock) com HTTPS e
+regiao, trocando apenas variaveis de ambiente.
+
+**Governanca no mesmo backend do dado.** `collect()` e `generate_report()` deixaram de escrever
+direto no filesystem e passaram a usar `storage.write_text`; `show_metrics.py` le via
+`storage.list("metrics")`. Antes disso o dado ia para o bucket e a governanca ficava no disco local.
+
+**Falha visivel no Prefect.** Bloqueio de publicacao levanta `GateBlocked`, de modo que a run
+aparece como Failed na UI/worker em vez de "Completed" com exit code ignorado. `--no-prefect`, que
+era flag morta, passou a executar as funcoes puras (`.fn`) sem subir servidor efemero.
+
+**Idempotencia por conteudo.** `src/ingestion/idempotency.py` calcula o SHA-256 do arquivo de
+entrada em blocos de 1 MiB e mantem o ledger `metrics/_ingest_ledger.json` com chave
+`(tabela, dat_ref, formato)`. Estados `FIRST_LOAD`, `REPROCESS_IDENTICAL` e `REPROCESS_MODIFIED`;
+conteudo divergente registra `previous_sha256` e nao e pulado por `--skip-existing`; carga
+bloqueada fica `BLOCKED` e nunca e tratada como concluida.
+
+**Geracao deterministica.** Com `--dat-ref`, a semente vem de `SHA-256(scenario|format|dat_ref)` e
+semeia `random`, NumPy, Faker e a geracao de UUID — a mesma carga logica produz o mesmo arquivo byte
+a byte, o que torna o caso "reprocessamento identico" demonstravel.
+
+**Correcoes de coerencia.** Modelo `phi4` alinhado entre `config.py`, `.env.example`, compose e
+docs; `collect()` passou a receber `fmt` no fluxo Prefect (toda metrica saia como `"format": "csv"`);
+score documentado com as dimensoes reais (conformidade 40 / completude 25 / unicidade 20 /
+estabilidade 15); `MIGRATION_PLAN` corrigido quanto ao Azure Blob, que nao atende a API S3.
+
+**Suite.** 592 testes unitarios, com os componentes novos cobertos: `test_idempotency.py`,
+`test_quality_score.py`, `test_minio_storage.py`, `test_slm_metrics.py`, `test_prefect_flow.py` e
+determinismo em `test_data_generator.py`.

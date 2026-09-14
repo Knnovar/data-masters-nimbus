@@ -309,17 +309,24 @@ def cmd_clean(args):
     return 0
 
 def cmd_clean_data(args):
-    confirm = input("Isso remove TODOS os dados gerados em data/. Confirma? [s/N] ")
+    """Remove dados gerados. Manifests so saem com --contracts (artefato de governanca)."""
+    drop_contracts = "--contracts" in args
+    subs = ["landing", "processed", "quarantine", "gold", "metrics", "reports"]
+    if drop_contracts:
+        subs.append("contracts")
+    print("Sera removido de data/: {}".format(", ".join(subs)))
+    confirm = input("Confirma? [s/N] ")
     if confirm.lower() != "s":
         print("Cancelado.")
         return 0
-    import shutil
-    for sub in ["landing", "processed", "quarantine", "contracts", "metrics", "reports"]:
+    for sub in subs:
         d = ROOT / "data" / sub
         if d.exists():
             for f in d.glob("*"):
                 if f.is_file():
                     f.unlink()
+    if not drop_contracts:
+        print("Manifests em data/contracts/ preservados (use --contracts para remover).")
     print("Dados removidos.")
     return 0
 
@@ -365,7 +372,7 @@ COMMANDS = {
     "upload-bronze"     :(cmd_upload_bronze,      "Upload do arquivo bruto -> Volume bronze -> tabela no schema bronze (--table)"),
     "setup"             : (cmd_setup,             "Instala dependencias"),
     "clean"             : (cmd_clean,             "Remove __pycache__"),
-    "clean-data"        : (cmd_clean_data,        "Remove dados gerados (pede confirmacao)"),
+    "clean-data"        : (cmd_clean_data,        "Remove dados gerados, preserva manifests (--contracts remove tambem)"),
 }
 
 

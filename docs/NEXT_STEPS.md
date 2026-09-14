@@ -3,8 +3,8 @@
 > Substituido a cada sessao. Historico acumulado fica no CHANGELOG.md.
 
 Ultima atualizacao: sprint `feature/expand-minio` — metricas/relatorios no storage configuravel,
-portabilidade S3 (TLS, regiao, prefixo), idempotencia com SHA-256 do input, geracao deterministica e
-cobertura de teste dos componentes novos (592 testes).
+portabilidade S3 (TLS, regiao, prefixo), idempotencia com SHA-256 do input, geracao deterministica,
+correcao da ordem gate/Silver, privacidade na quarentena e `emit-grants` (627 testes).
 
 ---
 
@@ -29,6 +29,15 @@ cobertura de teste dos componentes novos (592 testes).
   `python:3.11.15-slim-bookworm`) e credencial de object storage sem default — compose com
   `${MINIO_ACCESS_KEY:?...}`, `config.py` com variavel vazia e `get_storage()` levantando
   `RuntimeError` quando `USE_MINIO=true` sem credencial.
+- **Ordem gate/Silver**: carga reprovada e retirada da Silver e movida para a quarentena
+  (`QUARANTINE_BLOCKED_SILVER=true`), preservando exit 2, metricas e motivo do bloqueio.
+- **Privacidade na quarentena**: `DATABRICKS_QUARANTINE_UPLOAD` passou a `false` por padrao e
+  `QUARANTINE_MASK_PII=true` mascara, nos rejeitos e dentro de `_reject_values`, as colunas
+  marcadas `LGPD_SENSITIVE` no Manifest.
+- **`emit-grants`**: `python tasks.py emit-grants --file <manifest>` deriva da classificacao do
+  Manifest o `GRANT SELECT`, o `CREATE FUNCTION` de mascara (uma por tipo, porque o Unity Catalog
+  exige que a mascara devolva o tipo da coluna) e os `ALTER COLUMN ... SET MASK`. **Nao executa,
+  nao autentica e nao abre conexao** — a saida e um arquivo SQL revisavel.
 
 ---
 
@@ -39,17 +48,19 @@ fixa em `1.0.0`: falta bump automatico (`non_breaking` -> minor, `breaking` -> m
 `_draft` contra o vigente no `check-manifest` e algum registry/historico. Hoje a evolucao de versao
 e manual e nao rastreada.
 
-**Ordem gate/Silver.** O gate barra a publicacao, mas a Silver local ja foi escrita. Duas saidas:
-promover para Silver somente depois do gate, ou marcar explicitamente o artefato reprovado
-(sufixo/pasta de staging) para que nenhum consumidor leia carga bloqueada por engano.
+**IAM e aplicacao dos GRANTs.** O `emit-grants` produz o DDL; aplicar continua sendo ato de quem
+tem alcada no workspace. O pipeline **nao** cria service principal, nao concede permissao e nao
+administra identidade — o acesso ao Databricks e por PAT. Trocar PAT por identidade de servico
+depende de provisionamento de plataforma, nao de codigo. Falta ainda: revisao do DDL contra o
+dialeto do workspace-alvo e um processo que ligue a promocao do Manifest a abertura do pedido de
+acesso.
 
-**Quarentena com PII.** Os rejeitos preservam o valor original e `DATABRICKS_QUARANTINE_UPLOAD` vem
-`true`. Decidir: mascarar na quarentena, restringir o schema de destino, ou desligar o upload por
-padrao.
-
-**Deteccao de dado sensivel.** A marcacao e heuristica por nome de coluna; nomes legados
-(`NRDOC`, `DDD_FONE`, `LOGRAD`) escapam. Uma lista de sinonimos declarada no Manifest resolveria a
-maior parte dos casos sem prometer classificacao juridica.
+**Deteccao de dado sensivel.** O mascaramento cobre exatamente o que o Manifest declara como
+`LGPD_SENSITIVE` — coluna sensivel nao declarada nao e mascarada, e a marcacao inicial proposta
+pela SLM e heuristica por nome, entao nomes legados (`NRDOC`, `DDD_FONE`, `LOGRAD`) escapam ate
+um Steward marca-los. Uma lista de sinonimos no Manifest resolveria a maior parte dos casos sem
+prometer classificacao juridica. O token `MASK:<hash>` tambem nao e anonimizacao juridica: e
+deterministico por desenho, para preservar correlacao na investigacao do rejeito.
 
 **Papel da SLM.** O modelo local propoe metadado e nada mais: toda saida nasce `[AI_METADATA_STATUS:
 DRAFT]` e so vira contrato depois de `validate-manifest` com Steward nomeado. Isso e desenho, nao

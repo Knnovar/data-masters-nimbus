@@ -437,16 +437,21 @@ reports      data/reports/         nimbus-reports     abfss://reports@...
 
 O Docker é opcional na PoC. Quando seu ambiente suportar virtualização:
 
-```python
-# config.py — única linha a alterar
-USE_MINIO = True
+```bash
+# Nada a alterar em código — apenas variáveis de ambiente
+docker compose up -d minio
 
-# Subir o MinIO
-docker compose up -d
+export USE_MINIO=true
+export MINIO_ENDPOINT=localhost:9000
+set -a && . ./.env && set +a   # MINIO_ACCESS_KEY/MINIO_SECRET_KEY: obrigatorias, sem default
 
-# Pipeline usa MinIO automaticamente — sem alteração de código
 python prefect_flow.py --no-prefect --scenario baseline
 ```
+
+Para object storage gerenciado, as variáveis adicionais são `MINIO_SECURE=true` (TLS obrigatório),
+`MINIO_REGION` (assinatura SigV4), `BUCKET_PREFIX` (nome de bucket é global em S3) e
+`MINIO_CREATE_BUCKETS=false` (a criação passa a ser da plataforma). Receitas completas em
+[STORAGE_S3.md](STORAGE_S3.md).
 
 O backend é selecionado pela factory `get_storage()` em tempo de execução.
 A UI do MinIO em `http://localhost:9001` mostrará os buckets sendo populados
@@ -455,26 +460,29 @@ em tempo real — útil para demonstração visual na apresentação.
 ### Migração MinIO → ADLS Gen2 (Azure)
 
 Quando o ambiente Azure estiver disponível, a migração é uma extensão natural
-da classe `MinIOStorage`. O ADLS Gen2 expõe API S3-compatível — a mudança
-é de configuração, não de código:
+da camada de storage — mas, ao contrário do que uma versão anterior deste
+documento afirmava, **o client `minio` não fala com o ADLS Gen2/Blob**: o
+endpoint `*.blob.core.windows.net` expõe a API nativa do Azure Blob, não a API
+S3. Apontar `MINIO_ENDPOINT` para lá não funciona.
 
-**Opção A — Manter o client MinIO apontando para ADLS Gen2:**
-```python
-# config.py
-MINIO_ENDPOINT   = "<storage-account>.blob.core.windows.net"
-MINIO_ACCESS_KEY = "<storage-account>"         # via Azure Key Vault
-MINIO_SECRET_KEY = "<access-key>"              # via Azure Key Vault
-USE_MINIO        = True
-```
+As duas opções reais são:
 
-**Opção B — Adicionar backend `ADLSStorage` estendendo `StorageBase`:**
+**Opção A — Gateway/compatibilidade S3 na frente do Azure:** manter o
+`MinIOStorage` e colocar um endpoint S3-compatível entre o pipeline e o storage
+Azure. Não exige código novo, mas adiciona um componente de infraestrutura para
+operar e é a alternativa menos indicada para produção.
+
+**Opção B (recomendada) — Adicionar backend `ADLSStorage` estendendo `StorageBase`:**
 Cria uma terceira implementação usando o SDK `azure-storage-file-datalake`.
 Mais verboso, mas permite usar features exclusivas do ADLS Gen2 como
 hierarquia de diretórios, ACLs por diretório e integração com Entra ID.
 Recomendado para produção, onde o controle de acesso granular é requisito.
 
 Em ambas as opções, o restante do pipeline — generator, validator, profiler,
-SLM, metrics — não tem nenhuma linha alterada.
+SLM, metrics — não tem nenhuma linha alterada: todos falam com `StorageBase`.
+A portabilidade já foi exercitada em dois servidores S3-compatíveis distintos
+(MinIO e S3Mock, este último com TLS e região); Azure e AWS reais não foram
+exercitados nesta branch.
 
 ### Impacto no plano de estimativas
 
@@ -483,7 +491,8 @@ A implementação da camada Storage antecipa parte do trabalho da Fase 1
 reduz para aproximadamente **0.5 sprint**, já que:
 
 - A interface `StorageBase` está definida e testada
-- O mapeamento Bronze/Silver/Gold/Quarantine está operacional
+- O mapeamento Bronze/Silver/Quarantine está operacional (Gold existe como camada
+  configurada, sem fluxo funcional nesta PoC)
 - O comportamento de promoção entre camadas está implementado e validado
 - A única tarefa remanescente é adicionar o backend `ADLSStorage` e
   configurar a autenticação via Service Principal no Azure Key Vault

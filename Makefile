@@ -4,7 +4,7 @@
 # Windows: prefira `python tasks.py <comando>` — funciona nativamente,
 # sem precisar instalar make. Veja python tasks.py help
 
-.PHONY: run baseline non-breaking breaking metrics issues slm clean clean-data setup prefect-setup help up down demo reset-minio minio-creds
+.PHONY: run baseline non-breaking breaking metrics issues slm clean clean-data setup prefect-setup help up down demo reset-minio minio-creds check-manifest validate-manifest emit-grants
 
 # ── Pipeline ──────────────────────────────────────────────────────────────────
 
@@ -65,6 +65,12 @@ validate-manifest:
 	@echo "Uso: make validate-manifest FILE=data/contracts/tb_clientes.yaml STEWARD='Nome'"
 	python -m src.manifest.manifest_validator --file $(FILE) --steward "$(STEWARD)"
 
+# ── Governanca ────────────────────────────────────────────────────────────────
+
+emit-grants:
+	@echo "Uso: make emit-grants FILE=data/contracts/tb_clientes.yaml"
+	python -m src.governance.grant_emitter --file $(FILE)
+
 # ── Prefect ───────────────────────────────────────────────────────────────────
 
 prefect-setup:
@@ -83,9 +89,13 @@ clean:
 	find . -name "*.pyc" -delete 2>/dev/null || true
 
 clean-data:
-	@echo "Removendo dados gerados (landing, processed, quarantine, gold)..."
-	rm -f data/landing/*.csv data/processed/*.csv data/quarantine/*.csv
-	rm -f data/contracts/*.yaml data/metrics/*.json data/reports/*.md
+	@echo "Removendo dados gerados (landing, processed, quarantine, gold, metrics, reports)..."
+	rm -f data/landing/*.csv data/landing/*.json data/landing/*.txt
+	rm -f data/processed/*.csv data/processed/*.parquet
+	rm -f data/quarantine/*.csv data/quarantine/*.parquet
+	rm -f data/gold/*.csv data/gold/*.parquet
+	rm -f data/metrics/*.json data/reports/*.md
+	@echo "Manifests em data/contracts/ NAO sao removidos (use rm manualmente)."
 
 help:
 	@echo ""
@@ -114,6 +124,9 @@ help:
 	@echo "  Manifesto:"
 	@echo "    make check-manifest FILE=data/contracts/tb_clientes.yaml"
 	@echo "    make validate-manifest FILE=... STEWARD='Nome'"
+	@echo ""
+	@echo "  Governanca:"
+	@echo "    make emit-grants FILE=data/contracts/tb_clientes.yaml  (gera DDL, nao executa)"
 	@echo ""
 	@echo "  Prefect:"
 	@echo "    make prefect-setup  Cria work pool e registra deployments"

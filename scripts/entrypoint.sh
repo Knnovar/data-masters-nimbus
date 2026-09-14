@@ -62,10 +62,10 @@ EXIT=0
 python run_pipeline.py --scenario "${SCENARIO}" --format "${FORMAT}" || EXIT=$?
 if [ $EXIT -eq 0 ]; then
     ok "Pipeline concluida e publicada (exit 0)"
-elif [ $EXIT -eq 2]; then
+elif [ $EXIT -eq 2 ]; then
     warn "Publicacao bloqueada por gate/quarentena (exit 2) - resultado esperado"
 else
-    warn "Erro inesperado na pipeline (exit ${EXIT})
+    warn "Erro inesperado na pipeline (exit ${EXIT})"
 fi
 
 log "Container pronto para comandos:"

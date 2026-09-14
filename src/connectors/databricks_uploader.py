@@ -12,6 +12,7 @@ _LINEAGE_COLUMNS = {
     "_ingest_format": {"description": "Formato do arquivo de origem (csv|json|fixed|parquet)."},
     "_ingest_time"  : {"description": "Data/hora UTC da promocao Bronze -> Silver"},
     "_ingest_run_id": {"description": "run_id do pipeline Nimbus que produziu a linha."},
+    "_ingest_dat_ref": {"description": "Data de referencia da carga (particao logica; reprocessavel)."},
 }
 
 class DiagnoseResult:

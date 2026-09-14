@@ -1,15 +1,14 @@
 """
 Coleta e consolida métricas de cada execução da pipeline.
 
-Produz:
-  - metrics/run_<timestamp>.json  → histórico por run
-  - metrics/summary.json          → acumulado de todas as runs
-  - reports/pipeline_report.md    → relatório legível
+Produz, sempre pelo storage configurado (local ou MinIO/S3):
+  - metrics/<run_id>_<tabela>_<formato>.json → registro por tabela
+  - metrics/<run_id>_summary.json            → consolidado da run
+  - reports/pipeline_report.md               → relatório legível
 """
 
 import json
 from datetime import datetime
-from pathlib import Path
 from src.metrics import quality_score
 from src.validation.validator import ValidationResult
 from src.storage.storage import get_storage
@@ -50,6 +49,7 @@ def collect(
     fmt             : str = 'csv',
     reject_report   : dict | None = None,
     gate            : dict | None = None,
+    dat_ref         : str | None = None,
 ) -> dict:
     """Salva métricas individuais de uma tabela e retorna o dict."""
 
@@ -62,6 +62,7 @@ def collect(
 
     record = {
         "run_id"             : run_id,
+        "dat_ref"            : dat_ref,
         "timestamp"          : datetime.now().isoformat(),
         "table"              : val_result.table,
         "scenario"           : val_result.scenario,
@@ -109,7 +110,7 @@ def save_summary(run_id: str, all_metrics: list[dict]) -> str:
     
 
 
-def generate_report(all_metrics: list[dict]) -> Path:
+def generate_report(all_metrics: list[dict]) -> str:
     """Gera relatório Markdown consolidado da execução."""
 
     now   = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

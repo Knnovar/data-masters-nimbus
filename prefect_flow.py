@@ -44,6 +44,8 @@ from src.profiler.duckdb_profiler import profile
 from src.slm.ollama_enrichment import enrich
 from src.metrics.metrics_collector import collect, generate_report, save_summary
 from src.ingestion.normalizer import normalize
+from src.ingestion.idempotency import (announce, file_sha256, record_load,
+                                       resolve_dat_ref, short_sha)
 
 # Prefect e opcional — sem ele os decoradores viram no-ops transparentes
 try:
@@ -160,7 +162,7 @@ def task_extract_manifest(filename: str, table_name: str, fmt: str = "csv") -> d
 
 
 @task(name="JOB-DM-001-GENERATE", retries=1, retry_delay_seconds=10)
-def task_generate_data(scenario, run_id, fmt="csv"):
+def task_generate_data(scenario, run_id, fmt="csv", dat_ref=None):
     """
     Control-M: JOB-DM-001-GENERATE
     Depende de: nenhum (inicio do DAG)
@@ -179,7 +181,7 @@ def task_generate_data(scenario, run_id, fmt="csv"):
                 "Formato invalido: '{}'. Opcoes validas: {}".format(fmt, ', '.join(SUPPORTED_FORMATS))
             )
         storage  = get_storage()
-        produced = generate_all(storage, scenario=scenario, fmt=fmt)
+        produced = generate_all(storage, scenario=scenario, fmt=fmt, dat_ref=dat_ref)
         _log("JOB-DM-001", "GENERATE", "ENDED_OK",
              "tables={} backend={} format={}".format(len(produced), type(storage).__name__, fmt))
         return [
@@ -190,6 +192,7 @@ def task_generate_data(scenario, run_id, fmt="csv"):
                 "scenario"         : scenario,
                 "format"           : fmt,
                 "run_id"           : run_id,
+                "dat_ref"          : dat_ref,
             }
             for p in produced
         ]
@@ -209,10 +212,15 @@ def task_validate(item, run_id):
          "file=bronze/{}".format(item["filename"]))
     try:
         storage = get_storage()
+        input_sha = file_sha256(storage.read_path("bronze", item["filename"]))
+        if announce(storage, table, item.get("dat_ref"), item.get("format") or "csv",
+                    input_sha=input_sha):
+            _log("JOB-DM-002", "VALIDATE/{}".format(table), "WARN",
+                 "reprocessamento de dat_ref={}".format(item.get("dat_ref")))
         from src.connectors.bronze_uploader import publish_bronze
         publications = [publish_bronze(storage.read_path("bronze", item["filename"]),
                                        table_name=Path(item["filename"]).stem,
-                                       run_id=run_id)]
+                                       run_id=run_id, dat_ref=item.get("dat_ref"))]
         result  = validate(
             storage,
             item["filename"],
@@ -228,6 +236,7 @@ def task_validate(item, run_id):
                  result.evolution_type))
         return {
             **item,
+            "input_sha256"     : input_sha,
             "validation_status": result.status,
             "evolution_type"   : result.evolution_type,
             "rows_total"       : result.rows_total,
@@ -257,7 +266,8 @@ def task_profile(validated):
         from run_pipeline import publish_quarantine_files
         dlq_pubs = list(validated.get("publications") or [])
         dlq_pubs.extend(publish_quarantine_files(
-            get_storage(), validated["filename"], validated.get("run_id") or "", dlq=True
+            get_storage(), validated["filename"], validated.get("run_id") or "", dlq=True,
+            dat_ref=validated.get("dat_ref")
         ))
 
         return {
@@ -302,7 +312,8 @@ def task_profile(validated):
         if collision:
             _log("JOB-DM-003", "PROFILE/{}".format(table), "WARN", collision)
         parquet_filename = storage.promote_to_parquet(
-            validated["filename"], "bronze", "silver", contract=contract, run_id=validated.get("run_id"))
+            validated["filename"], "bronze", "silver", contract=contract,
+            run_id=validated.get("run_id"), dat_ref=validated.get("dat_ref"))
         cast_report = dict(getattr(storage, "last_cast_report", {}) or {})
         reject_report = dict(getattr(storage, "last_reject_report", {}) or {})
 
@@ -317,10 +328,11 @@ def task_profile(validated):
             from src.connectors.databricks_uploader import publish_table
             pubs.append(publish_table(storage.read_path("silver", parquet_filename),
                                       table_name=Path(validated["filename"]).stem,
-                                      contract=contract, run_id=validated.get("run_id")))
+                                      contract=contract, run_id=validated.get("run_id"),
+                                      dat_ref=validated.get("dat_ref")))
         pubs.extend(publish_quarantine_files(
             storage, validated["filename"], validated.get("run_id") or "",
-            reject_report=reject_report, dlq=False
+            reject_report=reject_report, dlq=False, dat_ref=validated.get("dat_ref")
         ))
 
         _log("JOB-DM-003", "PROFILE/{}".format(table), 
@@ -407,9 +419,19 @@ def task_collect_metrics(enriched, run_id):
         cast_report     =enriched.get("cast_report") or {},
         reject_report   =enriched.get("reject_report") or {},    
         gate            =enriched.get("gate"),  
+        fmt             =enriched.get("format") or "csv",
+        dat_ref         =enriched.get("dat_ref"),
     )
+    record_load(get_storage(), table, enriched.get("dat_ref"),
+                enriched.get("format") or "csv", run_id,
+                "BLOCKED" if (enriched.get("gate") or {}).get("status") == "BLOCKED"
+                else enriched["validation_status"],
+                rows=enriched.get("rows_valid", 0),
+                input_sha=enriched.get("input_sha256"),
+                input_file=enriched.get("filename"))
     _log("JOB-DM-005", "METRICS/{}".format(table), "ENDED_OK",
-         "score={}".format(metrics["quality_score"]))
+         "score={} input_sha={}".format(metrics["quality_score"],
+                                        short_sha(enriched.get("input_sha256"))))
     return metrics
 
 
@@ -437,7 +459,7 @@ def task_report(all_metrics, run_id):
     description="Pipeline lakehouse bancaria com contratos, profiler e SLM.",
     version="1.0.0",
 )
-def pipeline_flow(scenario="baseline", run_id=None, fmt="csv"):
+def pipeline_flow(scenario="baseline", run_id=None, fmt="csv", dat_ref=None):
     """
     DAG completo. Cada tabela passa pelos jobs 002-005 em sequencia, e as tabelas
     tambem sao percorridas em sequencia (um laco).
@@ -469,9 +491,12 @@ def pipeline_flow(scenario="baseline", run_id=None, fmt="csv"):
             str(uuid.uuid4())[:6]
         )
 
-    _log("PIPELINE", "FLOW", "STARTED", "run_id={} scenario={} format={}".format(run_id, scenario, fmt))
+    dat_ref = resolve_dat_ref(run_id, dat_ref)
 
-    produced    = task_generate_data(scenario, run_id, fmt)
+    _log("PIPELINE", "FLOW", "STARTED", "run_id={} scenario={} format={} dat_ref={}".format(
+        run_id, scenario, fmt, dat_ref))
+
+    produced    = task_generate_data(scenario, run_id, fmt, dat_ref)
     all_metrics = []
     publications = []
 
@@ -577,6 +602,10 @@ if __name__ == "__main__":
         "--run-id", default=None,
         help="Run ID externo (util para rastreio Control-M)",
     )
+    parser.add_argument(
+        "--dat-ref", dest="dat_ref", default=None,
+        help="Data de referencia da carga (YYYY-MM-DD). Padrao: data do run_id.",
+    )
     args = parser.parse_args()
 
     if args.no_prefect and _HAS_PREFECT:
@@ -608,7 +637,8 @@ if __name__ == "__main__":
         fmt_list = ["csv", "json", "fixed"] if args.fmt == "all" else [args.fmt]
         for fmt in fmt_list:
             try:
-                result = pipeline_flow(scenario=sc, run_id=run_id, fmt=fmt)
+                result = pipeline_flow(scenario=sc, run_id=run_id, fmt=fmt,
+                                       dat_ref=args.dat_ref)
             except GateBlocked as blocked:
                 result = blocked.result
                 print("\n [BLOQUEIO] {} ({}): publicacao barrada pelo gate/quarentena " \

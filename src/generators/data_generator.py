@@ -10,6 +10,7 @@ Cenários disponíveis:
   - breaking    : altera tipo de coluna-chave (deve ir para quarentena)
 """
 
+import hashlib
 import random
 import uuid
 from datetime import datetime, timedelta
@@ -29,6 +30,8 @@ from src.generators.writers import (
     SUPPORTED_FORMATS,
 )
 
+# Semente de import: mantem o comportamento antigo quando a geracao nao recebe
+# dat_ref. Com dat_ref, `seed_all()` re-semeia de forma deterministica.
 random.seed(42)
 np.random.seed(42)
 
@@ -85,6 +88,30 @@ _TYPE_DRIFT_VALUES = ["2.345,67", "12.900,00", "N/D", "NAO INFORMADO", "1.234,56
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
+def seed_all(*parts) -> int:
+    """Semeia todos os geradores a partir de uma chave estavel.
+
+    Sem isto, `random.seed(42)` no import nao basta: o Faker tem RNG proprio e
+    `uuid.uuid4()` le entropia do sistema, entao duas execucoes da mesma dat_ref
+    produziam arquivos diferentes e todo reprocessamento aparecia como entrada
+    divergente no ledger. Com a semente derivada de (cenario, formato, dat_ref),
+    a mesma janela de dados gera o mesmo arquivo byte a byte — que e o que torna
+    a idempotencia demonstravel, e nao apenas declarada.
+    """
+    key  = "|".join(str(p) for p in parts)
+    seed = int(hashlib.sha256(key.encode("utf-8")).hexdigest()[:16], 16)
+    random.seed(seed)
+    np.random.seed(seed % (2 ** 32))
+    if fake is not None:
+        Faker.seed(seed)
+    return seed
+
+
+def _uuid4() -> str:
+    """UUID v4 derivado do `random` semeado, e nao da entropia do sistema."""
+    return str(uuid.UUID(int=random.getrandbits(128), version=4))
+
+
 def _random_date(start: datetime, end: datetime) -> str:
     delta = end - start
     return (start + timedelta(days=random.randint(0, delta.days))).strftime("%Y-%m-%d")
@@ -104,7 +131,7 @@ def _gerar_clientes(n: int = 500, scenario: ScenarioType = "baseline") -> pd.Dat
     for _ in range(n):
         rows.append(
             {
-                "cd_cliente"      : str(uuid.uuid4())[:12].upper(),
+                "cd_cliente"      : _uuid4()[:12].upper(),
                 "nr_cpf_cnpj"     : _cpf(),
                 "nm_cliente"      : _nome(),
                 "dt_nascimento"   : _random_date(datetime(1950, 1, 1), datetime(2000, 12, 31)),
@@ -126,7 +153,7 @@ def _gerar_clientes(n: int = 500, scenario: ScenarioType = "baseline") -> pd.Dat
     if scenario == "non_breaking":
         # Nova coluna anulável — deve gerar WARNING mas avançar
         df["cd_gestor_relacionamento"] = _inject_nulls(
-            pd.Series([str(uuid.uuid4())[:8].upper() for _ in range(n)]), 0.60
+            pd.Series([_uuid4()[:8].upper() for _ in range(n)]), 0.60
         )
     elif scenario == "breaking":
         # Coluna obrigatória 'cd_agencia' foi removida da exportação SAS → BREAKING
@@ -220,7 +247,7 @@ def _gerar_transacoes(clientes_df: pd.DataFrame, n: int = 2000) -> pd.DataFrame:
         vl = round(random.uniform(1.50, 25000.00), 2)
         rows.append(
             {
-                "id_transacao"      : str(uuid.uuid4()),
+                "id_transacao"      : _uuid4(),
                 "cd_cliente"        : clientes_df["cd_cliente"].dropna().sample(1).iloc[0],
                 "dt_transacao"      : _random_date(datetime(2023, 1, 1), datetime(2024, 12, 31)),
                 "vl_transacao"      : vl,
@@ -309,7 +336,7 @@ def _gerar_contratos_credito(clientes_df: pd.DataFrame, n: int = 300) -> pd.Data
         utilizado = round(random.uniform(0, limite * 1.15), 2)   # até 15 % acima do limite (anomalia)
         rows.append(
             {
-                "id_contrato"    : str(uuid.uuid4())[:16].upper(),
+                "id_contrato"    : _uuid4()[:16].upper(),
                 "cd_cliente"     : clientes_df["cd_cliente"].dropna().sample(1).iloc[0],
                 "dt_contrato"    : _random_date(datetime(2018, 1, 1), datetime(2024, 6, 1)),
                 "vl_limite"      : limite,
@@ -538,6 +565,7 @@ def generate_all(
     storage,
     scenario: ScenarioType = "baseline",
     fmt: str = "csv",
+    dat_ref: Optional[str] = None,
 ) -> List[dict]:
     """
     Gera dados fictícios bancários e persiste via Storage na landing zone.
@@ -549,6 +577,9 @@ def generate_all(
         storage: Instância de StorageBase (LocalStorage ou MinIOStorage).
         scenario: Cenario de dados. Um de: 'baseline', 'non_breaking', 'breaking'.
         fmt: Formato de saída. Um de: 'csv', 'json', 'fixed'.
+        dat_ref: Data de referência da carga. Quando informada, semeia os
+            geradores de forma determinística: reexecutar a mesma dat_ref
+            reproduz o mesmo arquivo de entrada (mesmo SHA-256).
 
     Returns:
         Lista de dicts com metadados das tabelas produzidas:
@@ -563,6 +594,9 @@ def generate_all(
         )
 
     print(f"\n[GENERATE] Gerando dados ficticios - cenario: [{scenario.upper()}] - formato: [{fmt.upper()}]")
+    if dat_ref:
+        seed_all(scenario, fmt, dat_ref)
+        print(f"   [GENERATE] geracao deterministica para dat_ref={dat_ref}")
 
     clientes_df   = _gerar_clientes(500, scenario)
     transacoes_df = _gerar_transacoes(clientes_df)
@@ -588,15 +622,13 @@ def generate_all(
         contract = _preserve_validation(storage, contract_filename, contract)
         # Persiste via storage (agnostico de backend)
         storage.write_text("bronze", filename, file_content)
-        storage.write_text("contracts", contract_filename, 
+        storage.write_text("contracts", contract_filename,
                            yaml.dump(contract, allow_unicode=True, sort_keys=False))
 
         # Para fixed-width, grava sidecar com colspecs para leitura posterior
         if fmt == "fixed" and hasattr(writer, "layout_sidecar"):
             sidecar_name, sidecar_content = writer.layout_sidecar(base_name)
             storage.write_text("bronze", sidecar_name, sidecar_content)
-        storage.write_text("contracts", contract_filename,
-                           yaml.dump(contract, allow_unicode=True, sort_keys=False))
 
         print(f"   [OK] {table_name}: {len(df)} linhas -> bronze/{filename}")
         produced.append({
