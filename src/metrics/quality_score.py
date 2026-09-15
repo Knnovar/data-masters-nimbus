@@ -1,10 +1,10 @@
 """src/metrics/quality_s"""
 
 WEIGHTS = {
-    "conformity": 0.40,
-    "completeness": 0.25,
-    "uniqueness": 0.20,
-    "schema_stability": 0.15,
+    "conformity": 0.40, #falha de cast contra o Manifest
+    "completeness": 0.25, # Nulos em obrigatórias + tolerância em anuláveis
+    "uniqueness": 0.20, # Duplicatas na PK
+    "schema_stability": 0.15, # evolução: None / NON_BREAKING / BREAKING
 }
 
 MANDATORY_NULL_FACTOR = 2.0

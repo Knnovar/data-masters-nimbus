@@ -7,6 +7,14 @@ from datetime import datetime,timezone
 from typing import Optional
 import requests
 
+_LINEAGE_COLUMNS = {
+    "_ingest_file"  : {"description": "Arquivo de origem que produziu a linha."},
+    "_ingest_format": {"description": "Formato do arquivo de origem (csv|json|fixed|parquet)."},
+    "_ingest_time"  : {"description": "Data/hora UTC da promocao Bronze -> Silver"},
+    "_ingest_run_id": {"description": "run_id do pipeline Nimbus que produziu a linha."},
+    "_ingest_dat_ref": {"description": "Data de referencia da carga (particao logica; reprocessavel)."},
+}
+
 class DiagnoseResult:
     def __init__(self): self.levels = {}
     def add(self, level, ok, message): self.levels[level] = {"ok": ok, "message": message}
@@ -90,7 +98,29 @@ class DatabricksUploader:
         """Valor de tag: o UC aceita no maximo 256 caracteres."""
         return cls._esc(str(value).strip()[:256])
 
+    SQL_RETRY_ATTEMPTS = 3
+    SQL_RETRY_BACKOFF_S = 15
+    _SQL_TRANSIENT = ("safeint", "div by zero", "internal_error", "internal error", 
+                      "temporarily unavailable", "service unavailable")
+
+    @classmethod
+    def _is_transient_sql_error(cls, message):
+        low = str(message).lower()
+        return any(marker in low for marker in cls._SQL_TRANSIENT)
+
     def _sql(self, stmt, wait=True):
+        import time
+        for attempt in range(1, self.SQL_RETRY_ATTEMPTS + 1):
+            try:
+                return self._sql_once(stmt, wait=wait)
+            except RuntimeError as err:
+                last = attempt == self.SQL_RETRY_ATTEMPTS
+                if last or not self._is_transient_sql_error(err):
+                    raise
+                print("[DATABRICKS] Erro interno do engine, tentativa {}/{} em {}s: {}".format(attempt, self.SQL_RETRY_ATTEMPTS, self.SQL_RETRY_BACKOFF_S, str(err)[:200]))
+                time.sleep(self.SQL_RETRY_BACKOFF_S)
+    
+    def _sql_once(self, stmt, wait=True):
         payload = {"statement": stmt, "warehouse_id": self._warehouse_id,
                    "wait_timeout": "50s" if wait else "0s",
                    "catalog": self._catalog, "schema": self._schema}
@@ -219,7 +249,7 @@ class DatabricksUploader:
         except Exception as e:
             print(f"[DATABRICKS] Nao foi possivel ler metadata: {e}")
             return 0
-        col_info = {}
+        col_info = dict(_LINEAGE_COLUMNS)
         if contract:
             for col in contract.schema:
                 desc  = col.description or ""
@@ -263,6 +293,9 @@ class DatabricksUploader:
         if getattr(contract, 'version', None): tags["contract_version"] = contract.version
         steward = getattr(contract, "steward", None)
         if steward and steward.email: tags["steward"] = steward.email
+        # Evidencia de HITL: quem promoveu o manifesto e quando (so existe se VALIDATED)
+        if getattr(contract, "validated_by", None): tags["validated_by"] = contract.validated_by
+        if getattr(contract, "validated_at", None): tags["validated_at"] = contract.validated_at
         source = getattr(contract, "source", None)
         if source and source.system: tags["source_system"] = source.system
         return tags
@@ -335,6 +368,11 @@ def get_uploader():
         schema       = getattr(cfg, "DATABRICKS_SILVER_SCHEMA",      getattr(cfg, "DATABRICKS_SCHEMA", "silver")),
     )
 
+def databricks_configured():
+    import config as cfg
+    return bool(getattr(cfg, "DATABRICKS_HOST", "")
+                and getattr(cfg, "DATABRICKS_WAREHOUSE_ID", ""))
+
 def publish_table(silver_path, table_name, contract=None, run_id=None, dat_ref=None):
     """Publica uma tabela no Databricks e devolve o status - nunca levanta.
     
@@ -344,6 +382,9 @@ def publish_table(silver_path, table_name, contract=None, run_id=None, dat_ref=N
     import config as cfg
     if not getattr(cfg, "DATABRICKS_AUTO_UPLOAD", False):
         return {"table": table_name, "status": "DISABLED", "target": None, "error": None}
+    if not databricks_configured():
+        return {"table": table_name, "status": "SKIPPED", "target":None, 
+                "error": "sem DATABRICKS_HOST/WAREHOUSE_ID - publicacao ignorada"}
     try:
         full = upload_silver_table(silver_path, table_name=table_name, contract=contract, dat_ref=dat_ref, run_id=run_id)
 

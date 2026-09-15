@@ -1,17 +1,17 @@
 """
 Coleta e consolida métricas de cada execução da pipeline.
 
-Produz:
-  - metrics/run_<timestamp>.json  → histórico por run
-  - metrics/summary.json          → acumulado de todas as runs
-  - reports/pipeline_report.md    → relatório legível
+Produz, sempre pelo storage configurado (local ou MinIO/S3):
+  - metrics/<run_id>_<tabela>_<formato>.json → registro por tabela
+  - metrics/<run_id>_summary.json            → consolidado da run
+  - reports/pipeline_report.md               → relatório legível
 """
 
 import json
 from datetime import datetime
-from pathlib import Path
 from src.metrics import quality_score
 from src.validation.validator import ValidationResult
+from src.storage.storage import get_storage
 
 def _slm_metrics(slm_result: dict) -> dict:
     """Achata perf/output do enriquecimento para comparar modelos entre runs.
@@ -39,15 +39,38 @@ def _slm_metrics(slm_result: dict) -> dict:
         "slm_has_draft_tag"         : out.get("has_draft_tag"),
     }
     
+_STATUS_ICONS = {
+    "PASS"   : "[PASS]",
+    "WARNING": "[WARN]",
+    "DLQ"    : "[DLQ]",
+    "BLOCKED": "[BLOCK]",
+}
+
+def summary_status(metrics: dict) -> tuple[str, str]:
+    """Icone e texto da coluna status do resumo e do relatorio.
+
+    Validacao estrutural e gate sao decisoes distintas: uma tabela pode passar
+    na validacao e ainda assim ser barrada na publicacao. Quando o gate
+    bloqueia, o status exibido e BLOCKED, e nao o resultado da validacao, que
+    segue registrado em validation_status no proprio registro e no ledger.
+    """
+
+    status = metrics.get("validation_status", "?")
+    if metrics.get("gate_status") == "BLOCKED" and status not in ("DLQ", "ERROR"):
+        status = "BLOCKED"
+    return _STATUS_ICONS.get(status, "[?]"), status
+
 def collect(
     run_id          : str,
     val_result      : ValidationResult,
     profiler_payload: dict,
     slm_result      : dict,
-    metrics_dir     : Path,
     contract        = None,
     cast_report     : dict | None = None,
     fmt             : str = 'csv',
+    reject_report   : dict | None = None,
+    gate            : dict | None = None,
+    dat_ref         : str | None = None,
 ) -> dict:
     """Salva métricas individuais de uma tabela e retorna o dict."""
 
@@ -60,10 +83,18 @@ def collect(
 
     record = {
         "run_id"             : run_id,
+        "dat_ref"            : dat_ref,
         "timestamp"          : datetime.now().isoformat(),
         "table"              : val_result.table,
         "scenario"           : val_result.scenario,
         "format"             : fmt,
+        "gate_status"        : (gate or {}).get("status", "PASS"),
+        "gate_reason"        : (gate or {}).get("reason"),
+        "gate_detail"        : (gate or {}).get("detail"),
+        "rows_rejected"      : (reject_report or {}).get("rows_rejected", 0),
+        "reject_pct"         : (reject_report or {}).get("reject_pct"),
+        "reject_limit_pct"   : (reject_report or {}).get("limit_pct"),
+        "rejects_by_column"  : (reject_report or {}).get("by_column", {}),
         "validation_status"  : val_result.status,
         "evolution_type"     : val_result.evolution_type,
         "rows_total"         : val_result.rows_total,
@@ -83,14 +114,24 @@ def collect(
     }
 
     # Persiste JSON por run
-    path = metrics_dir / f"{run_id}_{val_result.table}_{fmt}.json"
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(record, f, ensure_ascii=False, indent=2)
-
+    get_storage().write_text(
+        "metrics",
+        f"{run_id}_{val_result.table}_{fmt}.json",
+        json.dumps(record, ensure_ascii=False, indent=2),
+    )
     return record
 
+def save_summary(run_id: str, all_metrics: list[dict]) -> str:
+    """Grava o consolidado da run na camada de metricas e devolve o nome do objeto."""
+    filename = f"{run_id}_summary.json"
+    get_storage().write_text(
+        "metrics", filename, json.dumps(all_metrics, ensure_ascii=False, indent=2)
+    )
+    return filename
+    
 
-def generate_report(all_metrics: list[dict], reports_dir: Path) -> Path:
+
+def generate_report(all_metrics: list[dict]) -> str:
     """Gera relatório Markdown consolidado da execução."""
 
     now   = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -104,10 +145,10 @@ def generate_report(all_metrics: list[dict], reports_dir: Path) -> Path:
     ]
 
     for m in all_metrics:
-        status_icon = {"PASS": "[PASS]", "WARNING": "[WARN]", "DLQ": "[DLQ]"}.get(m["validation_status"], "[?]")
+        status_icon, status = summary_status(m)
         slm_icon    = {"SUCCESS": "[OK]", "SKIPPED": "[SKIP]", "ERROR": "[ERR]"}.get(m["slm_status"], "[-]")
         lines.append(
-            f"| `{m['table']}` | {m['scenario']} | {status_icon} {m['validation_status']} "
+            f"| `{m['table']}` | {m['scenario']} | {status_icon} {status} "
             f"| {m['rows_total']:,} | {m['duplicate_count']} | {m['avg_null_pct']}% "
             f"| {m['profiling_ms']} | {slm_icon} {m['slm_inference_ms']} | **{m['quality_score']}** |"
         )
@@ -144,6 +185,33 @@ def generate_report(all_metrics: list[dict], reports_dir: Path) -> Path:
         low = [(n, d) for n, d in dims.items() if d.get("value") is not None and d["value"] < 100]
         for name, d in low:
             lines.append(f"- ``{m['table']}` / **{name}** = {d['value']}: {d.get('detail', '')}")
+
+    gated = [m for m in all_metrics
+             if m.get("rows_rejected") or m.get("gate_status") == "BLOCKED"]
+    if gated:
+        lines += [
+            "\n---\n",
+            "## Gate de Tipagem (Manifest soberano)\n",
+            "| Tabela | Cenario | Publicacao | Linhas rejeitadas | % | Tolerancia | Colunas |",
+            "|--------|---------|------------|-------------------|---|------------|---------|",
+        ]
+        for m in gated:
+            by_col = ", ".join(f"`{c}`: {n}" for c, n in (m.get("rejects_by_column") or {}).items()) or "-"
+            pct    = m.get("reject_pct")
+            limit  = m.get("reject_limit_pct")
+            lines.append(
+                f"| `{m['table']}` | {m['scenario']} | {m.get('gate_status', 'PASS')} "
+                f"| {m.get('rows_rejected', 0)} | {'n/d' if pct is None else f'{pct:.2f}%'} "
+                f"| {'n/d' if limit is None else f'{limit:.2f}%'} | {by_col} |"
+            )
+        lines += [
+            "",
+            "> Linha rejeitada = valor preenchido fora do tipo declarado no Manifest. "
+            "A linha inteira vai para `quarantine/reject_<tabela>.csv` com `_reject_columns`, "
+            "`_reject_values` e `_reject_reason`; acima da tolerancia do contrato "
+            "(`tolerance.max_reject_pct`) a publicacao e bloqueada.", 
+
+        ]
     lines += [
         "\n---\n",
         "## Desempenho da SLM\n",
@@ -195,9 +263,8 @@ def generate_report(all_metrics: list[dict], reports_dir: Path) -> Path:
         "> Requer validação humana pelo Data Steward antes de uso em produção.",
     ]
 
-    report_path = reports_dir / "pipeline_report.md"
-    with open(report_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
+    report_name = "pipeline_report.md"
+    get_storage().write_text("reports", report_name, "\n".join(lines))
 
-    print(f"\n   [REPORT] Relatorio salvo em: {report_path}")
-    return report_path
+    print(f"\n   [REPORT] Relatorio salvo em: reports/{report_name}")
+    return report_name

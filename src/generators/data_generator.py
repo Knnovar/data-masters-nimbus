@@ -10,6 +10,7 @@ Cenários disponíveis:
   - breaking    : altera tipo de coluna-chave (deve ir para quarentena)
 """
 
+import hashlib
 import random
 import uuid
 from datetime import datetime, timedelta
@@ -29,6 +30,8 @@ from src.generators.writers import (
     SUPPORTED_FORMATS,
 )
 
+# Semente de import: mantem o comportamento antigo quando a geracao nao recebe
+# dat_ref. Com dat_ref, `seed_all()` re-semeia de forma deterministica.
 random.seed(42)
 np.random.seed(42)
 
@@ -69,12 +72,46 @@ def _cnpj() -> str:
             f"{random.randint(1000,9999):04d}"
             f"{random.randint(0,99):02d}")
 
-ScenarioType = Literal["baseline", "non_breaking", "breaking"]
+ScenarioType = Literal["baseline", "non_breaking", "breaking", "type_drift"]
+
+# Cenarios que nao alteram o schema declarado: reusam o contrato do baseline
+_SAME_CONTRACT_AS_BASELINE = ("baseline", "type_drift")
+# Fracao de valores de vl_renda_mensal exportados fora do tipo 'float' do
+# Manifest no cenario type_drift (formato brasileiro e marcadores textuais
+# tipicos de extracao SAS/legado).
+
+TYPE_DRIFT_FRAC = 0.08
+_TYPE_DRIFT_VALUES = ["2.345,67", "12.900,00", "N/D", "NAO INFORMADO", "1.234,56"]
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
+def seed_all(*parts) -> int:
+    """Semeia todos os geradores a partir de uma chave estavel.
+
+    Sem isto, `random.seed(42)` no import nao basta: o Faker tem RNG proprio e
+    `uuid.uuid4()` le entropia do sistema, entao duas execucoes da mesma dat_ref
+    produziam arquivos diferentes e todo reprocessamento aparecia como entrada
+    divergente no ledger. Com a semente derivada de (cenario, formato, dat_ref),
+    a mesma janela de dados gera o mesmo arquivo byte a byte — que e o que torna
+    a idempotencia demonstravel, e nao apenas declarada.
+    """
+    key  = "|".join(str(p) for p in parts)
+    seed = int(hashlib.sha256(key.encode("utf-8")).hexdigest()[:16], 16)
+    random.seed(seed)
+    np.random.seed(seed % (2 ** 32))
+    if fake is not None:
+        Faker.seed(seed)
+    return seed
+
+
+def _uuid4() -> str:
+    """UUID v4 derivado do `random` semeado, e nao da entropia do sistema."""
+    return str(uuid.UUID(int=random.getrandbits(128), version=4))
+
+
 def _random_date(start: datetime, end: datetime) -> str:
     delta = end - start
     return (start + timedelta(days=random.randint(0, delta.days))).strftime("%Y-%m-%d")
@@ -94,7 +131,7 @@ def _gerar_clientes(n: int = 500, scenario: ScenarioType = "baseline") -> pd.Dat
     for _ in range(n):
         rows.append(
             {
-                "cd_cliente"      : str(uuid.uuid4())[:12].upper(),
+                "cd_cliente"      : _uuid4()[:12].upper(),
                 "nr_cpf_cnpj"     : _cpf(),
                 "nm_cliente"      : _nome(),
                 "dt_nascimento"   : _random_date(datetime(1950, 1, 1), datetime(2000, 12, 31)),
@@ -116,11 +153,19 @@ def _gerar_clientes(n: int = 500, scenario: ScenarioType = "baseline") -> pd.Dat
     if scenario == "non_breaking":
         # Nova coluna anulável — deve gerar WARNING mas avançar
         df["cd_gestor_relacionamento"] = _inject_nulls(
-            pd.Series([str(uuid.uuid4())[:8].upper() for _ in range(n)]), 0.60
+            pd.Series([_uuid4()[:8].upper() for _ in range(n)]), 0.60
         )
     elif scenario == "breaking":
         # Coluna obrigatória 'cd_agencia' foi removida da exportação SAS → BREAKING
         df = df.drop(columns=["cd_agencia"])
+    elif scenario == "type_drift":
+        # Schema intacto, mas valores fora do tipo declarado: o dado passa a 
+        # validacao estrutural e so o caster estrito o recusa (gate de tipagem).
+        drift_idx = df.sample(frac=TYPE_DRIFT_FRAC).index
+        df["vl_renda_mensal"] = df["vl_renda_mensal"].astype(object)
+        df.loc[drift_idx, "vl_renda_mensal"] = [
+            random.choice(_TYPE_DRIFT_VALUES) for _ in drift_idx
+        ]
 
     return df
 
@@ -154,7 +199,7 @@ def _contrato_clientes(scenario: ScenarioType) -> dict:
             "A segmentacao (cd_segmento) determina o produto ofertado e o gestor responsavel. "
             "Atualizada diariamente pelo batch noturno do CORE_BANCARIO_TOTVS."
         ),
-        "tolerance"   : {"max_null_pct": 25, "allow_duplicates": False},
+        "tolerance"   : {"max_null_pct": 25, "max_reject_pct": 1, "allow_duplicates": False},
         "dependencies": ["tb_agencias", "tb_segmentos"],
         "sample_queries": [
             {"description": "Distribuicao por segmento",
@@ -202,7 +247,7 @@ def _gerar_transacoes(clientes_df: pd.DataFrame, n: int = 2000) -> pd.DataFrame:
         vl = round(random.uniform(1.50, 25000.00), 2)
         rows.append(
             {
-                "id_transacao"      : str(uuid.uuid4()),
+                "id_transacao"      : _uuid4(),
                 "cd_cliente"        : clientes_df["cd_cliente"].dropna().sample(1).iloc[0],
                 "dt_transacao"      : _random_date(datetime(2023, 1, 1), datetime(2024, 12, 31)),
                 "vl_transacao"      : vl,
@@ -250,7 +295,7 @@ def _contrato_transacoes() -> dict:
             "fl_suspeita sinaliza transacoes em analise pelo motor antifraude. "
             "cd_estabelecimento pode ser nulo para compras online nao identificadas."
         ),
-        "tolerance"      : {"max_null_pct": 10, "allow_duplicates": False},
+        "tolerance"      : {"max_null_pct": 10, "max_reject_pct": 2, "allow_duplicates": False},
         "dependencies"   : ["tb_clientes"],
         "sample_queries" : [
             {"description": "Volume transacionado por canal no mes",
@@ -291,7 +336,7 @@ def _gerar_contratos_credito(clientes_df: pd.DataFrame, n: int = 300) -> pd.Data
         utilizado = round(random.uniform(0, limite * 1.15), 2)   # até 15 % acima do limite (anomalia)
         rows.append(
             {
-                "id_contrato"    : str(uuid.uuid4())[:16].upper(),
+                "id_contrato"    : _uuid4()[:16].upper(),
                 "cd_cliente"     : clientes_df["cd_cliente"].dropna().sample(1).iloc[0],
                 "dt_contrato"    : _random_date(datetime(2018, 1, 1), datetime(2024, 6, 1)),
                 "vl_limite"      : limite,
@@ -336,7 +381,7 @@ def _contrato_contratos_credito() -> dict:
             "para produtos com tolerancia de limite (cheque especial). "
             "cd_status EM_ATRASO dispara cobranca automatica apos D+1."
         ),
-        "tolerance"      : {"max_null_pct": 5, "allow_duplicates": False},
+        "tolerance"      : {"max_null_pct": 5, "max_reject_pct": 1, "allow_duplicates": False},
         "dependencies"   : ["tb_clientes"],
         "sample_queries" : [
             {"description": "Contratos em atraso por produto",
@@ -486,11 +531,41 @@ def _build_writer(fmt: str, table_name: str, df: pd.DataFrame) -> BaseWriter:
         f"Formato nao suportado: '{fmt}'. Opcoes validas: {', '.join(SUPPORTED_FORMATS)}"
     )
 
-
+def _preserve_validation(storage, contract_filename: str, contract: dict) -> dict:
+    """Nao rebaixa para DRAFT um contrato ja promovido pelo Data Steward.
+    
+    O gerador reescreve o YAML a cada run. Sem isso, a promocao feita por
+    `manifest_validator --steward` seria perdida na run seguinte e o contrato
+    voltaria para DRAFT. A promocao so e preservada quando a versao do contrato
+    nao mudou: versao nova significa schema novo, que precisa de nova validacao 
+    humana (mesma semantica do manifest_writer, que nunca sobrescreve VALIDATED).
+    """
+    if not storage.exists("contracts", contract_filename):
+        return contract
+    try:
+        with open(storage.read_path("contracts", contract_filename), encoding="utf-8") as f:
+            existing = yaml.safe_load(f) or {}
+    except Exception as e:
+        print(f"    [CONTRACT][WARN] {contract_filename} nao relido: {e}")
+        return contract
+    if existing.get("manifest_status") != "VALIDATED":
+        return contract
+    if existing.get("version") != contract.get("version"):
+        print(f" [CONTRACT] {contract_filename}: versao mudou "
+              f"({existing.get('version')} -> {contract.get('version')}) -"
+              f"volta para DRAFT, requer nova validacao do steward")
+        return contract
+    print(f"    [CONTRACT] {contract_filename}: VALIDATED preservado "
+          f"(por {existing.get('validated_by')})")
+    return {**contract,
+        "manifest_status": "VALIDATED",
+        "validated_by": existing.get("validated_by"),
+        "validated_at": existing.get("validated_at")}
 def generate_all(
     storage,
     scenario: ScenarioType = "baseline",
     fmt: str = "csv",
+    dat_ref: Optional[str] = None,
 ) -> List[dict]:
     """
     Gera dados fictícios bancários e persiste via Storage na landing zone.
@@ -502,6 +577,9 @@ def generate_all(
         storage: Instância de StorageBase (LocalStorage ou MinIOStorage).
         scenario: Cenario de dados. Um de: 'baseline', 'non_breaking', 'breaking'.
         fmt: Formato de saída. Um de: 'csv', 'json', 'fixed'.
+        dat_ref: Data de referência da carga. Quando informada, semeia os
+            geradores de forma determinística: reexecutar a mesma dat_ref
+            reproduz o mesmo arquivo de entrada (mesmo SHA-256).
 
     Returns:
         Lista de dicts com metadados das tabelas produzidas:
@@ -516,6 +594,9 @@ def generate_all(
         )
 
     print(f"\n[GENERATE] Gerando dados ficticios - cenario: [{scenario.upper()}] - formato: [{fmt.upper()}]")
+    if dat_ref:
+        seed_all(scenario, fmt, dat_ref)
+        print(f"   [GENERATE] geracao deterministica para dat_ref={dat_ref}")
 
     clientes_df   = _gerar_clientes(500, scenario)
     transacoes_df = _gerar_transacoes(clientes_df)
@@ -530,7 +611,7 @@ def generate_all(
     produced: List[dict] = []
 
     for table_name, df, contract in datasets:
-        suffix            = f"_{scenario}" if scenario != "baseline" else ""
+        suffix            =  "" if scenario in _SAME_CONTRACT_AS_BASELINE else f"_{scenario}"
         contract_filename = f"{table_name}{suffix}.yaml"
 
         # Seleciona writer — delega serialização para o Strategy correto
@@ -538,15 +619,16 @@ def generate_all(
         base_name             = f"{table_name}{suffix}"
         filename, file_content = writer.serialize(df, base_name)
 
+        contract = _preserve_validation(storage, contract_filename, contract)
         # Persiste via storage (agnostico de backend)
         storage.write_text("bronze", filename, file_content)
+        storage.write_text("contracts", contract_filename,
+                           yaml.dump(contract, allow_unicode=True, sort_keys=False))
 
         # Para fixed-width, grava sidecar com colspecs para leitura posterior
         if fmt == "fixed" and hasattr(writer, "layout_sidecar"):
             sidecar_name, sidecar_content = writer.layout_sidecar(base_name)
             storage.write_text("bronze", sidecar_name, sidecar_content)
-        storage.write_text("contracts", contract_filename,
-                           yaml.dump(contract, allow_unicode=True, sort_keys=False))
 
         print(f"   [OK] {table_name}: {len(df)} linhas -> bronze/{filename}")
         produced.append({

@@ -410,6 +410,8 @@ class TestPublishTable(unittest.TestCase):
 
     def test_returns_error_on_exception(self):
         with patch("config.DATABRICKS_AUTO_UPLOAD", True), \
+             patch("config.DATABRICKS_HOST", HOST), \
+             patch("config.DATABRICKS_WAREHOUSE_ID", WID), \
              patch("src.connectors.databricks_uploader.upload_silver_table",
                    side_effect=RuntimeError("boom")):
             result = publish_table(self.pq, "tb_test")
@@ -419,6 +421,8 @@ class TestPublishTable(unittest.TestCase):
     def test_never_raises_exception(self):
         """publish_table nunca deve propagar excecao."""
         with patch("config.DATABRICKS_AUTO_UPLOAD", True), \
+             patch("config.DATABRICKS_HOST", HOST), \
+             patch("config.DATABRICKS_WAREHOUSE_ID", WID), \
              patch("src.connectors.databricks_uploader.upload_silver_table",
                    side_effect=Exception("qualquer erro")):
             try:

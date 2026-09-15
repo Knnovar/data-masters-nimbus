@@ -4,7 +4,7 @@
 # Windows: prefira `python tasks.py <comando>` — funciona nativamente,
 # sem precisar instalar make. Veja python tasks.py help
 
-.PHONY: run baseline non-breaking breaking metrics issues slm clean clean-data setup prefect-setup help
+.PHONY: run baseline non-breaking breaking metrics issues slm clean clean-data setup prefect-setup help up down demo reset-minio minio-creds check-manifest validate-manifest emit-grants
 
 # ── Pipeline ──────────────────────────────────────────────────────────────────
 
@@ -19,6 +19,24 @@ non-breaking:
 
 breaking:
 	python run_pipeline.py --scenario breaking
+
+# ── Object storage local (MinIO) ──────────────────────────────────────────────
+# `up` e idempotente: gera o .env na primeira vez e reaproveita a credencial depois.
+
+up:
+	python scripts/nimbus_up.py
+
+reset-minio:
+	python scripts/nimbus_up.py --reset
+
+minio-creds:
+	python tasks.py minio-creds
+
+demo:
+	python tasks.py demo
+
+down:
+	docker compose down
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 
@@ -47,6 +65,12 @@ validate-manifest:
 	@echo "Uso: make validate-manifest FILE=data/contracts/tb_clientes.yaml STEWARD='Nome'"
 	python -m src.manifest.manifest_validator --file $(FILE) --steward "$(STEWARD)"
 
+# ── Governanca ────────────────────────────────────────────────────────────────
+
+emit-grants:
+	@echo "Uso: make emit-grants FILE=data/contracts/tb_clientes.yaml"
+	python -m src.governance.grant_emitter --file $(FILE)
+
 # ── Prefect ───────────────────────────────────────────────────────────────────
 
 prefect-setup:
@@ -65,9 +89,13 @@ clean:
 	find . -name "*.pyc" -delete 2>/dev/null || true
 
 clean-data:
-	@echo "Removendo dados gerados (landing, processed, quarantine, gold)..."
-	rm -f data/landing/*.csv data/processed/*.csv data/quarantine/*.csv
-	rm -f data/contracts/*.yaml data/metrics/*.json data/reports/*.md
+	@echo "Removendo dados gerados (landing, processed, quarantine, gold, metrics, reports)..."
+	rm -f data/landing/*.csv data/landing/*.json data/landing/*.txt
+	rm -f data/processed/*.csv data/processed/*.parquet
+	rm -f data/quarantine/*.csv data/quarantine/*.parquet
+	rm -f data/gold/*.csv data/gold/*.parquet
+	rm -f data/metrics/*.json data/reports/*.md
+	@echo "Manifests em data/contracts/ NAO sao removidos (use rm manualmente)."
 
 help:
 	@echo ""
@@ -79,6 +107,13 @@ help:
 	@echo "    make non-breaking  Executa cenario non_breaking"
 	@echo "    make breaking      Executa cenario breaking"
 	@echo ""
+	@echo "  Object storage local:"
+	@echo "    make up            Sobe o MinIO, gera credencial no .env, cria buckets"
+	@echo "    make demo          up + pipeline + score no MinIO (sem exportar variavel)"
+	@echo "    make minio-creds   Mostra console/usuario/senha do MinIO local"
+	@echo "    make reset-minio   Recria o volume (use se a credencial divergir)"
+	@echo "    make down          Derruba os containers"
+	@echo ""
 	@echo "  Dashboard:"
 	@echo "    make metrics       Resumo geral do ultimo run"
 	@echo "    make metrics-all   Historico completo de runs"
@@ -89,6 +124,9 @@ help:
 	@echo "  Manifesto:"
 	@echo "    make check-manifest FILE=data/contracts/tb_clientes.yaml"
 	@echo "    make validate-manifest FILE=... STEWARD='Nome'"
+	@echo ""
+	@echo "  Governanca:"
+	@echo "    make emit-grants FILE=data/contracts/tb_clientes.yaml  (gera DDL, nao executa)"
 	@echo ""
 	@echo "  Prefect:"
 	@echo "    make prefect-setup  Cria work pool e registra deployments"

@@ -28,7 +28,6 @@ Uso:
 """
 
 import argparse
-import json
 import os
 import sys
 import uuid
@@ -38,14 +37,15 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config import METRICS_DIR, REPORTS_DIR
 from src.storage.storage import get_storage
 from src.generators.data_generator import generate_all
 from src.validation.validator import validate
 from src.profiler.duckdb_profiler import profile
 from src.slm.ollama_enrichment import enrich
-from src.metrics.metrics_collector import collect, generate_report
+from src.metrics.metrics_collector import collect, generate_report, save_summary
 from src.ingestion.normalizer import normalize
+from src.ingestion.idempotency import (announce, file_sha256, record_load,
+                                       resolve_dat_ref, short_sha)
 
 # Prefect e opcional — sem ele os decoradores viram no-ops transparentes
 try:
@@ -61,8 +61,12 @@ except ImportError:
         fn = a[0] if a and callable(a[0]) else None
         def decorator(f): return f
         return fn if fn else decorator
-
-
+class GateBlocked(Exception):
+    def __init__(self, result):
+        self.result = result
+        super().__init__(
+            "publicacao bloqueada por gate/quarentena (exit_code=2, run_id = {})".format(result.get("run_id"))
+        )
 # ─────────────────────────────────────────────────────────────────────────────
 # Logging padronizado — formato parseavel pelo Control-M
 # ─────────────────────────────────────────────────────────────────────────────
@@ -74,8 +78,16 @@ def _log(job_id, step, status, msg):
 
 def _exit_code(status):
     """0=PASS/SKIPPED, 1=WARNING, 2=DLQ/ERROR"""
-    return {"PASS": 0, "WARNING": 1, "DLQ": 2, "ERROR": 2, "SKIPPED": 0}.get(status, 1)
+    return {"PASS": 0, "WARNING": 0, "DLQ": 2, "ERROR": 2, "SKIPPED": 0}.get(status, 2)
 
+def _metric_exit_code(m):
+    """Pior codigo entre validacao estrutural e gate de tipagem.
+    
+    Bloqueio do gate vale 2: a tabela nao pode ser publicada, mesmo com a 
+    validacao em PASS (e exatamente o caso do cenario type_drift).
+    """
+    ec = _exit_code(m["validation_status"])
+    return max(ec, 2) if m.get("gate_status") == "BLOCKED" else ec
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Tasks
@@ -150,14 +162,14 @@ def task_extract_manifest(filename: str, table_name: str, fmt: str = "csv") -> d
 
 
 @task(name="JOB-DM-001-GENERATE", retries=1, retry_delay_seconds=10)
-def task_generate_data(scenario, run_id, fmt="csv"):
+def task_generate_data(scenario, run_id, fmt="csv", dat_ref=None):
     """
     Control-M: JOB-DM-001-GENERATE
     Depende de: nenhum (inicio do DAG)
     Bloqueia: JOB-DM-002-VALIDATE
 
     Args:
-        scenario: Cenario de dados ('baseline', 'non_breaking', 'breaking').
+        scenario: Cenario de dados ('baseline', 'non_breaking', 'breaking', 'type_drift').
         run_id: Identificador da run para rastreio.
         fmt: Formato de saida ('csv', 'json', 'fixed').
     """
@@ -169,7 +181,7 @@ def task_generate_data(scenario, run_id, fmt="csv"):
                 "Formato invalido: '{}'. Opcoes validas: {}".format(fmt, ', '.join(SUPPORTED_FORMATS))
             )
         storage  = get_storage()
-        produced = generate_all(storage, scenario=scenario, fmt=fmt)
+        produced = generate_all(storage, scenario=scenario, fmt=fmt, dat_ref=dat_ref)
         _log("JOB-DM-001", "GENERATE", "ENDED_OK",
              "tables={} backend={} format={}".format(len(produced), type(storage).__name__, fmt))
         return [
@@ -179,6 +191,8 @@ def task_generate_data(scenario, run_id, fmt="csv"):
                 "contract_filename": p["contract_filename"],
                 "scenario"         : scenario,
                 "format"           : fmt,
+                "run_id"           : run_id,
+                "dat_ref"          : dat_ref,
             }
             for p in produced
         ]
@@ -198,6 +212,15 @@ def task_validate(item, run_id):
          "file=bronze/{}".format(item["filename"]))
     try:
         storage = get_storage()
+        input_sha = file_sha256(storage.read_path("bronze", item["filename"]))
+        if announce(storage, table, item.get("dat_ref"), item.get("format") or "csv",
+                    input_sha=input_sha):
+            _log("JOB-DM-002", "VALIDATE/{}".format(table), "WARN",
+                 "reprocessamento de dat_ref={}".format(item.get("dat_ref")))
+        from src.connectors.bronze_uploader import publish_bronze
+        publications = [publish_bronze(storage.read_path("bronze", item["filename"]),
+                                       table_name=Path(item["filename"]).stem,
+                                       run_id=run_id, dat_ref=item.get("dat_ref"))]
         result  = validate(
             storage,
             item["filename"],
@@ -213,6 +236,7 @@ def task_validate(item, run_id):
                  result.evolution_type))
         return {
             **item,
+            "input_sha256"     : input_sha,
             "validation_status": result.status,
             "evolution_type"   : result.evolution_type,
             "rows_total"       : result.rows_total,
@@ -222,6 +246,7 @@ def task_validate(item, run_id):
             "issues"           : result.issues,
             "warnings"         : result.warnings,
             "exit_code"        : ec,
+            "publications"     : publications,
         }
     except Exception as e:
         _log("JOB-DM-002", "VALIDATE/{}".format(table), "ENDED_NOTOK", str(e))
@@ -238,8 +263,28 @@ def task_profile(validated):
     table = validated["table"]
     if validated["validation_status"] == "DLQ":
         _log("JOB-DM-003", "PROFILE/{}".format(table), "SKIPPED", "upstream DLQ")
-        return {**validated, "profiler_payload": 
-            payload, "cast_report": dict(getattr(storage, "last_cast_report", {}) or {})}
+        from run_pipeline import publish_quarantine_files
+        dlq_pubs = list(validated.get("publications") or [])
+        dlq_pubs.extend(publish_quarantine_files(
+            get_storage(), validated["filename"], validated.get("run_id") or "", dlq=True,
+            dat_ref=validated.get("dat_ref")
+        ))
+
+        return {
+            **validated,
+            "publications"     : dlq_pubs,
+            "profiler_payload" : {"table": table, "rows": 0, "profiling_ms": 0, "columns": {}},
+            "cast_report"      : {},        
+            "reject_report"    : {},
+            "gate"             : {
+                "status"     : "BLOCKED",
+                "reason"     : "VALIDATION_DLQ",
+                "detail"     : "quarentena na validacao ({})".format(
+                    validated.get("evolution_type") or "regra de contrato"),
+                "reject_pct" : None,
+                "limit_pct"  : None,
+                },
+            }
 
     _log("JOB-DM-003", "PROFILE/{}".format(table), "STARTED",
          "reading bronze/{}".format(validated["filename"]))
@@ -260,12 +305,46 @@ def task_profile(validated):
             except Exception as ce:
                 _log("JOB-DM-003", "PROFILE/{}".format(table), "WARN",
                      "contrato nao carregado: {}".format(ce))
+        from run_pipeline import silver_guard
+        collision = silver_guard(validated.get("run_id") or "").check(
+            Path(validated["filename"]).stem, validated["filename"]
+        )
+        if collision:
+            _log("JOB-DM-003", "PROFILE/{}".format(table), "WARN", collision)
         parquet_filename = storage.promote_to_parquet(
-            validated["filename"], "bronze", "silver", contract=contract)
-        _log("JOB-DM-003", "PROFILE/{}".format(table), "ENDED_OK",
-             "rows={} ms={} promoted=bronze->silver".format(
-                 payload["rows"], payload["profiling_ms"]))
-        return {**validated, "profiler_payload": payload}
+            validated["filename"], "bronze", "silver", contract=contract,
+            run_id=validated.get("run_id"), dat_ref=validated.get("dat_ref"))
+        cast_report = dict(getattr(storage, "last_cast_report", {}) or {})
+        reject_report = dict(getattr(storage, "last_reject_report", {}) or {})
+
+        from run_pipeline import evaluate_gate, publish_quarantine_files
+        gate = evaluate_gate(table, reject_report, contract=contract)
+
+        pubs = list(validated.get("publications") or [])
+        if gate["status"] == "BLOCKED":
+            pubs.append({"table": table, "status": "BLOCKED", "layer": "silver",
+                         "error": gate["detail"], "rows": 0})
+        else:
+            from src.connectors.databricks_uploader import publish_table
+            pubs.append(publish_table(storage.read_path("silver", parquet_filename),
+                                      table_name=Path(validated["filename"]).stem,
+                                      contract=contract, run_id=validated.get("run_id"),
+                                      dat_ref=validated.get("dat_ref")))
+        pubs.extend(publish_quarantine_files(
+            storage, validated["filename"], validated.get("run_id") or "",
+            reject_report=reject_report, dlq=False, dat_ref=validated.get("dat_ref")
+        ))
+
+        _log("JOB-DM-003", "PROFILE/{}".format(table), 
+             "ENDED_NOTOK" if gate["status"] == "BLOCKED" else "ENDED_OK",
+             "rows={} ms={} promoted=bronze->silver gate={}".format(
+                 payload["rows"], payload["profiling_ms"], gate["status"]))
+        return {**validated, 
+                "profiler_payload": payload,
+                "cast_report"     : cast_report,
+                "reject_report"   : reject_report,
+                "gate"            : gate,
+                "publications"    :pubs}
     except Exception as e:
         _log("JOB-DM-003", "PROFILE/{}".format(table), "ENDED_NOTOK", str(e))
         raise
@@ -336,12 +415,23 @@ def task_collect_metrics(enriched, run_id):
         val_result,
         enriched.get("profiler_payload", {}),
         enriched.get("slm_result", {}),
-        METRICS_DIR,
-        contract        = contract,
-        cast_report     =enriched.get("cast_report") or {},    
+        contract        = _load_contract(enriched.get("contract_filename")),
+        cast_report     =enriched.get("cast_report") or {},
+        reject_report   =enriched.get("reject_report") or {},    
+        gate            =enriched.get("gate"),  
+        fmt             =enriched.get("format") or "csv",
+        dat_ref         =enriched.get("dat_ref"),
     )
+    record_load(get_storage(), table, enriched.get("dat_ref"),
+                enriched.get("format") or "csv", run_id,
+                "BLOCKED" if (enriched.get("gate") or {}).get("status") == "BLOCKED"
+                else enriched["validation_status"],
+                rows=enriched.get("rows_valid", 0),
+                input_sha=enriched.get("input_sha256"),
+                input_file=enriched.get("filename"))
     _log("JOB-DM-005", "METRICS/{}".format(table), "ENDED_OK",
-         "score={}".format(metrics["quality_score"]))
+         "score={} input_sha={}".format(metrics["quality_score"],
+                                        short_sha(enriched.get("input_sha256"))))
     return metrics
 
 
@@ -353,14 +443,11 @@ def task_report(all_metrics, run_id):
     Roda mesmo se alguns jobs anteriores retornaram WARNING.
     """
     _log("JOB-DM-006", "REPORT", "STARTED", "tables={}".format(len(all_metrics)))
-    report_path = generate_report(all_metrics, REPORTS_DIR)
+    report_name = generate_report(all_metrics)
+    save_summary(run_id, all_metrics)
 
-    summary_path = METRICS_DIR / "{}_summary.json".format(run_id)
-    with open(summary_path, "w", encoding="utf-8") as f:
-        json.dump(all_metrics, f, ensure_ascii=False, indent=2)
-
-    _log("JOB-DM-006", "REPORT", "ENDED_OK", "report={}".format(report_path.name))
-    return str(report_path)
+    _log("JOB-DM-006", "REPORT", "ENDED_OK", "report={}".format(report_name))
+    return report_name
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -372,10 +459,14 @@ def task_report(all_metrics, run_id):
     description="Pipeline lakehouse bancaria com contratos, profiler e SLM.",
     version="1.0.0",
 )
-def pipeline_flow(scenario="baseline", run_id=None, fmt="csv"):
+def pipeline_flow(scenario="baseline", run_id=None, fmt="csv", dat_ref=None):
     """
-    DAG completo. Cada tabela passa pelos jobs 002-005 em sequencia.
-    Com Prefect server ativo, as tres tabelas rodam em paralelo automaticamente.
+    DAG completo. Cada tabela passa pelos jobs 002-005 em sequencia, e as tabelas
+    tambem sao percorridas em sequencia (um laco).
+
+    Exit code devolvido em "exit_code": 0 = publicado, 2 = bloqueado por
+    gate/quarentena (levanta GateBlocked para marcar a run como falha no Prefect),
+    1 = erro inesperaco (excecao nao tratada).
 
     DAG de dependencias:
         [001-GENERATE]
@@ -400,10 +491,14 @@ def pipeline_flow(scenario="baseline", run_id=None, fmt="csv"):
             str(uuid.uuid4())[:6]
         )
 
-    _log("PIPELINE", "FLOW", "STARTED", "run_id={} scenario={} format={}".format(run_id, scenario, fmt))
+    dat_ref = resolve_dat_ref(run_id, dat_ref)
 
-    produced    = task_generate_data(scenario, run_id, fmt)
+    _log("PIPELINE", "FLOW", "STARTED", "run_id={} scenario={} format={} dat_ref={}".format(
+        run_id, scenario, fmt, dat_ref))
+
+    produced    = task_generate_data(scenario, run_id, fmt, dat_ref)
     all_metrics = []
+    publications = []
 
     for item in produced:
         validated = task_validate(item, run_id)
@@ -411,36 +506,74 @@ def pipeline_flow(scenario="baseline", run_id=None, fmt="csv"):
         enriched  = task_enrich_slm(profiled)
         metrics   = task_collect_metrics(enriched, run_id)
         all_metrics.append(metrics)
+        publications.extend(enriched.get("publications"))
 
     report_path  = task_report(all_metrics, run_id)
-    worst_exit   = max(_exit_code(m["validation_status"]) for m in all_metrics)
+    worst_exit   = max(_metric_exit_code(m) for m in all_metrics)
+    if _publication_exit_code(publications, run_id) == 2:
+        worst_exit = 2
 
     _print_summary(all_metrics, run_id)
     _log("PIPELINE", "FLOW",
          "ENDED_OK" if worst_exit < 2 else "ENDED_NOTOK",
          "exit_code={} report={}".format(worst_exit, report_path))
 
-    return {
+    result = {
         "run_id"     : run_id,
         "scenario"   : scenario,
         "exit_code"  : worst_exit,
         "report_path": report_path,
         "metrics"    : all_metrics,
+        "publications": publications,
     }
+    if worst_exit == 2:
+        raise GateBlocked(result)
+    return result
 
+def _publication_exit_code(publications, run_id):
+    """Imprime o resumo de publicacao e devolve 2 se houve falha ou bloqueio.
+    
+    Mesmo contrato do run_pipeline.main(): ERROR (falha real de upload) e
+    BLOCKED (gate) valem exit 2; DISABLED/SKIPPED nao.
+    """
+
+    from run_pipeline import silver_guard
+    attemped = [p for p in publications if p["status"] not in ("DISABLED", "SKIPPED", "BLOCKED")]
+    skipped = [p for p in publications if p["status"] == "SKIPPED"]
+    failed = [p for p in publications if p["status"] == "ERROR"]
+    blocked = [p for p in publications if p["status"] == "BLOCKED"]
+    for layer in ("bronze", "silver", "quarantine"):
+        rows = [p for p in attemped if p.get("layer", "silver") == layer]
+        if rows:
+            ok = sum(1 for p in rows if p["status"] in ("OK", "UPLOADED"))
+            print("DATABRICKS: {}: {}/{} tabelas publicadas".format(layer, ok, len(rows)))
+    if skipped:
+        print("Databricks: {} publicacao(oes) ignorada(s): {}".format(len(skipped), skipped[0]["error"]))
+    for p in failed:
+        print(" [DATABRICKS] {}/{}: {}".format(p.get("layer", "silver"), p["table"], p["error"]))
+    for p in blocked:
+        print(" [GATE] {} nao publicada: {}".format(p["table"], p["error"]))
+    colisoes = silver_guard(run_id).warnings
+    if colisoes:
+        print(" [SILVER] {} tabela(s) reescrita(s) nesta run "
+              "(idempotencia por dat_ref; ver _ingest_format/_ingest_file na Silver):".format(len(colisoes)))
+        for msg in colisoes:
+            print("     {}".format(msg))
+    return 2 if (failed or blocked) else 0
 
 def _print_summary(all_metrics, run_id):
-    status_tag = {"PASS": "[PASS]", "WARNING": "[WARN]", "DLQ": "[DLQ]"}
     print("\n" + "=" * 66)
     print("  RUN: {}".format(run_id))
     print("=" * 66)
-    print("  {:<30} {:<14} {:<10} {:>6}".format("Tabela", "Cenario", "Status", "Score"))
+    from run_pipeline import gate_label
+    from src.metrics.metrics_collector import summary_status
+    print("  {:<26} {:<13} {:<10} {:<12} {:>6}".format("Tabela", "Cenario", "Status", "Publicacao", "Score"))
     print("  " + "-" * 62)
     for m in all_metrics:
-        tag = status_tag.get(m["validation_status"], "[?]")
-        print("  {:<30} {:<14} {} {:<8} {:>6.1f}/100".format(
-            m["table"], m["scenario"], tag,
-            m["validation_status"], m["quality_score"]))
+        tag, status = summary_status(m)
+        print("  {:<26} {:<13} {} {:<8} {:<12} {:>6.1f}/100".format(
+            m["table"], m["scenario"], tag, status,
+            gate_label(m), m["quality_score"]))
     avg = round(sum(m["quality_score"] for m in all_metrics) / len(all_metrics), 1) if all_metrics else 0
     print("  " + "-" * 62)
     print("  {:<55} {:>6.1f}/100\n".format("Score medio", avg))
@@ -452,7 +585,7 @@ def _print_summary(all_metrics, run_id):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Projeto Nimbus Pipeline")
     parser.add_argument(
-        "--scenario", choices=["baseline", "non_breaking", "breaking", "all"],
+        "--scenario", choices=["baseline", "non_breaking", "breaking", "type_drift", "all"],
         default="all",
     )
     parser.add_argument(
@@ -468,10 +601,25 @@ if __name__ == "__main__":
         "--run-id", default=None,
         help="Run ID externo (util para rastreio Control-M)",
     )
+    parser.add_argument(
+        "--dat-ref", dest="dat_ref", default=None,
+        help="Data de referencia da carga (YYYY-MM-DD). Padrao: data do run_id.",
+    )
     args = parser.parse_args()
 
+    if args.no_prefect and _HAS_PREFECT:
+
+        pipeline_flow           = pipeline_flow.fn
+        task_extract_manifest   = task_extract_manifest.fn
+        task_generate_data      = task_generate_data.fn
+        task_validate           = task_validate.fn
+        task_profile            = task_profile.fn
+        task_enrich_slm         = task_enrich_slm.fn
+        task_collect_metrics    = task_collect_metrics.fn
+        task_report             = task_report.fn
+
     scenarios = (
-        ["baseline", "non_breaking", "breaking"]
+        ["baseline", "non_breaking", "breaking", "type_drift"]
         if args.scenario == "all"
         else [args.scenario]
     )
@@ -487,7 +635,12 @@ if __name__ == "__main__":
         # Expande "all" em todos os formatos suportados
         fmt_list = ["csv", "json", "fixed"] if args.fmt == "all" else [args.fmt]
         for fmt in fmt_list:
-            result = pipeline_flow(scenario=sc, run_id=run_id, fmt=fmt)
+            try:
+                result = pipeline_flow(scenario=sc, run_id=run_id, fmt=fmt,
+                                       dat_ref=args.dat_ref)
+            except GateBlocked as blocked:
+                result = blocked.result
+                print("\n [BLOQUEIO] {} ({}): publicacao barrada pelo gate/quarentena " \
+                "- exit code 2 (resultado esperado)\n".format(sc, fmt))
             worst_global = max(worst_global, result["exit_code"])
-        continue
     sys.exit(worst_global)

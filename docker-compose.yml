@@ -1,18 +1,20 @@
 services:
   minio:
-    image: minio/minio:latest
+    # Tag fixa (nao 'latest'): a imagem da apresentacao nao muda entre ensaios.
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: nimbus-minio
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER:     ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+      # Sem credencial no arquivo: vem do .env e falha se ausente.
+      MINIO_ROOT_USER:     ${MINIO_ACCESS_KEY:?defina MINIO_ACCESS_KEY no .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?defina MINIO_SECRET_KEY no .env}
     ports:
       - "9000:9000"
       - "9001:9001"
     volumes:
       - minio_data:/data
     healthcheck:
-      test: ["CMD", "ollama", "list"]
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -21,7 +23,7 @@ services:
       - nimbus-net
 
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.32.15
     container_name: nimbus-ollama
     environment:
       OLLAMA_NUM_PARALLEL:      ${OLLAMA_NUM_PARALLEL:-1}
@@ -50,7 +52,7 @@ services:
     #   - video
     # ipc: host
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      test: ["CMD", "ollama", "list"]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -73,19 +75,30 @@ services:
       DEFAULT_FORMAT:   ${DEFAULT_FORMAT:-all}
       USE_MINIO:        "true"
       MINIO_ENDPOINT:   minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?defina MINIO_ACCESS_KEY no .env}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?defina MINIO_SECRET_KEY no .env}
       OLLAMA_HOST:      http://ollama:11434
-      OLLAMA_MODEL:     ${OLLAMA_MODEL:-phi3.5}
+      OLLAMA_MODEL:     ${OLLAMA_MODEL:-phi4}
       SKIP_SLM:         ${SKIP_SLM:-false}
+      STRICT_TYPING:    ${STRICT_TYPING:-true}
+      QUALITY_GATE:     ${QUALITY_GATE:-true}
+      REQUIRE_VALIDATED_MANIFEST:    ${REQUIRE_VALIDATED_MANIFEST:-false}
       PREFECT_API_URL:  http://127.0.0.1:4200/api
       DATABRICKS_HOST:         ${DATABRICKS_HOST:-}
       DATABRICKS_TOKEN:        ${DATABRICKS_TOKEN:-}
       DATABRICKS_WAREHOUSE_ID: ${DATABRICKS_WAREHOUSE_ID:-}
-      DATABRICKS_AUTO_UPLOAD:  ${DATABRICKS_AUTO_UPLOAD:-false}
-      DATABRICKS_VOLUME:    ${DATABRICKS_VOLUME:-landing}
-      DATABRICKS_CATALOG:      ${DATABRICKS_CATALOG:-workspace}
-      DATABRICKS_SCHEMA:       ${DATABRICKS_SCHEMA:-nimbus}
+
+      DATABRICKS_CATALOG:             ${DATABRICKS_CATALOG:-nimbus}
+      DATABRICKS_SILVER_SCHEMA:       ${DATABRICKS_SILVER_SCHEMA:-silver}
+      DATABRICKS_BRONZE_SCHEMA:       ${DATABRICKS_BRONZE_SCHEMA:-bronze}
+      DATABRICKS_VOLUME:              ${DATABRICKS_VOLUME:-landing}
+      DATABRICKS_BRONZE_VOLUME:       ${DATABRICKS_BRONZE_VOLUME:-landing}
+      DATABRICKS_AUTO_UPLOAD:         ${DATABRICKS_AUTO_UPLOAD:-true}
+      DATABRICKS_BRONZE_UPLOAD:       ${DATABRICKS_BRONZE_UPLOAD:-true}
+      # Rejeito carrega o dado original: upload so por decisao explicita.
+      DATABRICKS_QUARANTINE_UPLOAD:   ${DATABRICKS_QUARANTINE_UPLOAD:-false}
+      QUARANTINE_MASK_PII:            ${QUARANTINE_MASK_PII:-true}
+      QUARANTINE_BLOCKED_SILVER:      ${QUARANTINE_BLOCKED_SILVER:-true}
     ports:
       - "4200:4200"
     volumes:

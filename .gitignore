@@ -25,7 +25,9 @@ data/processed/
 # ── Pipeline — artefatos de execução (gerados a cada run) ────────────────────
 data/metrics/
 data/reports/
-data/contracts/
+
+# data/contracts/ NAO e ignorado: o Manifest e artefato de governanca,
+# versionado e revisado como codigo (ver docs/MANIFEST.md).
 
 # ── Prefect ───────────────────────────────────────────────────────────────────
 .prefect/
@@ -55,3 +57,4 @@ secrets.yaml
 secrets.yml
 *.key
 *.pem
+*.openclaude

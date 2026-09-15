@@ -36,8 +36,14 @@ Regras obrigatórias:
 5. Se houver regulatory_tags no manifesto, mencione as implicações de compliance.
 6. Seja objetivo e técnico. Escreva em português brasileiro.
 7. NAO invente informações não presentes nos dados ou no manifesto.
-8. Conclua com uma seção Pontos de Atencao listando os principais riscos."""
+8. Conclua com uma seção Pontos de Atencao listando os principais riscos.
+9. Colunas com "sensitive": true tem os valores de exemplo mascarados
+([MASCARADO], com o campo pattern indicado apenas o formato). Documente o formato e nunca invente valores para elas."""
 
+#Flags do manifest que tornam o valor da coluna nao-divulgavel para a SLM
+_SENSITIVE_FLAGS = {"LGPD_SENSITIVE", "RESTRICTED"}
+_MASK_LABEL      = "[MASCARADO]"
+_MASK_MAX_LEN    = 40
 _USER_TEMPLATE = """## Contrato YAML:
 ```yaml
 {yaml_content}
@@ -98,7 +104,12 @@ def enrich(storage, contract_filename: str, profiler_payload: dict) -> dict:
     with open(contract_path, encoding="utf-8") as f:
         yaml_content = f.read()
 
-    profiler_summary = _summarize_profiler(profiler_payload)
+    contract_dict = yaml.safe_load(yaml_content) or {}
+    sensitive = _sensitive_columns(contract_dict)
+    if sensitive:
+        print(f"    [PII] [{table}] valores mascarados no prompt: "
+              f"{', '.join(sorted(sensitive))}")
+    profiler_summary = _summarize_profiler(profiler_payload, sensitive)
     user_prompt = _USER_TEMPLATE.format(
         yaml_content  = yaml_content,
         profiler_json = json.dumps(profiler_summary, ensure_ascii=False, indent=2),
@@ -235,20 +246,59 @@ def _stub_doc(table: str) -> str:
         "---\n> **[AI_METADATA_STATUS: DRAFT]**"
     )
 
+def _sensitive_columns(contract: dict) -> set:
+    sensitive = set()
+    for col in (contract or {}).get("schema", []) or []:
+        name = col.get("name")
+        if not name:
+            continue
+        if "sensitive" in col:
+            if col["sensitive"]:
+                sensitive.add(name)
+            continue
+        flags = set(col.get("regulatory_flags", []) or [])
+        if flags & _SENSITIVE_FLAGS:
+            sensitive.add(name)
+    return sensitive
 
-def _summarize_profiler(payload: dict) -> dict:
+def _mask_pattern(value) -> str:
+    out = []
+    for ch in str(value)[:_MASK_MAX_LEN]:
+        if ch.isdigit():
+            out.append("9")
+        elif ch.isalpha():
+            out.append("A")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+def _mask_top_values(top_values: list) -> list:
+    return[{"value": _MASK_LABEL,
+            "pattern": _mask_pattern(tv.get("value")),
+            "count": tv.get("count")}
+            for tv in top_values]
+
+
+def _summarize_profiler(payload: dict, sensitive: set = frozenset()) -> dict:
     """Reduz o payload para o essencial, evitando exceder o contexto da SLM."""
     summary = {"table": payload["table"], "rows": payload["rows"], "columns": {}}
     for col, stats in payload["columns"].items():
+        is_sensitive = col in sensitive
         col_summary = {
             "dtype"       : stats.get("dtype"),
             "null_pct"    : stats.get("null_pct"),
             "unique_count": stats.get("unique_count"),
         }
+        if is_sensitive:
+            col_summary["sensitive"] = True
         if "min" in stats:
-            col_summary.update({"min": stats["min"], "max": stats["max"], "mean": stats["mean"]})
+                if is_sensitive:
+                    col_summary["faixa"] = _MASK_LABEL
+                else:
+                    col_summary.update({"min": stats["min"], "max": stats["max"], "mean": stats["mean"]})
         if "top_values" in stats:
-            col_summary["top_values"] = stats["top_values"][:3]
+            top = stats["top_values"][:3]
+            col_summary["top_values"] = _mask_top_values(top) if is_sensitive else top
         if (stats.get("null_pct") or 0) > NULL_TOLERANCE_PCT:
             col_summary["ANOMALIA"] = f"null_pct {stats['null_pct']}% acima do limiar {NULL_TOLERANCE_PCT}%"
         summary["columns"][col] = col_summary

@@ -23,21 +23,22 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from config import METRICS_DIR
+from src.storage.storage import get_storage
+from src.metrics.metrics_collector import summary_status
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Carregamento
 # ─────────────────────────────────────────────────────────────────────────────
 
-def load_all_metrics(metrics_dir: Path) -> list[dict]:
-    """Carrega todos os registros de metricas, excluindo arquivos summary."""
+def load_all_metrics(storage) -> list[dict]:
+    """Carrega todos os registros de metricas, excluindo summary e arquivos de controle."""
     records = []
-    for path in sorted(metrics_dir.glob("*.json")):
-        if "summary" in path.name:
+    for name in sorted(n for n in storage.list("metrics") if n.endswith(".json")):
+        if "summary" in name or Path(name).name.startswith("_"):
             continue
         try:
-            with open(path, encoding="utf-8") as f:
+            with open(storage.read_path("metrics", name), encoding="utf-8") as f:
                 data = json.load(f)
             # Arquivo individual de tabela
             if isinstance(data, dict):
@@ -77,8 +78,11 @@ def filter_records(
 # Formatacao
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _status_tag(status: str) -> str:
-    return {"PASS": "[PASS]", "WARNING": "[WARN]", "DLQ": "[DLQ]"}.get(status, "[?]")
+def _status_tag(record: dict) -> str:
+    """Rotulo de status do registro, com o bloqueio do gate tendo precedencia
+    sobre o resultado da validacao estrutural."""
+    icon, _ = summary_status(record)
+    return icon
 
 
 def _slm_tag(status: str) -> str:
@@ -130,7 +134,7 @@ def view_summary(records: list[dict]) -> None:
     for (table, scenario), recs in sorted(groups.items()):
         scores = [r.get("quality_score", 0) for r in recs]
         last   = recs[-1]
-        tag    = _status_tag(last.get("validation_status","?"))
+        tag    = _status_tag(last)
         bar    = _score_bar(scores[-1])
         trend  = _trend(scores)
         print(f"  {table:<30} {scenario:<14} {tag:<8} {bar}  {trend}")
@@ -160,7 +164,7 @@ def view_evolution(records: list[dict], table: str | None = None) -> None:
         for r in recs:
             ts       = r.get("timestamp","")[:10]
             run_id   = r.get("run_id","")[-18:]
-            tag      = _status_tag(r.get("validation_status","?"))
+            tag      = _status_tag(r)
             bar      = _score_bar(r.get("quality_score",0))
             nulls    = f"{r.get('avg_null_pct',0):5.1f}%"
             dups     = str(r.get("duplicate_count",0))
@@ -203,14 +207,14 @@ def view_issues(records: list[dict]) -> None:
 
     for r in problems:
         ts    = r.get("timestamp","")[:16].replace("T"," ")
-        tag   = _status_tag(r.get("validation_status","?"))
+        tag   = _status_tag(r)
         print(f"\n  {tag} {r.get('table','?')} / {r.get('scenario','?')} [{ts}]")
         for issue in r.get("issues",[]):
             print(f"       [ERR]  {issue}")
         for warn in r.get("warnings",[]):
             # Omite o aviso de DRAFT para nao poluir o dashboard
-            if "DRAFT" not in warn:
-                print(f"       [WARN] {warn}")
+            tag_warn = "[HITL]" if "DRAFT" in warn else "[WARN]"
+            print(f"       [WARN] {warn}")
 
 
 def view_slm(records: list[dict]) -> None:
@@ -344,7 +348,7 @@ def main():
     parser = argparse.ArgumentParser(description="Dashboard de metricas - Projeto Nimbus")
     parser.add_argument("--all",      action="store_true", help="Exibe todos os runs (padrao: ultimo por tabela/cenario)")
     parser.add_argument("--table",    default=None,        help="Filtra por tabela (ex: tb_clientes)")
-    parser.add_argument("--scenario", default=None,        help="Filtra por cenario (baseline|non_breaking|breaking)")
+    parser.add_argument("--scenario", default=None,        help="Filtra por cenario (baseline|non_breaking|breaking|type_drift)")
     parser.add_argument("--issues",   action="store_true", help="Exibe apenas registros com problemas")
     parser.add_argument("--slm",      action="store_true", help="Exibe status do enriquecimento SLM")
     parser.add_argument("--csv",      default=None,        help="Exporta para CSV (ex: --csv metricas.csv)")
@@ -352,7 +356,7 @@ def main():
     parser.add_argument("--score",  action="store_true", help="Decompoe o quality score nas 4 dimensoes")
     args = parser.parse_args()
 
-    records = load_all_metrics(METRICS_DIR)
+    records = load_all_metrics(get_storage())
 
     if not records:
         print("[INFO] Nenhuma metrica encontrada. Execute o pipeline primeiro:")

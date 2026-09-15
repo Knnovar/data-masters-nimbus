@@ -2,9 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'feature/**']
   pull_request:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -22,7 +21,7 @@ jobs:
 
      - uses: actions/setup-python@v5
        with:
-        python-version: "3.10"
+        python-version: "3.11"
         cache: pip
 
      - name: Instalar dependencias
@@ -40,14 +39,27 @@ jobs:
        run: |
         python - <<'PY'
         import sys, unittest
-        MINIMO = 320
+        MINIMO = 600
         total = unittest.TestLoader().discover("tests", pattern="test*.py").countTestCases()
         print(f"testes descobertos: {total} (minimo {MINIMO})")
         sys.exit(0 if total >= MINIMO else 1)
         PY
-     
+      
+     - name: Sintaxe dos scripts de shell
+       run: bash -n scripts/entrypoint.sh
+
      - name: Pipeline end-to-end (todos os cenarios e formatos)
-       run: python run_pipeline.py --scenario all --format all
+       run: |
+        set +e
+        python run_pipeline.py --scenario all --format all
+        EC=$?
+        set -e
+        echo "exit code do pipeline: ${EC}"
+        # 0 = publicado, 2 = bloqueado pelo gate (esperado em breaking/type_drift).
+        # Qualquer outro codigo e falha real e precisa reprovar a CI.
+        if [ "${EC}" -ne 0 ] && [ "${EC}" -ne 2 ]; then
+          exit 1
+        fi
      
      - name: Views de metrica
        run: |

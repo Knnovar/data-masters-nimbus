@@ -23,6 +23,12 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from src.manifest.manifest_version import (  # noqa: E402
+    NONE,
+    ManifestVersioner,
+    resolver_baseline,
+)
+
 
 # Placeholder padrão gerado pelo extrator — indica campo não preenchido
 _TODO_MARKER = "# TODO"
@@ -103,11 +109,38 @@ class ManifestValidator:
             "warnings": warnings,
         }
 
-    def promote(self, manifest_path: Path, steward_name: str) -> bool:
+    def check_version(self, manifest_path: Path) -> dict:
+        """
+        Confere se a versão declarada acompanha o diff de schema contra o baseline.
+
+        Retorna {"ok": bool, "motivo": str, "avaliacao": dict|None}. Sem baseline
+        (contrato novo, ainda não commitado) não há o que comparar: passa.
+        """
+        atual = self._load(manifest_path)
+        baseline, origem = resolver_baseline(Path(manifest_path))
+        if not baseline:
+            return {"ok": True, "motivo": "sem baseline para comparar", "avaliacao": None}
+
+        avaliacao = ManifestVersioner().avaliar(baseline, atual)
+        if avaliacao["nivel"] == NONE or avaliacao["conforme"]:
+            return {"ok": True, "motivo": "versao coerente com o diff", "avaliacao": avaliacao}
+
+        motivo = (
+            "schema/contrato mudou ({}) desde {}, mas a versao continua {} "
+            "- esperada {}".format(
+                avaliacao["nivel"], origem,
+                avaliacao["versao_declarada"], avaliacao["versao_esperada"])
+        )
+        return {"ok": False, "motivo": motivo, "avaliacao": avaliacao}
+
+    def promote(self, manifest_path: Path, steward_name: str,
+                skip_version_check: bool = False) -> bool:
         """
         Promove o manifesto de DRAFT para VALIDATED após verificar pendências.
 
-        Retorna True se promovido, False se há pendências bloqueantes.
+        Retorna True se promovido, False se há pendências bloqueantes. Promover um
+        contrato cujo schema mudou sem bump de versão também bloqueia: validar a
+        versão errada é pior do que não validar.
         """
         result = self.check(manifest_path)
 
@@ -117,6 +150,15 @@ class ManifestValidator:
                 print(f"   [PENDENTE] {p['field']}: {p['issue']}")
             print("\nPreencha os campos acima antes de promover.")
             return False
+
+        if not skip_version_check:
+            versao = self.check_version(manifest_path)
+            if not versao["ok"]:
+                print("\n[VALIDATOR] Promocao bloqueada - versao desatualizada:")
+                print("   {}".format(versao["motivo"]))
+                print("\nRode: python tasks.py manifest-version --file {} "
+                      "--apply --author \"{}\"".format(manifest_path, steward_name))
+                return False
 
         # Exibe warnings sem bloquear
         if result["warnings"]:
@@ -161,6 +203,8 @@ def main():
     parser.add_argument("--steward",    default=None,  help="Nome do Data Steward responsável")
     parser.add_argument("--check-only", action="store_true",
                         help="Apenas lista pendências sem promover")
+    parser.add_argument("--skip-version-check", action="store_true",
+                        help="Promove mesmo com a versão desatualizada em relação ao diff")
     args = parser.parse_args()
 
     path = Path(args.file)
@@ -191,7 +235,7 @@ def main():
         print("\n[ERROR] Informe --steward 'Nome do Steward' para promover.")
         sys.exit(1)
 
-    ok = validator.promote(path, args.steward)
+    ok = validator.promote(path, args.steward, skip_version_check=args.skip_version_check)
     sys.exit(0 if ok else 1)
 
 

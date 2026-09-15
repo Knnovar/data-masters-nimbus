@@ -10,6 +10,7 @@ Uso:
     python tasks.py help
 """
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -18,6 +19,8 @@ ROOT = Path(__file__).parent
 
 
 def run(cmd: list[str]) -> int:
+    if cmd and cmd[0] == "python":
+        cmd = [sys.executable] + cmd[1:]
     print(f"$ {' '.join(cmd)}\n")
     return subprocess.call(cmd, cwd=ROOT)
 
@@ -27,6 +30,9 @@ def run(cmd: list[str]) -> int:
 def cmd_run(args):
     # Executa todos os cenarios (baseline/non_breaking/breaking) nos
     # tres formatos suportados (csv/json/fixed) — execucao completa.
+    # Sai com exit 2 quando o gate bloqueia ou a quarentena bloqueia alguma publicacao
+    # (breaking/type_drift) - bloqueio esperado, nao erro de execucao.
+    # Exit 1 fica reservado para erro inesperado.
     return run(["python", "run_pipeline.py", "--scenario", "all", "--format", "all"])
 
 def cmd_baseline(args):
@@ -41,8 +47,13 @@ def cmd_breaking(args):
     fmt = _get_opt(args, "--format") or "all"
     return run(["python", "run_pipeline.py", "--scenario", "breaking", "--format", fmt])
 
+def cmd_type_drift(args):
+    fmt = _get_opt(args, "--format") or "all"
+    return run(["python", "run_pipeline.py", "--scenario", "type_drift", "--format", fmt])
+
 def cmd_all_formats(args):
     return run(["python", "run_pipeline.py", "--scenario", "baseline", "--format", "all"])
+
 
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────
@@ -52,6 +63,12 @@ def cmd_metrics(args):
 
 def cmd_metrics_all(args):
     return run(["python", "show_metrics.py", "--all"])
+
+def cmd_score(args):
+    return run(["python", "show_metrics.py", "--score"])
+
+def cmd_models(args):
+    return run(["python", "show_metrics.py", "--models"])
 
 def cmd_issues(args):
     return run(["python", "show_metrics.py", "--issues"])
@@ -81,6 +98,22 @@ def cmd_validate_manifest(args):
     return run(["python", "-m", "src.manifest.manifest_validator",
                 "--file", file, "--steward", steward])
 
+def cmd_manifest_version(args):
+    """Deriva a versao semantica do Manifest a partir do diff contra o baseline."""
+    file = _get_opt(args, "--file")
+    if not file:
+        print('Uso: python tasks.py manifest-version --file data/contracts/tb_clientes.yaml '
+              '[--baseline <outro.yaml>] [--apply --author "Nome"]')
+        return 1
+    cmd = ["python", "-m", "src.manifest.manifest_version", "--file", file]
+    for opt in ("--baseline", "--author"):
+        valor = _get_opt(args, opt)
+        if valor:
+            cmd += [opt, valor]
+    if "--apply" in args:
+        cmd.append("--apply")
+    return run(cmd)
+
 def cmd_extract_sas(args):
     file  = _get_opt(args, "--file")
     table = _get_opt(args, "--table")
@@ -100,6 +133,23 @@ def cmd_extract_csv(args):
     output = f"data/contracts/{table}.yaml"
     return run(["python", "-m", "src.manifest.extractor_csv",
                 "--file", file, "--table", table, "--output", output, "--enrich"])
+
+
+# ── Governanca ────────────────────────────────────────────────────────────────
+
+def cmd_emit_grants(args):
+    """Gera (sem executar) o DDL de acesso derivado da classificacao do Manifest."""
+    file = _get_opt(args, "--file")
+    if not file:
+        print("Uso: python tasks.py emit-grants --file data/contracts/tb_clientes.yaml "
+              "[--catalog c] [--schema s] [--reader-group g] [--pii-group g] [--output f.sql]")
+        return 1
+    cmd = ["python", "-m", "src.governance.grant_emitter", "--file", file]
+    for opt in ("--catalog", "--schema", "--reader-group", "--pii-group", "--output"):
+        valor = _get_opt(args, opt)
+        if valor:
+            cmd += [opt, valor]
+    return run(cmd)
 
 
 # ── Prefect ───────────────────────────────────────────────────────────────────
@@ -209,6 +259,51 @@ def cmd_upload_bronze(args):
     print()
     print("[BRONZE] {}/{} arquivos enviados".format(len(files) - errors, len(files)))
     return 0 if errors == 0 else 1
+# ── Object storage local (MinIO) ───────────────────────────────────────────────
+
+def _minio_env() -> dict:
+    """Ambiente com a credencial do .env e USE_MINIO ligado, sem exportar no shell."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from nimbus_up import ENDPOINT, ensure_credentials
+    access, secret, _ = ensure_credentials()
+    env = dict(os.environ)
+    env.update({
+        "USE_MINIO"       : "true",
+        "MINIO_ENDPOINT"  : ENDPOINT,
+        "MINIO_ACCESS_KEY": access,
+        "MINIO_SECRET_KEY": secret,
+    })
+    return env
+
+def cmd_up(args):
+    return run(["python", "scripts/nimbus_up.py"] + args)
+
+def cmd_down(args):
+    return subprocess.call(["docker", "compose", "down"], cwd=ROOT)
+
+def cmd_minio_creds(args):
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from nimbus_up import CONSOLE, ensure_credentials
+    access, secret, _ = ensure_credentials()
+    print("console : {}".format(CONSOLE))
+    print("usuario : {}".format(access))
+    print("senha   : {}".format(secret))
+    return 0
+
+def cmd_demo(args):
+    """Sobe o MinIO se preciso e roda pipeline + dashboard nele, sem export manual."""
+    if run(["python", "scripts/nimbus_up.py"]) != 0:
+        return 1
+    env = _minio_env()
+    fmt = _get_opt(args, "--format") or "json"
+    cenario = _get_opt(args, "--scenario") or "baseline"
+    codigo = subprocess.call(
+        [sys.executable, "run_pipeline.py", "--scenario", cenario, "--format", fmt],
+        cwd=ROOT, env=env)
+    subprocess.call([sys.executable, "show_metrics.py", "--score"], cwd=ROOT, env=env)
+    return codigo
+
+
 # ── Testes ────────────────────────────────────────────────────────────────────
 
 def cmd_test(args):
@@ -230,17 +325,24 @@ def cmd_clean(args):
     return 0
 
 def cmd_clean_data(args):
-    confirm = input("Isso remove TODOS os dados gerados em data/. Confirma? [s/N] ")
+    """Remove dados gerados. Manifests so saem com --contracts (artefato de governanca)."""
+    drop_contracts = "--contracts" in args
+    subs = ["landing", "processed", "quarantine", "gold", "metrics", "reports"]
+    if drop_contracts:
+        subs.append("contracts")
+    print("Sera removido de data/: {}".format(", ".join(subs)))
+    confirm = input("Confirma? [s/N] ")
     if confirm.lower() != "s":
         print("Cancelado.")
         return 0
-    import shutil
-    for sub in ["landing", "processed", "quarantine", "contracts", "metrics", "reports"]:
+    for sub in subs:
         d = ROOT / "data" / sub
         if d.exists():
             for f in d.glob("*"):
                 if f.is_file():
                     f.unlink()
+    if not drop_contracts:
+        print("Manifests em data/contracts/ preservados (use --contracts para remover).")
     print("Dados removidos.")
     return 0
 
@@ -256,29 +358,38 @@ def _get_opt(args: list[str], flag: str) -> str | None:
 
 
 COMMANDS = {
-    "run"               : (cmd_run,              "Executa TODOS os cenarios x TODOS os formatos (csv/json/fixed)"),
+    "run"               : (cmd_run,               "Executa TODOS os cenarios x TODOS os formatos (csv/json/fixed)"),
     "baseline"          : (cmd_baseline,          "Cenario baseline, todos os formatos (use --format csv|json|fixed p/ restringir)"),
     "non-breaking"      : (cmd_non_breaking,      "Cenario non_breaking, todos os formatos (use --format p/ restringir)"),
     "breaking"          : (cmd_breaking,          "Cenario breaking/DLQ, todos os formatos (use --format p/ restringir)"),
+    "type_drift"        : (cmd_type_drift,        "Cenario type_drift: valor fora do tipo do Manifest, gate bloqueia (exit 2)"),
     "all-formats"       : (cmd_all_formats,       "Atalho: baseline nos 3 formatos (equivalente a baseline sem --format)"),
     "metrics"           : (cmd_metrics,           "Resumo do ultimo run"),
     "metrics-all"       : (cmd_metrics_all,       "Historico completo de runs"),
+    "score"             : (cmd_score,             "Decompoe o quality score nas 4 dimensoes"),
+    "models"            : (cmd_models,            "Compara desempenho dos modelos SLM (ex: phi3.5 x phi4)"),
     "issues"            : (cmd_issues,            "Lista apenas problemas (DLQ/WARNING)"),
     "slm"               : (cmd_slm,               "Status do enriquecimento SLM"),
     "export"            : (cmd_export,            "Exporta metricas para CSV"),
     "check-manifest"    : (cmd_check_manifest,    "Verifica pendencias de um manifest (--file)"),
     "validate-manifest" : (cmd_validate_manifest, "Promove DRAFT->VALIDATED (--file --steward)"),
+    "emit-grants"       : (cmd_emit_grants,       "Gera o DDL de GRANT/mascara do Manifest, sem executar (--file)"),
+    "manifest-version"  : (cmd_manifest_version,  "Diff de schema -> versao semantica (--file [--baseline] [--apply --author])"),
     "extract-sas"       : (cmd_extract_sas,       "Extrai manifest de SAS7BDAT (--file --table)"),
     "extract-csv"       : (cmd_extract_csv,       "Extrai manifest de CSV (--file --table)"),
     "prefect-setup"     : (cmd_prefect_setup,     "Cria work pool e registra deployments"),
     "prefect-run"       : (cmd_prefect_run,       "Dispara run baseline via Prefect"),
+    "up"                : (cmd_up,                "Sobe o MinIO local, gera credencial no .env e cria os buckets (--reset recria)"),
+    "down"              : (cmd_down,              "Derruba os containers (mantem o volume e a credencial)"),
+    "minio-creds"       : (cmd_minio_creds,       "Mostra console/usuario/senha do MinIO local (le do .env)"),
+    "demo"              : (cmd_demo,              "up + pipeline + score contra o MinIO, sem exportar variavel (--scenario --format)"),
     "test"              : (cmd_test,              "Roda a suite de testes"),
     "test-databricks"   : (cmd_test_databricks,   "Diagnostico em 4 niveis: token, warehouse, schema, Volumes"),
-    "upload-silver"     : (cmd_upload_silver,      "Upload Silver -> Volumes -> Delta -> metastore (--table, --no-comments, --dry-run)"),
-    "upload-bronze"     :(cmd_upload_bronze,        "Upload do arquivo bruto -> Volume bronze -> tabela no schema bronze (--table)"),
+    "upload-silver"     : (cmd_upload_silver,     "Upload Silver -> Volumes -> Delta -> metastore (--table, --no-comments, --dry-run)"),
+    "upload-bronze"     :(cmd_upload_bronze,      "Upload do arquivo bruto -> Volume bronze -> tabela no schema bronze (--table)"),
     "setup"             : (cmd_setup,             "Instala dependencias"),
     "clean"             : (cmd_clean,             "Remove __pycache__"),
-    "clean-data"        : (cmd_clean_data,        "Remove dados gerados (pede confirmacao)"),
+    "clean-data"        : (cmd_clean_data,        "Remove dados gerados, preserva manifests (--contracts remove tambem)"),
 }
 
 

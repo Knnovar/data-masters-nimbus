@@ -151,3 +151,159 @@ python tasks.py validate-manifest --file data/contracts/tb_clientes.yaml --stewa
 ```
 
 Um detalhe importante: o `ManifestWriter` nunca sobrescreve um manifest `VALIDATED`. Se uma nova extração for executada sobre uma tabela já validada, o resultado é gravado em um arquivo `_draft.yaml` separado, permitindo comparação manual antes de qualquer substituição.
+
+---
+
+## Versionamento: o que existe e o que não existe
+
+O ciclo `DRAFT → VALIDATED` é real, auditável e protegido: o promotor registra `validated_by` e
+`validated_at`, recusa promover manifest com `# TODO` pendente e o `ManifestWriter` nunca sobrescreve
+um `VALIDATED` (só sobrescreve DRAFT, e apenas com `--overwrite`).
+
+Sobre a versão do contrato, o que existe hoje e o que ainda não existe:
+
+- Os quatro extratores escrevem `version: "1.0.0"` no rascunho, mas a partir daí quem calcula o
+  número é o `manifest-version`, comparando o contrato com o baseline. A seção
+  [Versão do contrato](#versão-do-contrato-manifest-version) descreve a regra inteira.
+- O histórico de versões fica no próprio Manifest, em `version_history`, e o lock em
+  `data/contracts/.lock/` guarda o último estado publicado.
+- Ainda não há registry central: nada de `tb_clientes_v2.yaml`, nada de seleção automática da
+  versão vigente, nada de consulta de quem consome cada versão.
+- O `_draft.yaml` gerado por uma nova extração sobre um contrato `VALIDATED` continua sendo
+  comparado à mão. O `manifest-version` compara o contrato com o baseline, e não o rascunho com o
+  contrato em vigor.
+
+O que falta nessa frente está registrado em [NEXT_STEPS.md](NEXT_STEPS.md).
+
+---
+
+## O gate de governança
+
+`REQUIRE_VALIDATED_MANIFEST` controla o rigor:
+
+| Valor | Comportamento |
+|---|---|
+| `false` (padrão) | manifest em DRAFT gera aviso em toda execução, mas a publicação segue |
+| `true` | manifest em DRAFT **bloqueia a publicação** e o pipeline termina com exit code 2 |
+
+O status também viaja com o dado: o footer do Parquet no Silver carrega `manifest_validated` ou
+`manifest_draft`, e o relatório consolidado leva a marca `[AI_METADATA_STATUS: DRAFT]` enquanto
+houver texto gerado pela SLM sem revisão humana.
+
+---
+
+## Do contrato para a permissão: `emit-grants`
+
+A classificação de sensibilidade não serve só para mascarar rejeito: ela é a mesma informação que
+um administrador de Unity Catalog precisa para conceder acesso. `emit-grants` fecha esse caminho
+derivando o DDL de acesso do próprio Manifest:
+
+```bash
+python tasks.py emit-grants --file data/contracts/tb_clientes.yaml
+python tasks.py emit-grants --file data/contracts/tb_clientes.yaml \
+  --catalog nimbus --schema silver \
+  --reader-group nimbus_readers --pii-group nimbus_pii_readers \
+  --output grants.sql
+```
+
+A saída tem três partes: `GRANT USE CATALOG`/`USE SCHEMA`/`SELECT` para o grupo leitor; uma
+`CREATE OR REPLACE FUNCTION` de máscara **por tipo SQL** (o Unity Catalog exige que a função
+devolva o tipo da coluna, então `mask_pii_string` devolve `'***'` e `mask_pii_date` devolve
+`NULL`); e um `ALTER COLUMN ... SET MASK` para cada coluna marcada `LGPD_SENSITIVE`.
+
+Duas decisões que valem explicitar:
+
+- **O comando não executa nada.** Não abre conexão, não autentica e não usa o PAT — ele imprime
+  texto. Quem aplica é quem tem alçada no workspace, e o artefato existe justamente para ser
+  revisado antes disso. O pipeline deriva a permissão do contrato; não concede permissão.
+- **Classificação restrita sai comentada.** Com `classification` em `restricted`, `secret` ou
+  `confidential_restricted`, o `GRANT SELECT` é emitido como comentário: liberar leitura de tabela
+  restrita para um grupo amplo é decisão de dono do dado, não default de ferramenta.
+
+O `owner`, a `version` e o status do Manifest viajam no cabeçalho do SQL, então o DDL sempre diz de
+qual contrato ele saiu — e um Manifest em DRAFT gera aviso no próprio arquivo.
+
+---
+
+## Versão do contrato: `manifest-version`
+
+O campo `version` não é decorativo nem manual: ele é derivado do **diff entre o Manifest atual e o
+baseline**, com a regra de compatibilidade escrita no código.
+
+```bash
+# analisa (nao altera o arquivo)
+python tasks.py manifest-version --file data/contracts/tb_clientes.yaml
+
+# aplica o bump e registra o historico
+python tasks.py manifest-version --file data/contracts/tb_clientes.yaml \
+  --apply --author "Joao Silva"
+
+# compara contra um arquivo especifico em vez do baseline automatico
+python tasks.py manifest-version --file data/contracts/tb_clientes.yaml \
+  --baseline data/contracts/tb_clientes_v1.yaml
+```
+
+### A regra de bump
+
+| Mudança | Nível | Por quê |
+|---|---|---|
+| coluna removida, tipo alterado, `nullable: true → false`, PK ou ordem de colunas alterada | **MAJOR** | quebra consumidor existente |
+| formato/delimitador/encoding da origem alterado | **MAJOR** | quebra a leitura do arquivo |
+| tolerância restringida (limite menor, ou limite acordado removido) | **MAJOR** | carga que passava passa a reprovar |
+| coluna nova obrigatória (`nullable: false`) | **MAJOR** | carga existente não tem a coluna |
+| coluna nova opcional, `nullable: false → true`, tolerância afrouxada, classificação regulatória | **MINOR** | retrocompatível |
+| descrição, `business_rules`, `sas_label`, owner/steward, metadados | **PATCH** | não muda o dado |
+
+Entre várias mudanças, vale a **de maior severidade**: `MAJOR > MINOR > PATCH > NONE`.
+
+### Contra o que se compara
+
+A resolução do baseline é, nesta ordem:
+
+1. `--baseline <arquivo>`, quando você quer comparar contra uma versão específica;
+2. **Git** (`git show HEAD:<caminho>`) — o baseline é o contrato commitado, sem estado extra;
+3. **lock file** (`data/contracts/.lock/<tabela>.yaml`) — snapshot do último bump aplicado, usado
+   quando não há `.git` (container, tarball, workspace sem histórico);
+4. sem baseline: o Manifest é tratado como primeira versão e o lock inicial é gravado no `--apply`.
+
+O lock é gravado a cada `--apply` e **é versionado junto com o contrato** — é ele que mantém a
+auditoria funcionando dentro da imagem, onde não existe histórico Git.
+
+### O histórico fica no próprio contrato
+
+```yaml
+version: 2.0.0
+version_history:
+  - version: 2.0.0
+    previous_version: 1.0.0
+    level: MAJOR
+    date: "2026-09-14T02:02:44"
+    author: "Joao Silva"
+    baseline_source: "git:HEAD"
+    revalidacao_requerida: true
+    changes:
+      - nivel: MAJOR
+        campo: schema.vl_renda_mensal
+        detalhe: coluna removida
+```
+
+Duas consequências deliberadas:
+
+- **Promover com schema alterado e sem bump falha.** O `manifest_validator` chama a mesma avaliação
+  antes de gravar `VALIDATED` e recusa a promoção, apontando o comando que corrige. A exceção
+  existe (`--skip-version-check`) e é explícita, para não virar caminho normal.
+- **Aplicar bump em Manifest `VALIDATED` devolve o status para `DRAFT`** e limpa `validated_by` /
+  `validated_at`. Manter `VALIDATED` seria afirmar que o Steward aprovou uma versão que ele nunca
+  viu; a revalidação continua sendo ato humano.
+
+---
+
+## Cuidado operacional com os arquivos
+
+Os manifests vivem em `data/contracts/`, que **é versionado** (o `.gitignore` e o `.dockerignore`
+têm a exceção escrita, com o motivo): contrato é artefato de governança, não dado gerado — e sem
+ele o container não tem contra o que validar. O diretório `.lock/` acompanha, pelo mesmo motivo.
+
+`python tasks.py clean-data` preserva `data/contracts/` por padrão; só apaga os contratos com
+`--contracts` explícito. Ainda assim, antes de qualquer limpeza vale conferir o que está `VALIDATED`
+— um contrato promovido é o registro de uma decisão humana, não um arquivo reproduzível.

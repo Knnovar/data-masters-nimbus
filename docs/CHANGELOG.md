@@ -106,3 +106,94 @@ O Unity Catalog passou a espelhar a medallion local: catalog `nimbus`, schema `b
 
 **Suite.** 325 testes unitários, incluindo `tests/test_bronze.py`.
 
+
+---
+
+## Sprint `expand-minio` — Storage portavel, governanca no lake e idempotencia por conteudo
+
+**Storage.** `MinIOStorage` ganhou `MINIO_SECURE` (TLS), `MINIO_REGION` (SigV4), `BUCKET_PREFIX`
+(nome de bucket e global em S3) e `MINIO_CREATE_BUCKETS` (impede o pipeline de criar bucket em conta
+gerenciada). O `secure=False` fixo — que impedia qualquer object storage gerenciado — foi corrigido.
+O pipeline foi exercitado em MinIO e em um segundo servidor S3-compativel (Adobe S3Mock) com HTTPS e
+regiao, trocando apenas variaveis de ambiente.
+
+**Governanca no mesmo backend do dado.** `collect()` e `generate_report()` deixaram de escrever
+direto no filesystem e passaram a usar `storage.write_text`; `show_metrics.py` le via
+`storage.list("metrics")`. Antes disso o dado ia para o bucket e a governanca ficava no disco local.
+
+**Falha visivel no Prefect.** Bloqueio de publicacao levanta `GateBlocked`, de modo que a run
+aparece como Failed na UI/worker em vez de "Completed" com exit code ignorado. `--no-prefect`, que
+era flag morta, passou a executar as funcoes puras (`.fn`) sem subir servidor efemero.
+
+**Idempotencia por conteudo.** `src/ingestion/idempotency.py` calcula o SHA-256 do arquivo de
+entrada em blocos de 1 MiB e mantem o ledger `metrics/_ingest_ledger.json` com chave
+`(tabela, dat_ref, formato)`. Estados `FIRST_LOAD`, `REPROCESS_IDENTICAL` e `REPROCESS_MODIFIED`;
+conteudo divergente registra `previous_sha256` e nao e pulado por `--skip-existing`; carga
+bloqueada fica `BLOCKED` e nunca e tratada como concluida.
+
+**Geracao deterministica.** Com `--dat-ref`, a semente vem de `SHA-256(scenario|format|dat_ref)` e
+semeia `random`, NumPy, Faker e a geracao de UUID — a mesma carga logica produz o mesmo arquivo byte
+a byte, o que torna o caso "reprocessamento identico" demonstravel.
+
+**Correcoes de coerencia.** Modelo `phi4` alinhado entre `config.py`, `.env.example`, compose e
+docs; `collect()` passou a receber `fmt` no fluxo Prefect (toda metrica saia como `"format": "csv"`);
+score documentado com as dimensoes reais (conformidade 40 / completude 25 / unicidade 20 /
+estabilidade 15); `MIGRATION_PLAN` corrigido quanto ao Azure Blob, que nao atende a API S3.
+
+**Suite.** 592 testes unitarios, com os componentes novos cobertos: `test_idempotency.py`,
+`test_quality_score.py`, `test_minio_storage.py`, `test_slm_metrics.py`, `test_prefect_flow.py` e
+determinismo em `test_data_generator.py`.
+
+---
+
+## Sprint `one-click-security` — Bootstrap, credenciais e governanca de acesso
+
+**One-click.** `scripts/nimbus_up.py` gera as credenciais do MinIO na primeira execucao (`.env` com
+permissao 0600, nunca sobrescrito depois), sobe o container, aguarda o healthcheck e cria os buckets
+pelo proprio `get_storage()` do pipeline — se o bootstrap funciona, o pipeline funciona pelo mesmo
+caminho de codigo. Comandos: `up`, `down`, `demo`, `minio-creds`.
+
+**Credenciais fora do repositorio.** O compose deixou de ter `minioadmin` como default e passou a
+exigir `MINIO_ACCESS_KEY`/`MINIO_SECRET_KEY` (`${VAR:?}`); `get_storage()` falha explicitamente com
+`USE_MINIO=true` sem credencial, em vez de tentar um default silencioso. Imagens pinadas
+(`minio:RELEASE.2025-09-07T16-13-09Z`, `ollama:0.32.15`, `python:3.11.15-slim-bookworm`).
+
+**Ordem gate/Silver.** O Parquet so existe depois do cast, entao a carga reprovada e movida da
+Silver para a quarentena (`QUARANTINE_BLOCKED_SILVER`) — nenhum consumidor le carga bloqueada
+achando que passou. O exit code 2 e o motivo do bloqueio sao preservados.
+
+**Privacidade na quarentena.** `DATABRICKS_QUARANTINE_UPLOAD` passou a `false` por padrao e
+`QUARANTINE_MASK_PII` mascara as colunas sensiveis declaradas no Manifest com o token
+`MASK:<hash>` — deterministico para preservar correlacao entre linhas na investigacao do rejeito e,
+por isso mesmo, **nao** e anonimizacao irreversivel.
+
+**Do contrato para a permissao.** `python tasks.py emit-grants --file <manifest>` deriva o DDL de
+`GRANT`/mask da classificacao de sensibilidade do Manifest e **nao executa nada** no workspace:
+artefato revisavel, entregue a quem tem alcada. Classificacao restrita sai com o `GRANT SELECT`
+comentado.
+
+**Versionamento do Manifest.** `python tasks.py manifest-version` deriva a versao semantica do
+contrato do diff contra o baseline (Git por padrao, lock file em `data/contracts/.lock/` como
+fallback para container/tarball): coluna removida, tipo, `nullable` endurecido, PK, ordem de
+colunas, formato da origem e tolerancia restringida sao MAJOR; coluna nova opcional, `nullable`
+afrouxado e tolerancia relaxada sao MINOR; descricao e metadados sao PATCH. O `--apply` grava
+`version_history` no proprio Manifest e devolve um contrato `VALIDATED` alterado para `DRAFT`,
+porque a revalidacao continua sendo ato do Steward. O `manifest_validator` passou a recusar a
+promocao de contrato alterado sem bump (`--skip-version-check` existe e e explicito).
+
+**Suite.** 661 testes unitarios, com `test_gate_silver.py`, `test_grant_emitter.py`,
+`test_pii_masking.py` e `test_manifest_version.py` cobrindo os itens acima.
+
+---
+
+## Contrato ilegivel deixa de degradar em silencio
+
+O contrato e carregado duas vezes por tabela, uma no validador e uma no `run_scenario`. A falha na
+segunda leitura era apenas impressa e o processamento seguia com `contract=None`, o que desligava o
+cast dirigido pelo Manifest, o gate de governanca e o mascaramento de PII na quarentena enquanto a
+tabela aparecia como `[LIBERADA]` no resumo. Agora essa falha produz `BLOCKED` com razao
+`CONTRACT_UNREADABLE` e rotulo `[CONTRATO]`: a tabela nao e promovida, profiling e SLM nao rodam, a
+publicacao da Silver e registrada como bloqueada, o ledger grava `BLOCKED` e a run sai com exit
+code 2. Contrato ausente continua sendo barrado antes, pela validacao estrutural, que devolve
+`DLQ`. 675 testes unitarios, com `test_contract_gate.py` cobrindo o bloqueio e a preservacao do
+caminho normal.

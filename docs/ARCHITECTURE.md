@@ -1,90 +1,168 @@
 # Arquitetura — Projeto Nimbus
 
-Este documento descreve a estrutura técnica do pipeline, as decisões de design que moldaram cada componente e como eles se conectam. Para uma visão geral do projeto e instruções de uso, consulte o [README](../README.md).
+Este documento descreve a estrutura tecnica do pipeline, as decisoes de design que moldaram cada
+componente e como eles se conectam. Para visao geral e instrucoes de uso, consulte o
+[README](../README.md); para a camada de storage em detalhe, [STORAGE_S3.md](STORAGE_S3.md).
 
 ---
 
-## O fluxo de dados de ponta a ponta
+## 1. O fluxo de dados de ponta a ponta
 
-O dado chega na landing zone no formato que o sistema de origem produz — pode ser CSV, JSON, Fixed-Width ou SAS7BDAT. Antes de qualquer processamento, um módulo de normalização garante que o arquivo está em UTF-8 com terminadores de linha LF, independentemente do sistema operacional que gerou o arquivo. Arquivos em EBCDIC são detectados e sinalizados para tratamento manual, sem que o pipeline trave.
+O dado chega na landing zone no formato que o sistema de origem produz — CSV, JSON, Fixed-Width ou
+SAS7BDAT. Antes de qualquer processamento, a normalizacao garante UTF-8 com terminadores LF,
+independentemente do sistema que gerou o arquivo. Arquivos em EBCDIC sao detectados e sinalizados
+para tratamento manual, sem travar o pipeline.
 
-A partir daí, o arquivo entra na camada Bronze e passa pela validação de contrato. Se o schema não bate com o que foi declarado no Manifest — uma coluna obrigatória removida, por exemplo — o arquivo é isolado na quarentena sem interromper o processamento das demais tabelas. Se a mudança é não-quebradora, como uma coluna nova adicionada pela origem, o pipeline avança com um aviso registrado.
+O arquivo entra na camada Bronze **como chegou** — o original fica preservado em `_archive/`, sem
+cast e sem validacao. Em seguida vem a validacao de contrato: se o schema nao bate com o Manifest
+(coluna obrigatoria removida, tipo incompativel), o arquivo e isolado na quarentena sem interromper
+as demais tabelas; se a mudanca e nao-quebradora (coluna nova na origem), o pipeline avanca com
+aviso e `evolution_type` registrado.
 
-As tabelas que passam pela validação seguem para o profiling via DuckDB, são promovidas para Silver e têm sua documentação gerada pela SLM. Por fim, métricas de qualidade são calculadas e consolidadas em um relatório por execução.
+As tabelas aprovadas passam pelo cast dirigido pelo Manifest (linha a linha, com rejeito
+individual), pelo profiling DuckDB e sao promovidas para Silver em Parquet tipado. Por fim, o score
+de qualidade e as metricas sao calculados, o relatorio e consolidado e o gate decide se a
+publicacao acontece.
 
+```mermaid
+graph TD
+    ORIG["Sistema de origem"] --> NORM["normalizer<br/>UTF-8 / LF"]
+    NORM --> BRONZE["BRONZE<br/>original + _archive"]
+    BRONZE --> SHA["idempotency.file_sha256<br/>(table, dat_ref, format)"]
+    SHA --> VAL{"validator<br/>contrato + schema evolution"}
+    VAL -- DLQ --> QUAR["QUARENTENA<br/>arquivo em DLQ"]
+    VAL -- PASS / WARNING --> CAST{"caster dirigido pelo Manifest"}
+    CAST -- "linha invalida / DUPLICATE_PK" --> REJ["quarantine/reject_(tabela).csv<br/>_reject_columns _reject_values _reject_reason"]
+    CAST --> SILVER["SILVER<br/>Parquet tipado + _ingest_*"]
+    SILVER --> PROF["profiler DuckDB"]
+    PROF --> SLM["SLM (Ollama)<br/>saida DRAFT"]
+    SLM --> MET["metrics + quality_score"]
+    MET --> GATE{"gate:<br/>reject_pct / score / manifest"}
+    GATE -- liberado --> DBX["Databricks UC<br/>bronze + silver (+ quarentena)"]
+    GATE -- bloqueado --> EX2["exit 2"]
+    MET --> LED["ledger + metrics + report<br/>no storage configurado"]
 ```
-Arquivo bruto
-     |
- Normalização de encoding
-     |
-  [ BRONZE ]
-     |
-  Validação de contrato ------ breaking change ------> [ QUARENTENA ]
-     |
-  Profiling (DuckDB)
-     |
-  [ SILVER ]
-     |
-  SLM documenta
-     |
-  Métricas + Relatório
-     |
-  Databricks
-     |-- Bronze: arquivo bruto em nimbus.bronze (STRING + provenance)
-     `-- Silver: Parquet tipado em nimbus.silver (Delta + tags do Manifest)
-```
+
+**Ordem gate/Silver.** O gate depende da taxa de rejeicao, que so existe depois do cast — entao o
+Parquet ja foi escrito quando o bloqueio acontece. Em vez de deixa-lo legivel, o pipeline **retira
+a carga reprovada da Silver e a move para a quarentena** (`QUARANTINE_BLOCKED_SILVER=true`), de
+modo que o artefato continua auditavel sem ficar no caminho de quem le a camada. O nome do arquivo
+movido aparece na publicacao como `quarantined_file`.
 
 ---
 
-## Arquitetura Medallion
+## 2. Arquitetura Medallion
 
-O projeto segue a arquitetura medallion com sete camadas mapeadas em diretórios locais ou buckets S3 quando o backend é MinIO:
+Sete camadas mapeadas em diretorios locais ou buckets S3, conforme o backend:
 
-O **Bronze** é a landing zone — o dado bruto exatamente como chegou. O **Silver** é onde vão os arquivos que passaram pela validação e pelo profiling. O **Gold** está reservado para métricas agregadas em futuras iterações. A **Quarentena** isola arquivos com breaking changes sem descartá-los — eles ficam disponíveis para análise. Os **Contracts** armazenam os Manifests YAML. As **Metrics** guardam os JSONs de métricas por execução. Os **Reports** reúnem a documentação gerada pela SLM e o relatório consolidado da execução.
-
----
-
-## A camada de Storage
-
-`src/storage/storage.py` é a abstração que impede que o restante do pipeline saiba onde os dados fisicamente residem. Todos os módulos interagem com a mesma interface — `read()`, `write()`, `move()`, `write_text()` — sem importar se estão trabalhando com disco local ou um bucket MinIO.
-
-O `LocalStorage` é o backend padrão, sem nenhuma dependência externa. O `MinIOStorage` é ativado com `USE_MINIO = True` em `config.py` e requer `docker compose up -d`. A troca é transparente para o pipeline inteiro.
-
-Uma decisão importante: o método `read()` detecta o formato pelo sufixo do arquivo e usa o parser correto automaticamente. Um `.json` é lido via `json_normalize`, um `.txt` é lido via `read_fwf` usando os colspecs gravados em um arquivo sidecar `.layout` gerado no momento da escrita. Isso garante que cada formato pode percorrer o pipeline sem tratamento especial nos módulos downstream.
-
-Essa abstração foi projetada para ser o primeiro passo da migração para ADLS Gen2 — uma nova implementação de `StorageBase` é suficiente para trocar o backend sem tocar em nenhum outro módulo. O plano detalhado está em [MIGRATION_PLAN.md](MIGRATION_PLAN.md).
+O **Bronze** e a landing zone — o dado bruto exatamente como chegou, com o original em `_archive/`.
+O **Silver** recebe o que passou pela validacao e pelo cast, em Parquet tipado. O **Gold** esta
+reservado e **nao tem fluxo funcional** nesta PoC — o medallion termina na Silver. A **Quarentena**
+isola arquivos com breaking change e as linhas rejeitadas, preservando o valor original. Os
+**Contracts** guardam os Manifests YAML. As **Metrics** guardam os JSONs por execucao e o ledger de
+idempotencia. Os **Reports** reunem a documentacao gerada pela SLM e o relatorio consolidado.
 
 ---
 
-## Suporte multi-formato
+## 3. A camada de Storage
 
-O projeto trata dados bancários como eles realmente chegam — em formatos heterogêneos de sistemas distintos. CSV com semicolon de sistemas Windows, JSON aninhado de APIs, arquivos posicionais de mainframe, SAS7BDAT do sistema de crédito.
+`src/storage/storage.py` impede que o restante do pipeline saiba onde o dado reside. Todos os
+modulos usam a mesma interface (`read`, `write`, `write_text`, `write_parquet`, `move`,
+`promote_to_parquet`, `list`, `exists`, `read_path`), com ou sem object storage.
 
-Para a geração dos dados fictícios da PoC, o projeto usa o padrão Strategy: cada formato tem um Writer (`CSVWriter`, `JSONWriter`, `FixedWidthWriter`) que recebe um DataFrame em memória e devolve `(filename, content)`. A lógica de domínio que gera os dados nunca sabe em qual formato o resultado será gravado.
+`LocalStorage` e o padrao, sem dependencia externa. `MinIOStorage` e ativado com `USE_MINIO=true` e
+usa o client `minio`, que fala a API S3 — o mesmo backend atende MinIO, S3Mock e AWS S3, mudando
+endpoint, TLS, regiao e prefixo de bucket por variavel de ambiente.
 
-O `FixedWidthWriter` tem um comportamento específico: ao serializar, gera também um arquivo sidecar `.layout` com os colspecs exatos de cada campo. Esse arquivo é lido pelo `LocalStorage.read()` para garantir que a leitura posterior usa as posições corretas — sem esse sidecar, `read_fwf` precisaria inferir as colunas por análise heurística, o que introduziria erros.
+Uma decisao importante: `read()` detecta o formato pelo sufixo e usa o parser correto. Um `.json` e
+lido via `json_normalize`; um `.txt` posicional via `read_fwf` usando os colspecs do sidecar
+`.layout` gravado na escrita. Isso permite que cada formato percorra o pipeline sem tratamento
+especial nos modulos downstream.
 
----
-
-## Validação e detecção de schema evolution
-
-O `validator.py` compara o arquivo recebido com o contrato declarado no Manifest e classifica o resultado em três categorias. O cenário feliz retorna `PASS` ou `WARNING` — quando há nulos acima da tolerância ou duplicatas dentro de limites aceitáveis. Um breaking change, como uma coluna obrigatória removida ou um tipo incompatível, retorna `DLQ` e move o arquivo para quarentena. Uma mudança não-quebradora, como uma coluna nova adicionada pela origem, retorna `WARNING` com o tipo de evolução registrado.
-
-O Manifest em status `DRAFT` não bloqueia o pipeline, mas gera um aviso em todas as execuções enquanto não for promovido para `VALIDATED`.
-
----
-
-## Profiling
-
-O profiler usa DuckDB como engine principal pela velocidade — sem servidor, sem overhead. Para arquivos em formatos não suportados diretamente pelo DuckDB (JSON, Fixed-Width) ou quando o DuckDB não está disponível no ambiente, o fallback é Pandas com a mesma lógica de extração de estatísticas.
-
-O profiler gera por coluna: percentual de nulos, contagem de valores únicos, min, max e média para numéricos, e os cinco valores mais frequentes para categóricos. Essas estatísticas são o que a SLM recebe junto com o Manifest.
+Detalhes de configuracao, receitas por backend, politica IAM de exemplo, armadilhas reais e o
+status de evidencia de cada backend estao em [STORAGE_S3.md](STORAGE_S3.md).
 
 ---
 
-## Orquestração
+## 4. Suporte multi-formato
 
-O projeto oferece dois modos de execução com a mesma lógica de negócio. O `run_pipeline.py` é execução direta, sem dependência de orquestrador — adequado para desenvolvimento e para integração com scripts externos. O `prefect_flow.py` é a mesma pipeline decorada com `@task` e `@flow` do Prefect 2.x, com cada task mapeada para um job Control-M com exit codes padronizados.
+O projeto trata dados bancarios como eles realmente chegam: CSV com semicolon de sistemas Windows,
+JSON aninhado de APIs, arquivos posicionais de mainframe, SAS7BDAT do sistema de credito.
+
+Para a geracao dos dados ficticios da PoC, cada formato tem um Writer (`CSVWriter`, `JSONWriter`,
+`FixedWidthWriter`) que recebe um DataFrame e devolve `(filename, content)` — padrao Strategy. A
+logica de dominio nunca sabe em qual formato o resultado sera gravado.
+
+O `FixedWidthWriter` gera tambem o sidecar `.layout` com os colspecs exatos, lido depois pelo
+storage. Sem esse sidecar, `read_fwf` precisaria inferir colunas por heuristica, o que introduziria
+erro silencioso.
+
+**Geracao deterministica.** Quando `--dat-ref` e informada, a semente vem de
+`SHA-256(scenario|format|dat_ref)` e semeia `random`, NumPy, Faker e a geracao de UUID; a mesma
+combinacao logica produz o mesmo arquivo byte a byte. Isso e o que torna o caso
+`REPROCESS_IDENTICAL` demonstravel. Sem `--dat-ref`, a geracao permanece aleatoria.
+
+---
+
+## 5. Validacao e deteccao de schema evolution
+
+`validator.py` compara o arquivo recebido com o contrato e classifica em tres categorias. O caminho
+feliz retorna `PASS` ou `WARNING` (nulos acima da tolerancia, duplicatas dentro do limite). Um
+breaking change — coluna obrigatoria removida, tipo incompativel — retorna `DLQ` e move o arquivo
+para quarentena. Mudanca nao-quebradora retorna `WARNING` com o `evolution_type` registrado.
+
+Manifest em `DRAFT` nao bloqueia por padrao, mas gera aviso em toda execucao enquanto nao for
+promovido. Com `REQUIRE_VALIDATED_MANIFEST=true`, DRAFT passa a bloquear a publicacao (exit 2).
+
+O cast e dirigido pelo contrato: cada coluna vai para o tipo declarado e cada linha que nao converte
+e rejeitada individualmente, com valor original preservado. O percentual rejeitado e comparado com
+`tolerance.max_reject_pct`: dentro do limite publica como `PASS_WITH_REJECTS`, acima do limite a
+publicacao e bloqueada.
+
+---
+
+## 6. Profiling
+
+O profiler usa DuckDB pela velocidade — sem servidor, sem overhead — com fallback para pandas
+quando o DuckDB nao esta disponivel ou o formato nao e suportado diretamente.
+
+Por coluna, gera: percentual de nulos, contagem de valores unicos, min, max e media para numericos,
+e os cinco valores mais frequentes para categoricos. Essas estatisticas sao o que a SLM recebe junto
+com o Manifest.
+
+---
+
+## 7. Idempotencia e reprocessamento
+
+A identidade logica da carga e `(tabela, dat_ref, formato)`. O `run_id` identifica a execucao e
+serve para linhagem; a `dat_ref` identifica a janela de dados e e a chave de sobrescrita da
+particao.
+
+`src/ingestion/idempotency.py` calcula o SHA-256 do arquivo de entrada (blocos de 1 MiB) e mantem o
+ledger `metrics/_ingest_ledger.json` no storage configurado. Estados:
+
+| Estado | Condicao | Efeito |
+|---|---|---|
+| `FIRST_LOAD` | sem entrada anterior | processa |
+| `REPROCESS_IDENTICAL` | mesmo `(tabela, dat_ref, formato)` e mesmo hash | declara reprocessamento; `--skip-existing` pode pular |
+| `REPROCESS_MODIFIED` | mesma chave, hash diferente | loga `ENTRADA DIVERGENTE`, guarda `previous_sha256`, **ignora** `--skip-existing` |
+
+Cada entrada registra `input_file`, `input_sha256`, `previous_sha256`, `input_situation`,
+`reprocess_count`, `status`, `rows`, `run_id`, `dat_ref` e `format`. Carga bloqueada por gate/DLQ
+fica como `BLOCKED` e nunca e pulada. Entradas antigas sem hash sao tratadas como identicas, por
+compatibilidade.
+
+Limites operacionais desta implementacao, ditos de frente: o ledger e um JSON reescrito (nao
+transacional), nao existe lock nem estado `RUNNING`, e publicacao e ledger nao sao atomicos. E
+adequado a execucao sequencial, que e como o pipeline roda.
+
+---
+
+## 8. Orquestracao
+
+Dois modos de execucao com a mesma logica de negocio. `run_pipeline.py` e execucao direta, sem
+orquestrador. `prefect_flow.py` e a mesma pipeline decorada com `@task`/`@flow` do Prefect 3.x, com
+cada task mapeada para um job Control-M e exit codes padronizados.
 
 | Task Prefect | Job Control-M | Exit codes |
 |---|---|---|
@@ -96,27 +174,63 @@ O projeto oferece dois modos de execução com a mesma lógica de negócio. O `r
 | `task_collect_metrics` | JOB-DM-005-METRICS | 0=OK |
 | `task_report` | JOB-DM-006-REPORT | 0=OK |
 
-O modo `--no-prefect` executa o mesmo fluxo sem registrar nada no servidor Prefect, o que torna a integração com Control-M simples:
+Quando o gate de qualidade, a governanca ou a quarentena barram a publicacao, o flow levanta
+`GateBlocked`: a run aparece como **Failed** no Prefect (UI, worker e deployment) e a CLI termina com
+exit code 2 — bloqueio esperado, distinto do exit 1 de erro inesperado.
+
+O modo `--no-prefect` troca flow e tasks pelas funcoes puras (`.fn`), nao registra nada no servidor
+Prefect e nao sobe servidor efemero, preservando os mesmos exit codes:
 
 ```bash
 python prefect_flow.py --no-prefect --scenario baseline --run-id %%JOBRUNID%%
 ```
 
----
-
-## Métricas e quality score
-
-A cada execução, `metrics_collector.py` calcula um score de 0 a 100 por tabela combinando quatro dimensões: o status da validação (40 pontos), a taxa de nulos em colunas obrigatórias (30 pontos), a taxa de duplicatas (20 pontos) e a cobertura de descrições no schema (10 pontos). Esses scores ficam em JSON em `data/metrics/` e são consultáveis via `python show_metrics.py`.
+A publicacao no Databricks (Bronze, Silver e quarentena) acontece nos dois runners.
 
 ---
 
-## Integração com Databricks — Bronze e Silver no Unity Catalog
+## 9. Metricas e quality score
 
-`src/connectors/databricks_uploader.py` e `src/connectors/bronze_uploader.py` integram o pipeline com o Databricks via REST API, sem cluster Spark. O catalog padrão é `nimbus`, com schemas separados por camada: `nimbus.bronze` (arquivo bruto) e `nimbus.silver` (Parquet tipado pelo Manifest).
+A cada execucao, `quality_score.py` calcula um score de 0 a 100 por tabela combinando quatro
+dimensoes: conformidade de tipos contra o Manifest (40%), completude em relacao a tolerancia de nulo
+do contrato (25%), unicidade da chave primaria (20%) e estabilidade de schema (15%). Dimensao nao
+mensuravel recebe `None` e o peso e renormalizado entre as dimensoes efetivamente medidas — o score
+nunca penaliza o que nao pode ser avaliado.
 
-**Por que Volumes e não DBFS.** O root do DBFS está sendo bloqueado por padrão em workspaces novos (`PERMISSION_DENIED: Public DBFS root is disabled`). Os Volumes do Unity Catalog são o substituto oficial — têm controle de acesso por ACL, são versionáveis e aparecem no catálogo do workspace como objetos de primeira classe.
+`metrics_collector.py` grava os registros pelo storage configurado — `data/metrics/` e
+`data/reports/` no backend local, buckets `nimbus-metrics` e `nimbus-reports` com `USE_MINIO=true` —
+e `python show_metrics.py` le do mesmo backend, sem depender do filesystem.
 
-**Pré-requisito no SQL Editor do Databricks (executar uma vez):**
+---
+
+## 10. SLM e revisao humana
+
+`src/slm/` conversa com o Ollama local (padrao `phi4`). O modelo recebe o Manifest e as estatisticas
+reais do profiling e propoe descricoes; a saida nasce marcada `[AI_METADATA_STATUS: DRAFT]` e o
+Manifest so avanca para `VALIDATED` por acao do Data Steward. Ausencia do servico nao derruba o
+pipeline: o status vai para `SKIPPED` e a execucao segue.
+
+O Ollama serializa inferencias por padrao (`OLLAMA_NUM_PARALLEL=1`), e o pipeline roda sequencial
+por escolha: a inferencia domina o tempo de parede, e paralelizar significaria multiplos contextos
+do modelo em memoria e logs intercalados — ruim para a rastreabilidade que o projeto vende.
+
+Limite: a marcacao de dado sensivel e heuristica sobre nome de coluna, e a mascara do prompt so
+atua sobre coluna marcada. Nomes legados (`NRDOC`, `DDD_FONE`, `LOGRAD`) podem nao ser reconhecidos.
+SLM local nao substitui governanca corporativa de IA.
+
+---
+
+## 11. Integracao com Databricks — Bronze e Silver no Unity Catalog
+
+`src/connectors/databricks_uploader.py` e `src/connectors/bronze_uploader.py` integram o pipeline
+via REST API, sem cluster Spark. O catalog padrao e `nimbus`, com schemas por camada:
+`nimbus.bronze` (arquivo bruto) e `nimbus.silver` (Parquet tipado).
+
+**Por que Volumes e nao DBFS.** O root do DBFS esta bloqueado por padrao em workspaces novos
+(`PERMISSION_DENIED: Public DBFS root is disabled`). Os Volumes do Unity Catalog sao o substituto
+oficial — ACL propria, versionaveis e visiveis no catalogo como objetos de primeira classe.
+
+**Pre-requisito no SQL Editor (uma vez):**
 
 ```sql
 CREATE SCHEMA IF NOT EXISTS nimbus.bronze;
@@ -125,15 +239,16 @@ CREATE VOLUME IF NOT EXISTS nimbus.bronze.landing;
 CREATE VOLUME IF NOT EXISTS nimbus.silver.landing;
 ```
 
-**Fluxo Bronze por execução.**
+**Fluxo Bronze por execucao.** O arquivo da landing zone e enviado via Files API preservando o nome
+original: `/Volumes/nimbus/bronze/landing/<tabela>/dat_ref=YYYY-MM-DD/<arquivo>`. O registro usa
+CTAS com `inferColumnTypes => false` — todas as colunas de negocio ficam STRING — e acrescenta
+`_ingest_file`, `_ingest_time` e `_ingest_run_id`. Tags `nimbus_layer=bronze` e `validated=false`
+deixam explicito que a tabela nao passou pelo gate. Formatos sem `read_files` (sidecar `.layout`)
+sobem so o arquivo.
 
-O arquivo da landing zone é enviado via Files API preservando o nome original: `/Volumes/nimbus/bronze/landing/<tabela>/dat_ref=YYYY-MM-DD/<arquivo>`. O registro usa CTAS com `inferColumnTypes => false` — todas as colunas de negócio ficam STRING — e acrescenta `_ingest_file`, `_ingest_time` e `_ingest_run_id`. Tags `nimbus_layer=bronze` e `validated=false` deixam explícito que a tabela não passou pelo gate de qualidade. Formatos sem `read_files` (sidecar `.layout`) sobem só o arquivo.
-
-**Fluxo Silver por execução.**
-
-O Parquet é enviado via Files API: um único `PUT /api/2.0/fs/files/<volume-path>?overwrite=true` com o binário no corpo. O path segue particionamento Hive por data: `/Volumes/nimbus/silver/landing/<tabela>/dat_ref=YYYY-MM-DD/part-YYYY-MM-DD.parquet`.
-
-O registro da tabela usa CTAS via `read_files`:
+**Fluxo Silver por execucao.** O Parquet vai via Files API em um unico
+`PUT /api/2.0/fs/files/<volume-path>?overwrite=true`, com particionamento Hive por data:
+`/Volumes/nimbus/silver/landing/<tabela>/dat_ref=YYYY-MM-DD/part-YYYY-MM-DD.parquet`.
 
 ```sql
 CREATE OR REPLACE TABLE nimbus.silver.tb_clientes
@@ -143,13 +258,24 @@ AS SELECT * FROM read_files(
 )
 ```
 
-Isso cria uma managed Delta table lendo o Volume como fonte — sem `CONVERT TO DELTA`, sem external location.
+Isso cria uma managed Delta table lendo o Volume como fonte — sem `CONVERT TO DELTA`, sem external
+location. Tags e comentarios vem do Manifest via `COMMENT ON TABLE`, `ALTER TABLE SET TAGS` e
+`ALTER COLUMN SET TAGS`; as `regulatory_flags` (LGPD, SCR) aparecem como tags pesquisaveis no Unity
+Catalog.
 
-Tags e comentários Silver vêm do Manifest via `COMMENT ON TABLE`, `ALTER TABLE SET TAGS` e `ALTER COLUMN SET TAGS`. As `regulatory_flags` (LGPD, SCR) aparecem como tags pesquisáveis no Unity Catalog.
+`publish_bronze()` e `publish_table()` sao as interfaces do pipeline. Cada uma devolve
+`{table, status, target, error}` e nunca levanta excecao.
 
-`publish_bronze()` e `publish_table()` são as interfaces do pipeline. Cada uma devolve `{table, status, target, error}` e nunca levanta exceção. O `run_pipeline.py` publica o Bronze logo após a geração e o Silver após `promote_to_parquet()`, e reporta as duas camadas no resumo.
+**Governanca da quarentena.** O rejeito e, por definicao, o registro que falhou — e ele carrega os
+mesmos dados pessoais do registro aprovado. Por isso dois defaults:
+`DATABRICKS_QUARANTINE_UPLOAD=false` (rejeito nao sai do ambiente local sem decisao explicita) e
+`QUARANTINE_MASK_PII=true`, que substitui o valor das colunas marcadas `LGPD_SENSITIVE` no
+Manifest — e os mesmos valores dentro de `_reject_values` — por um token `MASK:<hash>`. O token e
+deterministico, entao preserva correlacao entre linhas para investigacao, e **nao** e anonimizacao
+juridica: quem tiver o valor original consegue recomputar o token. A classificacao vem do
+Manifest, nao de heuristica de nome de coluna — coluna sensivel nao declarada nao e mascarada.
 
-| Variável | Exemplo | Descrição |
+| Variavel | Exemplo | Descricao |
 |---|---|---|
 | `DATABRICKS_HOST` | `https://adb-1234.azuredatabricks.net` | URL do workspace |
 | `DATABRICKS_TOKEN` | `dapi...` | PAT (ou vazio para OAuth) |
@@ -160,11 +286,16 @@ Tags e comentários Silver vêm do Manifest via `COMMENT ON TABLE`, `ALTER TABLE
 | `DATABRICKS_VOLUME` | `landing` | Volume Silver |
 | `DATABRICKS_BRONZE_VOLUME` | `landing` | Volume Bronze |
 | `DATABRICKS_AUTO_UPLOAD` | `true` | Publica Silver no fim do run |
-| `DATABRICKS_BRONZE_UPLOAD` | `true` | Publica Bronze após a geração |
+| `DATABRICKS_BRONZE_UPLOAD` | `true` | Publica Bronze apos a geracao |
+| `DATABRICKS_QUARANTINE_UPLOAD` | `false` | Publica rejeitos e DLQ (desligada por padrao) |
+| `QUARANTINE_MASK_PII` | `true` | Mascara colunas `LGPD_SENSITIVE` nos rejeitos |
 
 ```bash
-python tasks.py test-databricks          # diagnóstico em 4 níveis
+python tasks.py test-databricks          # diagnostico em 4 niveis
 python tasks.py upload-bronze            # arquivo bruto
 python tasks.py upload-silver --dry-run  # valida sem enviar dados
 python tasks.py upload-silver            # Parquet + Delta + tags
 ```
+
+A integracao Databricks e coberta por 91 testes com mock total (`test_databricks.py`,
+`test_bronze.py`). Execucao em workspace real nao esta evidenciada nesta branch.

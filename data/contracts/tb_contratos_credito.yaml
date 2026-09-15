@@ -26,6 +26,7 @@ business_context: Contratos de credito de todos os produtos ofertados pelo banco
   cobranca automatica apos D+1.
 tolerance:
   max_null_pct: 5
+  max_reject_pct: 1
   allow_duplicates: false
 dependencies:
 - tb_clientes
